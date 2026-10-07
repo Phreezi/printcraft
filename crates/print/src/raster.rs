@@ -79,10 +79,10 @@ pub fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8], gray: bool, 
     let mut line = Vec::with_capacity(if gray { width as usize } else { width as usize * 3 });
     for px in rgba.chunks_exact(row) {
         line.clear();
-        for p in px.chunks_exact(4) {
+        for &[r, g, b, a] in px.as_chunks::<4>().0 {
             // Premultiplied over white: c + (255 − a).
-            let white = 255 - u16::from(p[3]);
-            let [r, g, b] = [p[0], p[1], p[2]].map(|c| (u16::from(c) + white).min(255));
+            let white = 255 - u16::from(a);
+            let [r, g, b] = [r, g, b].map(|c| (u16::from(c) + white).min(255));
             if gray {
                 // Rec. 601 luma, in integers.
                 line.push(((77 * r + 150 * g + 29 * b) >> 8) as u8);
