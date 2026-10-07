@@ -3,9 +3,12 @@
 # each change can be installed and tried on a PC. Help ▸ Check for updates in the app reads these
 # releases (crates/ui-egui/src/updates.rs).
 #
-# Builds are versioned <version from Cargo.toml>-test.<run number>; the MSI keeps the numeric
-# part, and same-version upgrades are allowed, so each build replaces the previous one. Builds are
-# unsigned (Windows SmartScreen asks once per download). The newest 10 test releases are kept.
+# Builds are versioned <version from Cargo.toml>-test.<run number>. Cargo.toml itself is left alone
+# (Cargo won't match a pre-release against the crates' `^0.2.0` requirements): the version reaches
+# the build as PRINTCRAFT_VERSION, which names the files and is what the app shows and compares
+# (crates/ui-egui/src/updates.rs). The MSI keeps the numeric part, and same-version upgrades are
+# allowed, so each build replaces the previous one. Builds are unsigned (Windows SmartScreen asks
+# once per download). The newest 10 test releases are kept.
 name: Test build (Windows)
 
 on:
@@ -54,9 +57,10 @@ jobs:
         name: Version this build
         shell: bash
         run: |
-          base="$(cargo xtask version)"
+          # [workspace.package] version, as packaging/env.sh reads it.
+          base="$(awk '{ sub(/\r$/, "") } /^\[/ { p = ($0 == "[workspace.package]"); next } p && $1 == "version" { gsub(/[" ]/, "", $3); print $3; exit }' Cargo.toml)"
+          if [ -z "$base" ]; then echo "::error::no [workspace.package] version in Cargo.toml"; exit 1; fi
           v="${base%%-*}-test.${{ github.run_number }}"
-          cargo xtask version set "$v"
           echo "version=$v" >>"$GITHUB_OUTPUT"
           echo "### PeDeeFe $v (\`${GITHUB_REF_NAME}\` at \`${GITHUB_SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
       - name: Install WiX

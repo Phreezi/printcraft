@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use printcraft_ui_egui::updates::{RELEASES_PAGE, Release};
+use printcraft_ui_egui::updates::{APP_VERSION, RELEASES_PAGE, Release};
 
 const LATEST: &str = "https://api.github.com/repos/Phreezi/printcraft/releases/latest";
 
@@ -18,7 +18,7 @@ pub fn latest_release() -> Result<Release, String> {
     let mut response = agent
         .get(LATEST)
         .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", concat!("PeDeeFe/", env!("CARGO_PKG_VERSION")))
+        .header("User-Agent", format!("PeDeeFe/{APP_VERSION}"))
         .call()
         .map_err(|e| format!("couldn't reach GitHub ({e})"))?;
     let body = response.body_mut().with_config().limit(1 << 20).read_to_string().map_err(|e| format!("unreadable answer ({e})"))?;

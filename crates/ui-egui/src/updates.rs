@@ -13,6 +13,14 @@ use egui::{Align, Layout};
 
 use crate::{PrintCraftApp, theme, widgets};
 
+/// The version people see and updates compare with. Test builds set `PRINTCRAFT_VERSION` when
+/// they compile (`0.2.1-test.12`, see `.github/workflows/test-build.yml`): the workspace version
+/// itself stays plain, because Cargo won't match a pre-release against the crates' `^0.2.0`.
+pub const APP_VERSION: &str = match option_env!("PRINTCRAFT_VERSION") {
+    Some(v) if !v.is_empty() => v,
+    _ => env!("CARGO_PKG_VERSION"),
+};
+
 /// Where every PeDeeFe build is listed (this fork's releases, not PrintCraft's).
 pub const RELEASES_PAGE: &str = printcraft_engine::links::RELEASES;
 
@@ -160,7 +168,7 @@ pub(crate) fn dialog(app: &mut PrintCraftApp, ctx: &egui::Context) {
         return;
     }
     let t = theme::Tokens::get(ctx);
-    let current = env!("CARGO_PKG_VERSION");
+    let current = APP_VERSION;
     let mut close = false;
     let mut download: Option<String> = None;
     let modal = egui::Modal::new(egui::Id::new("updates")).show(ctx, |ui| {

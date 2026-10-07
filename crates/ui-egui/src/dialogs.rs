@@ -1019,7 +1019,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                     widgets::app_icon(ui, 40.0);
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new(printcraft_engine::links::APP_NAME).font(theme::semibold(20.0)));
-                        ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                        ui.label(format!("Version {}", crate::updates::APP_VERSION));
                     });
                 });
                 ui.add_space(6.0);
