@@ -5,24 +5,24 @@
   <id>ai.storyteller.printcraft</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT OR Apache-2.0</project_license>
-  <name>PrintCraft</name>
+  <name>PeDeeFe</name>
   <summary>Read, organize, combine, split and secure PDFs</summary>
-  <developer id="ai.storyteller">
-    <name>Learning Machines LLC</name>
+  <developer id="io.github.phreezi">
+    <name>Phreezi</name>
   </developer>
   <description>
     <p>
-      PrintCraft is an open-source PDF workbench. Read, comment on, fill in and sign PDFs;
-      organize, combine and split pages; edit, redact, protect and export documents.
+      PeDeeFe is an open-source PDF workbench based on PrintCraft. Read, comment on, fill in and
+      sign PDFs; organize, combine and split pages; edit, redact, protect and export documents.
     </p>
   </description>
   <launchable type="desktop-id">ai.storyteller.printcraft.desktop</launchable>
   <icon type="stock">ai.storyteller.printcraft</icon>
   <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser. -->
-  <url type="homepage">https://getartcraft.com/apps/printcraft</url>
-  <url type="bugtracker">https://github.com/storytold/printcraft/issues</url>
-  <url type="help">https://github.com/storytold/printcraft</url>
-  <url type="contact">https://discord.gg/artcraft</url>
+  <url type="homepage">https://github.com/Phreezi/printcraft</url>
+  <url type="bugtracker">https://github.com/Phreezi/printcraft/issues</url>
+  <url type="help">https://github.com/Phreezi/printcraft</url>
+  <url type="contact">https://github.com/Phreezi/printcraft/issues</url>
   <categories>
     <category>Office</category>
     <category>Viewer</category>
@@ -36,7 +36,7 @@
   <screenshots>
     <screenshot type="default">
       <caption>A PDF open with its threaded comments</caption>
-      <image>https://raw.githubusercontent.com/storytold/printcraft/main/docs/images/printcraft-viewer.png</image>
+      <image>https://raw.githubusercontent.com/Phreezi/printcraft/main/docs/images/printcraft-viewer.png</image>
     </screenshot>
   </screenshots>
   <branding>

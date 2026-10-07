@@ -40,17 +40,17 @@ impl RecoveryStore {
         Self { dir: dir.into() }
     }
 
-    /// The platform's per-user data folder: `~/Library/Application Support/PrintCraft/Recovery`
-    /// (macOS), `%LOCALAPPDATA%\PrintCraft\Recovery` (Windows), or
-    /// `$XDG_DATA_HOME/printcraft/recovery` / `~/.local/share/printcraft/recovery` (others).
+    /// The platform's per-user data folder: `~/Library/Application Support/PeDeeFe/Recovery`
+    /// (macOS), `%LOCALAPPDATA%\PeDeeFe\Recovery` (Windows), or
+    /// `$XDG_DATA_HOME/pedeefe/recovery` / `~/.local/share/pedeefe/recovery` (others).
     pub fn default_dir() -> Option<PathBuf> {
         let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
         if cfg!(target_os = "macos") {
-            env("HOME").map(|h| h.join("Library/Application Support/PrintCraft/Recovery"))
+            env("HOME").map(|h| h.join("Library/Application Support/PeDeeFe/Recovery"))
         } else if cfg!(windows) {
-            env("LOCALAPPDATA").map(|d| d.join("PrintCraft").join("Recovery"))
+            env("LOCALAPPDATA").map(|d| d.join("PeDeeFe").join("Recovery"))
         } else {
-            env("XDG_DATA_HOME").or_else(|| env("HOME").map(|h| h.join(".local/share"))).map(|d| d.join("printcraft/recovery"))
+            env("XDG_DATA_HOME").or_else(|| env("HOME").map(|h| h.join(".local/share"))).map(|d| d.join("pedeefe/recovery"))
         }
     }
 

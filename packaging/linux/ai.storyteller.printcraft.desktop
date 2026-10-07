@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=PrintCraft
+Name=PeDeeFe
 GenericName=PDF Editor
 Comment=Read, organize, combine, split and secure PDFs
 Exec=printcraft %F

@@ -955,7 +955,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                     ui.label(egui::RichText::new("Recover unsaved documents?").font(theme::semibold(18.0)));
                 });
                 ui.add_space(6.0);
-                ui.label("PrintCraft didn't shut down normally. These documents had changes that were autosaved:");
+                ui.label("PeDeeFe didn't shut down normally. These documents had changes that were autosaved:");
                 ui.add_space(8.0);
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
                 egui::Grid::new("recoverable").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
@@ -1013,14 +1013,14 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
             }
             Dialog::About => {
                 ui.horizontal(|ui| {
-                    widgets::artcraft_mark(ui, 40.0);
+                    ui.add(crate::icons::image("file-text", 40.0, t.accent));
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("PrintCraft").font(theme::semibold(20.0)));
+                        ui.label(egui::RichText::new(printcraft_engine::links::APP_NAME).font(theme::semibold(20.0)));
                         ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
                     });
                 });
                 ui.add_space(6.0);
-                ui.label("A clean-room, open-source PDF application written in Rust. MIT OR Apache-2.0.");
+                ui.label("An open-source PDF application written in Rust. MIT OR Apache-2.0.");
                 ui.label(
                     egui::RichText::new(
                         "Rendering: hayro (bootstrap) · UI: egui · Icons: Lucide (ISC) · Fonts: Inter, JetBrains Mono, Dancing Script (OFL)",
@@ -1029,10 +1029,13 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                     .small(),
                 );
                 ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Part of").color(t.text_muted));
-                    widgets::artcraft_logo(ui, 16.0);
-                });
+                // Plain-text credit only: PeDeeFe is not an ArtCraft product and uses none of its marks.
+                ui.label(
+                    egui::RichText::new(
+                        "Based on PrintCraft by the ArtCraft team. Copyright (c) 2026 ArtCraft Team and the PrintCraft contributors.",
+                    )
+                    .color(t.text_muted),
+                );
                 ui.add_space(6.0);
                 if let Some(cmd) = widgets::community_links(ui) {
                     link_command = Some(cmd);

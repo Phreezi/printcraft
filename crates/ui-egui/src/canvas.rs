@@ -1720,7 +1720,7 @@ fn run_button(app: &mut PrintCraftApp, index: usize, ctx: &egui::Context, name: 
         B::GoTo(p) => app.views[index].go_to_page(p.min(pages.saturating_sub(1))),
         B::Alert(m) => app.notify(m),
         B::Submit(url) => {
-            app.notify(format!("{name} submits the form to {url}; PrintCraft doesn't send form data. Save the document to keep your entries."))
+            app.notify(format!("{name} submits the form to {url}; PeDeeFe doesn't send form data. Save the document to keep your entries."))
         }
         B::ImportIcon => app.choose_field_image(name),
         B::Script(js) => {
@@ -1862,13 +1862,14 @@ fn notices(
     } else if info.xfa == Some(printcraft_render::Xfa::Dynamic) {
         Some((
             "triangle-alert",
-            "This is a dynamic XFA form, which PrintCraft can't display yet. What you see is the file's placeholder page.".to_string(),
+            "This is a dynamic XFA form, which PeDeeFe can't display yet. What you see is the file's placeholder page.".to_string(),
             false,
         ))
     } else if info.xfa == Some(printcraft_render::Xfa::Static) {
         Some((
             "triangle-alert",
-            "This form also contains XFA data, which PrintCraft doesn't read yet. You can fill its fields, but Acrobat may show the XFA values instead.".to_string(),
+            "This form also contains XFA data, which PeDeeFe doesn't read yet. You can fill its fields, but Acrobat may show the XFA values instead."
+                .to_string(),
             true,
         ))
     } else if !info.fields.is_empty() {

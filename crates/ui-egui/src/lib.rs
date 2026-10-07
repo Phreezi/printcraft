@@ -65,6 +65,8 @@ mod protect;
 mod recovery;
 pub mod theme;
 pub mod updates;
+/// The app's name as people see it (window title, About, installer).
+pub use printcraft_engine::links::APP_NAME;
 mod widgets;
 
 use printcraft_engine::{DocId, Session};
@@ -1198,10 +1200,10 @@ impl eframe::App for PrintCraftApp {
             return;
         }
         // The window shows the active document's name (or title, if it asks for that).
-        let title = self
-            .active
-            .and_then(|i| self.session.get(self.views[i].id))
-            .map_or_else(|| "PrintCraft".to_owned(), |d| format!("{} — PrintCraft", d.display_name()));
+        let title = self.active.and_then(|i| self.session.get(self.views[i].id)).map_or_else(
+            || printcraft_engine::links::APP_NAME.to_owned(),
+            |d| format!("{} — {}", d.display_name(), printcraft_engine::links::APP_NAME),
+        );
         if title != self.window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;

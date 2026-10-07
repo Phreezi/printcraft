@@ -12,7 +12,7 @@ pub fn show(app: &mut PrintCraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 36, right: 36, top: 28, bottom: 28 }).show(ui, |ui| {
-            ui.label(egui::RichText::new("Welcome to PrintCraft").font(theme::semibold(24.0)));
+            ui.label(egui::RichText::new(format!("Welcome to {}", printcraft_engine::links::APP_NAME)).font(theme::semibold(24.0)));
             ui.label(
                 egui::RichText::new("An open-source PDF workbench — local, private, and scriptable.").color(t.text_muted).font(theme::regular(14.0)),
             );
@@ -25,10 +25,13 @@ pub fn show(app: &mut PrintCraftApp, ui: &mut egui::Ui) {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        widgets::artcraft_mark(ui, 28.0);
+                        ui.add(icons::image("message-square-text", 28.0, t.accent));
                         ui.vertical(|ui| {
-                            ui.label(egui::RichText::new("Join the ArtCraft community").font(theme::semibold(15.0)));
-                            ui.label(egui::RichText::new("Get help, share feedback and follow development on Discord.").color(t.text_muted));
+                            ui.label(egui::RichText::new("Help and feedback").font(theme::semibold(15.0)));
+                            ui.label(
+                                egui::RichText::new("Report a problem or suggest a change on GitHub. PeDeeFe is based on PrintCraft.")
+                                    .color(t.text_muted),
+                            );
                         });
                     });
                     ui.add_space(8.0);

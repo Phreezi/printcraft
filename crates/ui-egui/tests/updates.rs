@@ -9,7 +9,7 @@ use printcraft_ui_egui::updates::{Release, UpdateSource, is_newer};
 
 fn source(answer: Result<&str, &str>) -> UpdateSource {
     let answer = answer.map(str::to_string).map_err(str::to_string);
-    Arc::new(move || answer.clone().map(|v| Release { url: format!("https://github.com/storytold/printcraft/releases/tag/{v}"), version: v }))
+    Arc::new(move || answer.clone().map(|v| Release { url: format!("https://github.com/Phreezi/printcraft/releases/tag/{v}"), version: v }))
 }
 
 fn harness(answer: Result<&str, &str>) -> Harness<'static, PrintCraftApp> {
@@ -39,7 +39,16 @@ fn versions_compare_by_number() {
     assert!(is_newer("1", "0.9.9"));
     assert!(!is_newer("v0.1.1", "0.1.1"));
     assert!(!is_newer("v0.1.0", "0.1.1"));
-    assert!(!is_newer("v0.1.1-beta.2", "0.1.1"), "suffixes are ignored");
+    assert!(!is_newer("v0.1.1-beta.2", "0.1.1"), "a pre-release comes before its release");
+    assert!(is_newer("v0.1.1", "0.1.1-beta.2"), "the release is newer than its pre-releases");
+    assert!(is_newer("v0.2.1-test.10", "0.2.1-test.9"), "test builds compare by number");
+    assert!(!is_newer("v0.2.1-test.9", "0.2.1-test.10"));
+    assert!(!is_newer("v0.2.1-test.9", "0.2.1-test.9"));
+    assert!(is_newer("v0.2.2-test.1", "0.2.1-test.40"), "the core version comes first");
+    assert!(is_newer("v0.2.1-rc.1", "0.2.1-beta.5"), "identifiers compare in ASCII order");
+    assert!(is_newer("v0.2.1-test.1.1", "0.2.1-test.1"), "more identifiers win a tie");
+    assert!(!is_newer("v0.2.1+build.5", "0.2.1"), "build metadata is ignored");
+    assert!(!is_newer("v0.2.1-te$t.1", "0.2.0"), "a malformed pre-release doesn't parse");
     assert!(!is_newer("nightly", "0.1.1"), "a tag that isn't a version is never newer");
     assert!(!is_newer("v1.2.3.4", "0.1.1"));
     assert!(!is_newer("v99999999999999999999.0.0", "0.1.1"), "out of range");
@@ -50,7 +59,7 @@ fn a_newer_release_is_offered_for_download() {
     let mut h = harness(Ok("v99.0.0"));
     h.state_mut().execute("help.check_updates");
     settle(&mut h);
-    h.get_by_label_contains("PrintCraft 99.0.0 is available");
+    h.get_by_label_contains("PeDeeFe 99.0.0 is available");
     h.get_by_label("Download");
     h.get_by_label("Later").click();
     h.run_steps(3);
@@ -83,7 +92,7 @@ fn nothing_is_asked_until_the_user_checks() {
         let counted = counted.clone();
         app.update_source = Some(Arc::new(move || {
             counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/storytold/printcraft/releases/tag/v99.0.0".into() })
+            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/Phreezi/printcraft/releases/tag/v99.0.0".into() })
         }));
         app
     });
@@ -93,5 +102,5 @@ fn nothing_is_asked_until_the_user_checks() {
     h.state_mut().execute("help.check_updates");
     settle(&mut h);
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    h.get_by_label_contains("PrintCraft 99.0.0 is available");
+    h.get_by_label_contains("PeDeeFe 99.0.0 is available");
 }

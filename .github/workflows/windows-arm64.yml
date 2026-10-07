@@ -75,8 +75,8 @@ jobs:
           $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
           $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/l*v', 'install.log' -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 60; throw "msiexec /i exited $($p.ExitCode)" }
-          $dir = Join-Path $env:ProgramFiles 'PrintCraft'
-          foreach ($exe in 'printcraft.exe', 'printcraft-cli.exe') {
+          $dir = Join-Path $env:ProgramFiles 'PeDeeFe'
+          foreach ($exe in 'pedeefe.exe', 'printcraft-cli.exe') {
             $path = Join-Path $dir $exe
             if (-not (Test-Path $path)) { Get-ChildItem -Recurse $env:ProgramFiles -Filter $exe | Select-Object -First 3; throw "$exe not installed in $dir" }
             $bytes = [System.IO.File]::ReadAllBytes($path)
@@ -109,7 +109,7 @@ jobs:
           Write-Output 'ok printcraft-cli: opened, read, edited, rendered and saved a PDF on ARM64'
           $p = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec /x exited $($p.ExitCode)" }
-          if (Test-Path (Join-Path $dir 'printcraft.exe')) { throw 'uninstall left printcraft.exe behind' }
+          if (Test-Path (Join-Path $dir 'pedeefe.exe')) { throw 'uninstall left pedeefe.exe behind' }
           Write-Output 'ok uninstalled'
 
   test:

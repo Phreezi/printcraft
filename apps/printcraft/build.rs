@@ -14,11 +14,11 @@ fn main() {
     }
     let mut res = winresource::WindowsResource::new();
     res.set_icon("../../assets/app-icon/printcraft.ico")
-        .set("ProductName", "PrintCraft")
-        .set("FileDescription", "PrintCraft PDF workbench")
-        .set("LegalCopyright", "Copyright (c) the PrintCraft contributors. MIT OR Apache-2.0.")
-        .set("OriginalFilename", "printcraft.exe")
-        .set("InternalName", "printcraft");
+        .set("ProductName", "PeDeeFe")
+        .set("FileDescription", "PeDeeFe PDF workbench (based on PrintCraft)")
+        .set("LegalCopyright", "Copyright (c) 2026 ArtCraft Team and the PrintCraft contributors. MIT OR Apache-2.0.")
+        .set("OriginalFilename", "pedeefe.exe")
+        .set("InternalName", "pedeefe");
     if let Err(e) = res.compile() {
         if std::env::var_os("PRINTCRAFT_REQUIRE_WINRES").is_some() {
             println!("cargo::error=embedding Windows resources failed: {e}");

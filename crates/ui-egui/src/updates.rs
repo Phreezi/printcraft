@@ -1,4 +1,6 @@
 //! Help ▸ Check for updates (issue #28): ask for the latest release and offer its download page.
+//! PeDeeFe asks its own repository ([`RELEASES_PAGE`]), where every pushed change publishes a
+//! Windows test build (`.github/workflows/test-build.yml`).
 //!
 //! The desktop app supplies how to ask ([`PrintCraftApp::update_source`]), so this crate has no
 //! network code; without a source (the web build, tests) the command opens the releases page.
@@ -11,8 +13,8 @@ use egui::{Align, Layout};
 
 use crate::{PrintCraftApp, theme, widgets};
 
-/// Where every PrintCraft release is listed.
-pub const RELEASES_PAGE: &str = "https://github.com/storytold/printcraft/releases";
+/// Where every PeDeeFe build is listed (this fork's releases, not PrintCraft's).
+pub const RELEASES_PAGE: &str = printcraft_engine::links::RELEASES;
 
 /// The latest published release.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,14 +29,33 @@ pub struct Release {
 pub type UpdateSource = Arc<dyn Fn() -> Result<Release, String> + Send + Sync>;
 
 /// Whether release `latest` (a tag such as `v0.2.0`) is newer than version `current` (`0.1.1`).
-/// Pre-release and build suffixes are ignored; a version that doesn't parse is never newer.
+///
+/// Versions compare by semver precedence: a pre-release comes before its release
+/// (`0.2.1-test.7` < `0.2.1`), and pre-releases compare identifier by identifier, numbers
+/// numerically (`0.2.1-test.9` < `0.2.1-test.10`), so each test build is newer than the last.
+/// Build metadata (`+…`) is ignored; a version that doesn't parse is never newer.
 pub fn is_newer(latest: &str, current: &str) -> bool {
-    matches!((parse(latest), parse(current)), (Some(l), Some(c)) if l > c)
+    match (parse(latest), parse(current)) {
+        (Some(l), Some(c)) => l.0.cmp(&c.0).then_with(|| compare_pre(&l.1, &c.1)) == std::cmp::Ordering::Greater,
+        _ => false,
+    }
 }
 
-fn parse(v: &str) -> Option<(u64, u64, u64)> {
+/// One dot-separated pre-release identifier.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Ident {
+    // Declared first: numeric identifiers have lower precedence than alphanumeric ones.
+    Num(u64),
+    Alpha(String),
+}
+
+fn parse(v: &str) -> Option<((u64, u64, u64), Vec<Ident>)> {
     let v = v.trim().trim_start_matches(['v', 'V']);
-    let core = v.split(['-', '+']).next()?;
+    let v = v.split('+').next()?;
+    let (core, pre) = match v.split_once('-') {
+        Some((c, p)) => (c, Some(p)),
+        None => (v, None),
+    };
     let mut parts = core.split('.');
     let mut next = |required: bool| match parts.next() {
         Some(p) => p.parse::<u64>().ok(),
@@ -42,7 +63,33 @@ fn parse(v: &str) -> Option<(u64, u64, u64)> {
         None => Some(0),
     };
     let version = (next(true)?, next(false)?, next(false)?);
-    parts.next().is_none().then_some(version)
+    if parts.next().is_some() {
+        return None;
+    }
+    let pre = match pre {
+        None => Vec::new(),
+        Some(p) => p
+            .split('.')
+            .map(|id| match id.parse::<u64>() {
+                Ok(n) => Some(Ident::Num(n)),
+                Err(_) if !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') => {
+                    Some(Ident::Alpha(id.to_string()))
+                }
+                Err(_) => None,
+            })
+            .collect::<Option<Vec<_>>>()?,
+    };
+    Some((version, pre))
+}
+
+/// Semver pre-release precedence; no pre-release (a release) is greatest.
+fn compare_pre(a: &[Ident], b: &[Ident]) -> std::cmp::Ordering {
+    match (a.is_empty(), b.is_empty()) {
+        (true, true) => std::cmp::Ordering::Equal,
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        (false, false) => a.cmp(b),
+    }
 }
 
 /// Where a check is.
@@ -136,14 +183,14 @@ pub(crate) fn dialog(app: &mut PrintCraftApp, ctx: &egui::Context) {
             }
             Check::Done(Ok(r)) if is_newer(&r.version, current) => {
                 let version = r.version.trim_start_matches(['v', 'V']);
-                ui.label(egui::RichText::new(format!("PrintCraft {version} is available.")).strong());
+                ui.label(egui::RichText::new(format!("PeDeeFe {version} is available.")).strong());
                 ui.label(
                     egui::RichText::new(format!("You have version {current}. Download the new version from its release page.")).color(t.text_muted),
                 );
                 download = Some(r.url.clone());
             }
             Check::Done(Ok(_)) => {
-                ui.label(format!("PrintCraft {current} is up to date."));
+                ui.label(format!("PeDeeFe {current} is up to date."));
             }
             Check::Done(Err(e)) => {
                 ui.label(format!("Couldn't check for updates: {e}"));

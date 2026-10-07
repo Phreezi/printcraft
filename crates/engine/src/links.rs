@@ -1,13 +1,19 @@
-//! Where PrintCraft and the ArtCraft community live on the web. One table, so the Help menu, the
-//! About dialog, the home screen, the CLI and the README agree.
+//! Where PeDeeFe lives on the web. One table, so the Help menu, the About dialog, the home
+//! screen, the CLI and the README agree.
+//!
+//! PeDeeFe is a fork of PrintCraft by the ArtCraft team. The fork doesn't use the ArtCraft name
+//! or marks and doesn't link to ArtCraft's community (docs: `NOTICE`, "Forks and modified
+//! versions" in PrintCraft's brand licence); it says, in plain text, what it is based on.
 
-/// The app's name in ArtCraft URLs (`getartcraft.com/apps/{APP}`, `github.com/storytold/{APP}`).
-pub const APP: &str = "printcraft";
+/// The app's name, as people see it (window title, About, installer).
+pub const APP_NAME: &str = "PeDeeFe";
 
-pub const DISCORD: &str = "https://discord.gg/artcraft";
-pub const WEBSITE: &str = "https://getartcraft.com";
-pub const APP_PAGE: &str = "https://getartcraft.com/apps/printcraft";
-pub const GITHUB: &str = "https://github.com/storytold/printcraft";
+pub const GITHUB: &str = "https://github.com/Phreezi/printcraft";
+pub const ISSUES: &str = "https://github.com/Phreezi/printcraft/issues";
+/// Where this fork's builds are published (Help ▸ Check for updates).
+pub const RELEASES: &str = "https://github.com/Phreezi/printcraft/releases";
+/// The project PeDeeFe is based on.
+pub const UPSTREAM: &str = "https://github.com/storytold/printcraft";
 
 /// A link and the registry command that opens it.
 #[derive(Clone, Copy, Debug)]
@@ -19,12 +25,11 @@ pub struct Link {
     pub icon: &'static str,
 }
 
-/// In the order they are shown. Discord comes first: it is where people get help fastest.
+/// In the order they are shown.
 pub const LINKS: &[Link] = &[
-    Link { command: "help.discord", label: "Join the ArtCraft Discord", url: DISCORD, icon: "messages-square" },
-    Link { command: "help.app_page", label: "PrintCraft web page", url: APP_PAGE, icon: "globe" },
-    Link { command: "help.github", label: "PrintCraft on GitHub", url: GITHUB, icon: "code-xml" },
-    Link { command: "help.website", label: "ArtCraft website", url: WEBSITE, icon: "external-link" },
+    Link { command: "help.issues", label: "Report a problem", url: ISSUES, icon: "message-square-text" },
+    Link { command: "help.github", label: "PeDeeFe on GitHub", url: GITHUB, icon: "code-xml" },
+    Link { command: "help.upstream", label: "Based on PrintCraft", url: UPSTREAM, icon: "book-open" },
 ];
 
 pub fn for_command(id: &str) -> Option<&'static Link> {
@@ -34,11 +39,12 @@ pub fn for_command(id: &str) -> Option<&'static Link> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn urls_follow_the_artcraft_scheme() {
-        assert_eq!(super::APP_PAGE, format!("{}/apps/{}", super::WEBSITE, super::APP));
-        assert_eq!(super::GITHUB, format!("https://github.com/storytold/{}", super::APP));
+    fn links_are_this_forks_and_registered() {
+        assert!(super::ISSUES.starts_with(super::GITHUB));
+        assert!(super::RELEASES.starts_with(super::GITHUB));
         for l in super::LINKS {
-            assert!(l.url.starts_with("https://"), "{}", l.url);
+            assert!(l.url.starts_with("https://github.com/"), "{}", l.url);
+            assert!(!l.label.contains("ArtCraft") && !l.url.contains("artcraft"), "{}", l.url);
             assert!(crate::commands::command(l.command).is_some(), "{} is a registered command", l.command);
         }
     }
