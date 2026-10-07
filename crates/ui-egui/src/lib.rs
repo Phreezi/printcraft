@@ -53,8 +53,8 @@ mod pageboxes;
 mod palette;
 mod panels;
 pub mod prepare;
-mod print_ui;
-pub use print_ui::{Handling as PrintHandling, PrintDraft, Which as PrintWhich};
+pub mod print_ui;
+pub use print_ui::{Handling as PrintHandling, PrintDraft, Which as PrintWhich, WindowOutput as PrintWindowOutput};
 mod redact_ui;
 pub use redact_ui::{HiddenDraft, PagesDraft as RedactPagesDraft, RedactPrefs, SearchDraft as RedactSearchDraft};
 pub mod i18n;
@@ -65,6 +65,7 @@ mod protect;
 mod recovery;
 pub mod theme;
 pub mod updates;
+pub mod window_state;
 /// The app's name as people see it (window title, About, installer).
 pub use printcraft_engine::links::APP_NAME;
 mod widgets;
@@ -435,6 +436,12 @@ pub struct PrintCraftApp {
     pub redact_search: RedactSearchDraft,
     pub hidden_draft: HiddenDraft,
     pub print_draft: PrintDraft,
+    /// The printer list being fetched and jobs printing in the background.
+    pub(crate) print_jobs: print_ui::PrintJobs,
+    /// The window's normal size and position and whether it is maximized (remembered).
+    pub window_state: window_state::WindowState,
+    /// Frames since start while the window is being put back (`None`: following it).
+    pub(crate) window_restore: Option<u32>,
     pub link_draft: Option<LinkDraft>,
     /// The style new text gets (Edit a PDF ▸ Format text).
     pub text_style: printcraft_engine::AddedText,
@@ -561,6 +568,9 @@ impl PrintCraftApp {
             redact_search: RedactSearchDraft::default(),
             hidden_draft: HiddenDraft::default(),
             print_draft: PrintDraft::default(),
+            print_jobs: print_ui::PrintJobs::default(),
+            window_state: window_state::WindowState::default(),
+            window_restore: None,
             link_draft: None,
             text_style: content_ui::default_style(),
             replace_draft: None,
@@ -856,6 +866,8 @@ impl PrintCraftApp {
             "custom_stamps": stamps_ui::encode(&self.custom_stamps),
             "javascript": self.session.javascript(),
             "actions": actions_ui::encode(&self.custom_actions),
+            "print": self.print_draft.prefs(),
+            "window": self.window_state,
         })
         .to_string()
     }
@@ -895,6 +907,10 @@ impl PrintCraftApp {
             self.digital_ids = ids;
         }
         self.custom_stamps = stamps_ui::decode(&v["custom_stamps"]);
+        self.print_draft.restore_prefs(&v["print"]);
+        if let Some(w) = window_state::WindowState::from_json(&v["window"]) {
+            self.window_state = w;
+        }
         self.custom_actions = actions_ui::decode(&v["actions"]);
         if let Some(on) = v["javascript"].as_bool() {
             self.session.set_javascript(on);
@@ -954,6 +970,31 @@ impl PrintCraftApp {
                 self.left_open = true;
             }
             ("left", _) => self.left_open = value != "closed",
+            // The Print dialog's options (screenshots, the control channel).
+            ("print-tab", _) => {
+                self.print_draft.handling = match value {
+                    "size" => PrintHandling::Size,
+                    "poster" => PrintHandling::Poster,
+                    "multiple" => PrintHandling::Multiple,
+                    "booklet" => PrintHandling::Booklet,
+                    "window" => PrintHandling::Window,
+                    _ => return Err("print-tab must be size, poster, multiple, booklet or window".into()),
+                };
+            }
+            ("print-paper", _) => {
+                self.print_draft.paper =
+                    print_ui::PAPER_CHOICES.iter().position(|p| p.0.eq_ignore_ascii_case(value)).ok_or("print-paper must be A4 or A3")?;
+            }
+            ("print-region", _) => {
+                let r: Vec<f64> = value.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                let r = <[f64; 4]>::try_from(r).map_err(|_| "print-region must be x0,y0,x1,y1 in points")?;
+                self.print_draft.region = r.iter().all(|v| v.is_finite()).then_some(r);
+            }
+            ("print-lock", _) => self.print_draft.lock_aspect = value != "off",
+            ("print-pick", _) => {
+                self.print_draft.picking = value == "on";
+                self.print_draft.region_page = self.print_draft.current_page;
+            }
             ("home", _) => self.active = None,
             ("dialog", _) => {
                 self.dialog = match value {
@@ -991,6 +1032,11 @@ impl PrintCraftApp {
                         // Same path as the menu, so the page range is seeded.
                         self.execute("page.number");
                         Some(Dialog::NumberPages)
+                    }
+                    "print" => {
+                        // Same path as File ▸ Print (the printer list is fetched).
+                        self.open_print();
+                        Some(Dialog::Print)
                     }
                     "none" => None,
                     _ => Some(Dialog::About),
@@ -1178,6 +1224,8 @@ impl eframe::App for PrintCraftApp {
         let now = ctx.input(|i| i.time);
         self.autosave_tick(now);
         self.poll_updates();
+        self.poll_print();
+        self.window_tick(ctx);
         self.shortcuts(ctx);
         self.process_pending_edits();
         self.poll_export();

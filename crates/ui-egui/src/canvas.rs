@@ -23,6 +23,11 @@ const MARGIN: f32 = 28.0;
 const SIDE: f32 = 70.0;
 const THUMB_TAG: u64 = 1 << 63;
 const TEXT_TAG: u64 = 1 << 62;
+/// Sharp rasters for the Print dialog's preview and window picker (the low bits carry the scale).
+const PREVIEW_TAG: u64 = 1 << 61;
+/// Longest side, in device pixels, of a print preview raster: bounds memory and render time, and
+/// stays within every GPU's texture limit (the same bound as untiled page rasters).
+const PREVIEW_SIDE: f32 = TILE_THRESHOLD;
 /// The tag of a raster that is out of date (shown until its replacement arrives).
 const STALE_TAG: u64 = u64::MAX;
 /// Pages whose raster would exceed this many device pixels on a side are drawn in tiles.
@@ -113,6 +118,11 @@ pub struct DocView {
     thumbs: HashMap<usize, TextureHandle>,
     /// Thumbnails that are out of date (still shown until their replacement arrives).
     stale_thumbs: HashSet<usize>,
+    /// Sharp rasters for the Print dialog: page → (device pixels per point, texture). A scale of
+    /// 0 marks one that is out of date (still shown until its replacement arrives).
+    previews: HashMap<usize, (f32, TextureHandle)>,
+    /// What the Print dialog shows this frame: (page, device pixels per point it needs).
+    preview_wants: Vec<(usize, f32)>,
     /// Sharp tiles of large pages: (page, tile x, tile y) → (scale tag, texture).
     tiles: HashMap<(usize, u32, u32), (u64, TextureHandle)>,
     /// Text layers, extracted in the background on demand (selection, find, copy).
@@ -126,6 +136,8 @@ pub struct DocView {
     page_count: usize,
     /// Page heights in points (view space), for mapping text positions to scroll offsets.
     page_heights: Vec<f32>,
+    /// Page widths in points (print preview raster sizes).
+    page_widths: Vec<f32>,
     /// Screen rects of the pages drawn last frame (hit-testing, tests, automation).
     screen_rects: Vec<(usize, Rect)>,
     screen_xforms: Vec<(usize, PageXform)>,
@@ -231,6 +243,8 @@ impl DocView {
             waiting_since: HashMap::new(),
             thumbs: HashMap::new(),
             stale_thumbs: HashSet::new(),
+            previews: HashMap::new(),
+            preview_wants: Vec::new(),
             tiles: HashMap::new(),
             texts: HashMap::new(),
             text_failed: HashSet::new(),
@@ -241,6 +255,7 @@ impl DocView {
             viewport_h: 600.0,
             page_count: info.pages.len(),
             page_heights: info.pages.iter().map(|p| p.height).collect(),
+            page_widths: info.pages.iter().map(|p| p.width).collect(),
             screen_rects: Vec::new(),
             screen_xforms: Vec::new(),
             viewport_screen: Rect::NOTHING,
@@ -276,6 +291,7 @@ impl DocView {
         self.invalidate_content();
         self.page_count = info.pages.len();
         self.page_heights = info.pages.iter().map(|p| p.height).collect();
+        self.page_widths = info.pages.iter().map(|p| p.width).collect();
         let last = self.page_count.saturating_sub(1);
         self.current = self.current.min(last);
         self.page_input = (self.current + 1).to_string();
@@ -313,6 +329,7 @@ impl DocView {
             p.tag = STALE_TAG;
         }
         self.stale_thumbs.extend(self.thumbs.keys().copied());
+        self.previews.values_mut().for_each(|p| p.0 = 0.0);
         self.tiles.clear();
         self.texts.clear();
         self.text_failed.clear();
@@ -334,6 +351,9 @@ impl DocView {
         }
         if self.thumbs.contains_key(&page) {
             self.stale_thumbs.insert(page);
+        }
+        if let Some(p) = self.previews.get_mut(&page) {
+            p.0 = 0.0;
         }
         self.tiles.retain(|(p, _, _), _| *p != page);
         self.texts.remove(&page);
@@ -368,9 +388,55 @@ impl DocView {
         (!quads.is_empty()).then_some((s.page, quads))
     }
 
-    /// A page's thumbnail texture, when rendered (the print preview uses them).
+    /// A page's thumbnail texture, when rendered.
     pub(crate) fn thumb_id(&self, page: usize) -> Option<egui::TextureId> {
         self.thumbs.get(&page).map(|t| t.id())
+    }
+
+    /// The sharpest texture of `page` for the Print dialog: its preview raster, else the
+    /// thumbnail (while the preview renders).
+    pub(crate) fn preview_id(&self, page: usize) -> Option<egui::TextureId> {
+        self.previews.get(&page).map(|(_, t)| t.id()).or_else(|| self.thumb_id(page))
+    }
+
+    /// The Print dialog's wishes for this frame: each page it shows and the device pixels per
+    /// point it shows it at. An empty list (the dialog closed) frees the preview rasters.
+    pub(crate) fn want_previews(&mut self, wants: Vec<(usize, f32)>) {
+        let mut merged: Vec<(usize, f32)> = Vec::new();
+        for (page, scale) in wants {
+            if page >= self.page_count || !scale.is_finite() || scale <= 0.0 {
+                continue;
+            }
+            match merged.iter_mut().find(|(p, _)| *p == page) {
+                Some(m) => m.1 = m.1.max(scale),
+                None => merged.push((page, scale)),
+            }
+        }
+        self.previews.retain(|p, _| merged.iter().any(|(m, _)| m == p));
+        self.preview_wants = merged;
+    }
+
+    /// Render requests for the Print dialog's previews that aren't sharp enough yet, most
+    /// needed first. Scales are rounded up to steps of √2 (fewer re-renders while zooming) and
+    /// capped at [`PREVIEW_SIDE`] pixels on the longest side.
+    fn preview_requests(&self) -> Vec<RenderRequest> {
+        let mut out = Vec::new();
+        for &(page, want) in &self.preview_wants {
+            if self.errors.contains_key(&page) {
+                continue;
+            }
+            let side = self.page_heights.get(page).copied().unwrap_or(792.0).max(self.page_widths.get(page).copied().unwrap_or(612.0)).max(1.0);
+            let cap = PREVIEW_SIDE / side;
+            let step = 2f32.sqrt().powf((want.max(0.05).log(2f32.sqrt())).ceil());
+            let scale = step.min(cap).max(0.05);
+            let have = self.previews.get(&page).map_or(0.0, |(s, _)| *s);
+            // Sharp enough: within a step of what's wanted, or already at the cap.
+            if have >= scale * 0.99 || (have > 0.0 && have >= cap * 0.99) {
+                continue;
+            }
+            out.push(RenderRequest { page, kind: RequestKind::Pixels, tile: None, scale, tag: PREVIEW_TAG | (scale * 1000.0) as u64 });
+        }
+        out
     }
 
     pub(crate) fn page_text(&self, page: usize) -> Option<Arc<PageText>> {
@@ -661,7 +727,13 @@ impl DocView {
                 self.tiles.insert((page, t.x / TILE, t.y / TILE), (r.request.tag, tex));
                 continue;
             }
-            if r.request.tag & THUMB_TAG != 0 {
+            if r.request.tag & PREVIEW_TAG != 0 {
+                // Only while the dialog still shows the page (a late result is dropped).
+                if self.preview_wants.iter().any(|(p, _)| *p == page) {
+                    let tex = ctx.load_texture(format!("preview-{:?}-{page}", self.id), img, TextureOptions::LINEAR);
+                    self.previews.insert(page, (r.request.scale, tex));
+                }
+            } else if r.request.tag & THUMB_TAG != 0 {
                 let tex = ctx.load_texture(format!("thumb-{:?}-{page}", self.id), img, TextureOptions::LINEAR);
                 self.thumbs.insert(page, tex);
                 self.stale_thumbs.remove(&page);
@@ -915,6 +987,10 @@ pub fn document_area(app: &mut PrintCraftApp, index: usize, ui: &mut egui::Ui) {
         return;
     }
     let want_thumbs = app.right == Some(RightPanel::Pages) || app.views[index].organize || app.dialog == Some(crate::Dialog::Print);
+    if app.dialog != Some(crate::Dialog::Print) {
+        // The Print dialog closed: free its preview rasters.
+        app.views[index].want_previews(Vec::new());
+    }
     // The Prepare a form panel is open (or a field tool is picked): fields are edited, not filled.
     let preparing = app.is_preparing();
     // Edit a PDF: added text and images can be selected, moved and edited.
@@ -1509,8 +1585,9 @@ pub fn document_area(app: &mut PrintCraftApp, index: usize, ui: &mut egui::Ui) {
     wanted.sort_by_key(|w| ((w.0 as isize - cur as isize).unsigned_abs(), w.3.is_some()));
     // Tiles for other zoom levels or far-away pages are useless: free them.
     view.tiles.retain(|(p, _, _), (t, _)| *t == tag && p.abs_diff(cur) <= 2);
-    let mut queue: Vec<RenderRequest> =
-        wanted.iter().map(|&(page, scale, tag, tile)| RenderRequest { page, kind: RequestKind::Pixels, tile, scale, tag }).collect();
+    // The Print dialog's previews first: the dialog is modal, so they are what is looked at.
+    let mut queue: Vec<RenderRequest> = view.preview_requests();
+    queue.extend(wanted.iter().map(|&(page, scale, tag, tile)| RenderRequest { page, kind: RequestKind::Pixels, tile, scale, tag }));
     // Text layers: visible pages for selection, every page while a search is active.
     let need_text = |p: &usize| !view.texts.contains_key(p) && !view.text_failed.contains(p);
     let mut text_pages: Vec<usize> = if hand { Vec::new() } else { visible_now.iter().copied().filter(need_text).collect() };
@@ -2298,10 +2375,12 @@ fn organize_grid(view: &mut DocView, info: &DocInfo, pool: &RenderPool, editable
         }
     });
     let s = THUMB_W * ppp / info.pages.iter().map(|p| p.width).fold(1.0, f32::max);
-    let queue: Vec<RenderRequest> = (0..info.pages.len())
-        .filter(|p| (!view.thumbs.contains_key(p) || view.stale_thumbs.contains(p)) && !view.errors.contains_key(p))
-        .map(|page| RenderRequest { page, kind: RequestKind::Pixels, tile: None, scale: s, tag: THUMB_TAG })
-        .collect();
+    let mut queue: Vec<RenderRequest> = view.preview_requests();
+    queue.extend(
+        (0..info.pages.len())
+            .filter(|p| (!view.thumbs.contains_key(p) || view.stale_thumbs.contains(p)) && !view.errors.contains_key(p))
+            .map(|page| RenderRequest { page, kind: RequestKind::Pixels, tile: None, scale: s, tag: THUMB_TAG }),
+    );
     if queue != view.last_queue {
         pool.set_queue(queue.clone());
         view.last_queue = queue;

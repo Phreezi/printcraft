@@ -12,4 +12,7 @@ workspace = true
 printcraft-cos = { workspace = true }
 printcraft-content = { workspace = true }
 printcraft-model = { workspace = true }
+# Windows prints the sheets as images (raster.rs): drawn by the renderer, written as PNG.
+printcraft-render = { workspace = true }
+png = "0.18"
 thiserror = { workspace = true }

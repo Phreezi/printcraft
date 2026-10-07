@@ -1,8 +1,17 @@
-//! The system print spooler. On macOS and Linux this is CUPS: printers come from `lpstat`, jobs
-//! go to `lp` with the job options (copies, collation, duplex, colour). Other platforms report
-//! that printing isn't available yet; the print-ready PDF can still be saved.
+//! The system print spooler.
+//!
+//! - **macOS and Linux**: CUPS. Printers come from `lpstat`, jobs go to `lp` with the job options
+//!   (copies, collation, duplex, colour).
+//! - **Windows**: Windows' own printing. The sheets are drawn as images at the job's resolution
+//!   ([`crate::raster`]) and printed through `System.Drawing.Printing`, driven by Windows
+//!   PowerShell, which every Windows 10 and 11 has ([`windows`]). Every printer driver takes an
+//!   image; only some understand PDF.
+//! - Elsewhere (the web): printing to a printer isn't available; the print-ready PDF can still be
+//!   saved.
 
 use crate::PrintError;
+
+pub mod windows;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Printer {
@@ -18,6 +27,9 @@ pub enum Duplex {
     ShortEdge,
 }
 
+/// Print quality choices (dots per inch) for spoolers that print sheets as images (Windows).
+pub const QUALITIES: [(u32, &str); 2] = [(300, "Standard (300 dpi)"), (600, "High (600 dpi)")];
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Job {
     /// `None` = the system default printer.
@@ -27,12 +39,36 @@ pub struct Job {
     pub duplex: Duplex,
     pub grayscale: bool,
     pub title: String,
+    /// Resolution of the sheet images, where sheets print as images (Windows); see [`QUALITIES`].
+    pub dpi: u32,
+    /// Windows: print into this file instead of through the printer's port (for example with
+    /// "Microsoft Print to PDF"). Ignored by CUPS.
+    pub print_to_file: Option<String>,
 }
 
 impl Default for Job {
     fn default() -> Self {
-        Job { printer: None, copies: 1, collate: true, duplex: Duplex::Off, grayscale: false, title: "PrintCraft".into() }
+        Job {
+            printer: None,
+            copies: 1,
+            collate: true,
+            duplex: Duplex::Off,
+            grayscale: false,
+            title: "PeDeeFe".into(),
+            dpi: QUALITIES[0].0,
+            print_to_file: None,
+        }
     }
+}
+
+/// Whether this platform can send jobs to printers (otherwise only Save as PDF).
+pub const fn available() -> bool {
+    cfg!(any(windows, all(unix, not(target_arch = "wasm32"))))
+}
+
+/// Whether sheets go to the printer as images (and print quality matters).
+pub const fn prints_images() -> bool {
+    cfg!(windows)
 }
 
 /// Parse `lpstat -p -d` output.
@@ -70,22 +106,33 @@ pub fn lp_args(job: &Job, file: &str) -> Vec<String> {
     a
 }
 
-/// The printers the system knows (empty when there are none or no spooler).
+/// The printers the system knows (empty when there are none or no spooler). This can take a
+/// second on Windows: call it off the UI thread.
 pub fn printers() -> Vec<Printer> {
+    list_printers().unwrap_or_default()
+}
+
+/// The printers the system knows, or why they couldn't be listed.
+pub fn list_printers() -> Result<Vec<Printer>, PrintError> {
     #[cfg(all(unix, not(target_arch = "wasm32")))]
     {
         match std::process::Command::new("lpstat").args(["-p", "-d"]).output() {
-            Ok(o) => parse_lpstat(&String::from_utf8_lossy(&o.stdout)),
-            Err(_) => Vec::new(),
+            Ok(o) => Ok(parse_lpstat(&String::from_utf8_lossy(&o.stdout))),
+            Err(e) => Err(PrintError::Spool(format!("the print spooler is not available: {e}"))),
         }
     }
-    #[cfg(not(all(unix, not(target_arch = "wasm32"))))]
+    #[cfg(windows)]
     {
-        Vec::new()
+        windows::list()
+    }
+    #[cfg(not(any(windows, all(unix, not(target_arch = "wasm32")))))]
+    {
+        Ok(Vec::new())
     }
 }
 
-/// Send a print-ready PDF to the spooler. Returns the spooler's message (the job id).
+/// Send a print-ready PDF to the spooler. Returns the spooler's message (the job id, or notes
+/// worth showing). Blocking: on Windows it draws every sheet first, so run it off the UI thread.
 pub fn submit(pdf: &[u8], job: &Job) -> Result<String, PrintError> {
     #[cfg(all(unix, not(target_arch = "wasm32")))]
     {
@@ -103,9 +150,13 @@ pub fn submit(pdf: &[u8], job: &Job) -> Result<String, PrintError> {
             Err(PrintError::Spool(if err.is_empty() { "the print job was refused".into() } else { err }))
         }
     }
-    #[cfg(not(all(unix, not(target_arch = "wasm32"))))]
+    #[cfg(windows)]
+    {
+        windows::submit(pdf, job)
+    }
+    #[cfg(not(any(windows, all(unix, not(target_arch = "wasm32")))))]
     {
         let _ = (pdf, job);
-        Err(PrintError::Spool("printing to a printer isn't available on this platform yet; save the print-ready PDF instead".into()))
+        Err(PrintError::Spool("printing to a printer isn't available here; save the print-ready PDF instead".into()))
     }
 }

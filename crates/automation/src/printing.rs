@@ -83,14 +83,22 @@ impl Automation {
             c => return Err(bad(format!("unknown comments_forms {c:?}"))),
         };
         let paper = match a.opt_str("paper")? {
-            None => PAPERS[0].1,
+            // PeDeeFe prints on A4 unless told otherwise.
+            None => print::A4,
             Some(p) => PAPERS
                 .iter()
                 .find(|(n, _)| n.eq_ignore_ascii_case(p) || n.replace("US ", "").eq_ignore_ascii_case(p))
                 .map(|x| x.1)
                 .ok_or_else(|| bad(format!("unknown paper {p:?} (Letter, Legal, Tabloid, A3, A4, A5)")))?,
         };
-        let settings = print::Settings { pages, paper, orientation, layout, content };
+        let region = match a.get("region") {
+            None => None,
+            Some(v) => {
+                let r: Vec<f64> = v.as_array().map(|x| x.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
+                Some(<[f64; 4]>::try_from(r).map_err(|_| bad("region must be 4 numbers: x0, y0, x1, y1 in points"))?)
+            }
+        };
+        let settings = print::Settings { pages, paper, orientation, layout, content, region };
         let sizes: Vec<(f64, f64)> = self.doc(a)?.info.pages.iter().map(|p| (p.width as f64, p.height as f64)).collect();
         let sheets = print::layout(&sizes, &settings).map_err(|e| bad(e.to_string()))?.len();
         let bytes = self.session.print_pdf(id, &settings).map_err(failed)?;
@@ -115,6 +123,8 @@ impl Automation {
                     },
                     grayscale: a.opt_bool("grayscale")?.unwrap_or(false),
                     title: name,
+                    dpi: a.opt_int("dpi")?.unwrap_or(i64::from(spool::QUALITIES[0].0)).clamp(72, 1200) as u32,
+                    print_to_file: None,
                 };
                 out["job"] = json!(spool::submit(&bytes, &job).map_err(|e| failed(e.to_string()))?);
             }

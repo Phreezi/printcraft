@@ -4026,9 +4026,11 @@ dependencies = [
 name = "printcraft-print"
 version = "0.2.1"
 dependencies = [
+ "png 0.18.1",
  "printcraft-content",
  "printcraft-cos",
  "printcraft-model",
+ "printcraft-render",
  "thiserror 2.0.21",
 ]
 

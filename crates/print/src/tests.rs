@@ -183,11 +183,173 @@ fn spooler_arguments_and_printer_list() {
         [spool::Printer { name: "Office_Laser".into(), default: true }, spool::Printer { name: "Label_Writer".into(), default: false }]
     );
     assert!(parse_lpstat("lpstat: No destinations added.\nno system default destination\n").is_empty());
-    let job =
-        Job { printer: Some("Office_Laser".into()), copies: 3, collate: false, duplex: Duplex::LongEdge, grayscale: true, title: "memo.pdf".into() };
+    let job = Job {
+        printer: Some("Office_Laser".into()),
+        copies: 3,
+        collate: false,
+        duplex: Duplex::LongEdge,
+        grayscale: true,
+        title: "memo.pdf".into(),
+        ..Job::default()
+    };
     assert_eq!(
         lp_args(&job, "/tmp/x.pdf").join(" "),
         "-d Office_Laser -n 3 -t memo.pdf -o collate=false -o sides=two-sided-long-edge -o print-color-mode=monochrome -o fit-to-page=false -- /tmp/x.pdf"
     );
     assert_eq!(lp_args(&Job::default(), "f.pdf")[0], "-n", "no -d: the default printer");
+}
+
+#[test]
+fn a_window_prints_only_that_area() {
+    // A 200 × 300 page; the window is its top-right quarter.
+    let sizes = [(200.0, 300.0)];
+    let region = Some([100.0, 150.0, 200.0, 300.0]);
+    let fit = layout(&sizes, &Settings { region, ..settings(vec![0], Layout::Size(SizeMode::Fit)) }).unwrap();
+    let pl = fit[0].placed[0];
+    assert_eq!(pl.clip, [100.0, 150.0, 200.0, 300.0], "clipped to the window");
+    // The window (100 × 150) fills the printable area: min(576 / 100, 756 / 150) = 5.04.
+    assert!(close(pl.matrix.0[0], 5.04), "{:?}", pl.matrix);
+    // Its corners land inside the sheet's printable area, centred.
+    let (x0, y0) = pl.matrix.apply(100.0, 150.0);
+    let (x1, y1) = pl.matrix.apply(200.0, 300.0);
+    assert!(close(x0 + x1, 612.0) && close(y0 + y1, 792.0), "centred: {x0} {y0} {x1} {y1}");
+    assert!(close(y1 - y0, 756.0), "full printable height");
+    // Poster: the window, enlarged, tiles over several sheets; nothing outside it shows.
+    let poster = layout(&sizes, &Settings { region, ..settings(vec![0], Layout::Poster { scale: 800.0, overlap: 0.0, cut_marks: false }) }).unwrap();
+    assert!(poster.len() > 1);
+    for sheet in &poster {
+        let c = sheet.placed[0].clip;
+        assert!(c[0] >= 100.0 && c[1] >= 150.0 && c[2] <= 200.0 && c[3] <= 300.0, "{c:?}");
+    }
+    // A window larger than the page is cut to the page; one off the page is an error.
+    assert_eq!(page_view((200.0, 300.0), Some([-50.0, -50.0, 500.0, 500.0])), Some(((0.0, 0.0), (200.0, 300.0))));
+    let off = layout(&sizes, &Settings { region: Some([300.0, 300.0, 400.0, 400.0]), ..settings(vec![0], Layout::Size(SizeMode::Fit)) });
+    assert!(matches!(off, Err(PrintError::Invalid(_))));
+    assert_eq!(page_view((200.0, 300.0), Some([f64::NAN, 0.0, 10.0, 10.0])), None);
+    // The print-ready PDF clips to the window.
+    let doc = fixture(1);
+    let bytes = impose(&doc, &Settings { region, ..settings(vec![0], Layout::Size(SizeMode::Fit)) }).unwrap();
+    let out = Document::open(Arc::new(bytes)).unwrap();
+    let sheet = &printcraft_model::pages(&out)[0];
+    let content = String::from_utf8_lossy(&decoded_contents(&out, &sheet.dict)).into_owned();
+    assert!(content.contains("100 150 100 150 re W n"), "{content}");
+}
+
+#[test]
+fn sheets_are_drawn_as_images() {
+    let doc = fixture(3);
+    // Pages 1 and 3 (landscape): two sheets, the second turned.
+    let pdf = impose(&doc, &settings(vec![0, 2], Layout::Size(SizeMode::Fit))).unwrap();
+    let dir = std::env::temp_dir().join(format!("printcraft-raster-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let sheets = crate::raster::write_sheets(&pdf, 72, false, &dir).unwrap();
+    assert_eq!(sheets.len(), 2);
+    assert!(!sheets[0].landscape && sheets[1].landscape);
+    assert_eq!(sheets[0].pixels, (612, 792), "72 dpi: one pixel per point");
+    assert!(sheets[1].path.to_string_lossy().ends_with("sheet-00002-l.png"));
+    let png = std::fs::read(&sheets[0].path).unwrap();
+    assert_eq!(&png[1..4], b"PNG");
+    // Grayscale at 150 dpi.
+    let gray = crate::raster::write_sheets(&pdf, 150, true, &dir).unwrap();
+    let (w, h) = gray[0].pixels;
+    assert!(w.abs_diff(1275) <= 1 && h.abs_diff(1650) <= 1, "8.5 × 11 in at 150 dpi: {w} × {h}");
+    let decoder = png::Decoder::new(std::io::Cursor::new(std::fs::read(&gray[0].path).unwrap()));
+    let reader = decoder.read_info().unwrap();
+    assert_eq!(reader.info().color_type, png::ColorType::Grayscale);
+    let _ = std::fs::remove_dir_all(&dir);
+    // A malformed image buffer is refused, not written.
+    assert!(crate::raster::write_png(&std::env::temp_dir().join("never.png"), 10, 10, &[0; 7], false, 300).is_err());
+}
+
+#[test]
+fn windows_spooler_scripts_and_answers() {
+    use crate::spool::windows::{base64_decode, job_env, paper_name, parse_printers, parse_report};
+    assert_eq!(base64_decode("SGVsbG8=").unwrap(), b"Hello");
+    assert_eq!(base64_decode("SGVsbG8").unwrap(), b"Hello", "padding is optional");
+    assert_eq!(base64_decode("").unwrap(), b"");
+    assert!(base64_decode("not base64!").is_none());
+    // "HP LaserJet (escritório)" and a network printer, as Windows PowerShell reports them.
+    let enc = |s: &str| {
+        const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let b = s.as_bytes();
+        let mut o = String::new();
+        for c in b.chunks(3) {
+            let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+            for (i, sh) in [18, 12, 6, 0].iter().enumerate() {
+                o.push(if i <= c.len() { A[((n >> sh) & 63) as usize] as char } else { '=' });
+            }
+        }
+        o
+    };
+    let out = format!("printer {}\r\ndefault {}\r\nnoise\r\nprinter !!!\r\n", enc("HP LaserJet (escritório)"), enc(r"\\server\Plotter A3"));
+    assert_eq!(
+        parse_printers(&out),
+        [
+            spool::Printer { name: "HP LaserJet (escritório)".into(), default: false },
+            spool::Printer { name: r"\\server\Plotter A3".into(), default: true }
+        ]
+    );
+    // Reports: notes, errors (Windows' own words, any language), and PowerShell failing outright.
+    assert_eq!(parse_report(&format!("note {}\ndone 2\n", enc("no A3")), "", true), Ok(vec!["no A3".to_string()]));
+    assert_eq!(
+        parse_report(&format!("error {}\n", enc("A impressora não está disponível")), "", false),
+        Err("A impressora não está disponível".into())
+    );
+    assert_eq!(
+        parse_report("", "File cannot be loaded because running scripts is disabled", false),
+        Err("File cannot be loaded because running scripts is disabled".into())
+    );
+    assert!(parse_report("", "", false).is_err());
+    // The job's environment: everything the script reads, nothing it has to parse.
+    let job =
+        Job { printer: Some("Office".into()), copies: 2, duplex: Duplex::ShortEdge, grayscale: true, title: "plan\n.pdf".into(), ..Job::default() };
+    let env: std::collections::HashMap<_, _> = job_env(&job, std::path::Path::new("C:/t"), (842.0, 595.0)).into_iter().collect();
+    assert_eq!(env["PRINTCRAFT_PRINTER"], "Office");
+    assert_eq!(env["PRINTCRAFT_COPIES"], "2");
+    assert_eq!(env["PRINTCRAFT_DUPLEX"], "short");
+    assert_eq!(env["PRINTCRAFT_COLOR"], "0");
+    assert_eq!(env["PRINTCRAFT_TITLE"], "plan.pdf", "no control characters");
+    assert_eq!((env["PRINTCRAFT_PAPER_W"].as_str(), env["PRINTCRAFT_PAPER_H"].as_str()), ("826", "1169"), "A4 portrait in 1/100 in");
+    assert_eq!(env["PRINTCRAFT_PAPER_NAME"], "A4");
+    assert_eq!(paper_name(crate::A3), "A3");
+    assert_eq!(paper_name((300.0, 400.0)), "106 × 141 mm");
+    // The scripts never interpolate job values: they only read the environment.
+    for script in [crate::spool::windows::PRINT_SCRIPT, crate::spool::windows::LIST_SCRIPT] {
+        assert!(!script.contains("{}") && script.contains("$ErrorActionPreference = 'Stop'"));
+    }
+}
+
+/// Windows only: print two sheets to a PDF file through "Microsoft Print to PDF", the whole way
+/// (sheet images, PowerShell, the spooler). Skips where that printer isn't installed.
+#[cfg(windows)]
+#[test]
+fn windows_prints_through_microsoft_print_to_pdf() {
+    let printers = match spool::list_printers() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("skipped: the printers couldn't be listed here ({e})");
+            return;
+        }
+    };
+    let Some(pdf_printer) = printers.iter().find(|p| p.name == "Microsoft Print to PDF") else {
+        eprintln!("skipped: no Microsoft Print to PDF printer here ({printers:?})");
+        return;
+    };
+    let doc = fixture(3);
+    let pdf = impose(&doc, &Settings { paper: crate::A4, ..settings(vec![0, 2], Layout::Size(SizeMode::Fit)) }).unwrap();
+    let out = std::env::temp_dir().join(format!("pedeefe-print-test-{}.pdf", std::process::id()));
+    let _ = std::fs::remove_file(&out);
+    let job = Job {
+        printer: Some(pdf_printer.name.clone()),
+        dpi: 150,
+        print_to_file: Some(out.to_string_lossy().into_owned()),
+        title: "PeDeeFe test".into(),
+        ..Job::default()
+    };
+    spool::submit(&pdf, &job).expect("printed");
+    let bytes = std::fs::read(&out).expect("Microsoft Print to PDF wrote the file");
+    assert!(bytes.starts_with(b"%PDF"), "a PDF");
+    let printed = Document::open(Arc::new(bytes)).unwrap();
+    assert_eq!(printcraft_model::pages(&printed).len(), 2, "both sheets printed");
+    let _ = std::fs::remove_file(&out);
 }

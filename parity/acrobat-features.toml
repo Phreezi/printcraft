@@ -7818,8 +7818,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["printers", "doc_print"]
-evidence = ["crates/print/src/tests.rs::spooler_arguments_and_printer_list"]
-notes = "CUPS printers via lpstat; Save as PDF; Windows spooler pending"
+evidence = ["crates/print/src/tests.rs::spooler_arguments_and_printer_list", "crates/print/src/tests.rs::windows_spooler_scripts_and_answers", "crates/print/src/tests.rs::windows_prints_through_microsoft_print_to_pdf", "crates/ui-egui/tests/print.rs::a_printer_list_arriving_keeps_the_users_choice"]
+notes = "CUPS printers via lpstat; Windows printers through System.Drawing.Printing driven by Windows PowerShell (sheets as images, the printer's matching paper, per-sheet orientation); list fetched and jobs printed in the background; the choice is remembered; Save as PDF. Missing: the printer's own properties dialog, paper trays. The Windows end-to-end test runs only where Microsoft Print to PDF is installed."
 
 [[feature]]
 id = "print.copies-collate"
@@ -7930,6 +7930,18 @@ evidence = ["crates/print/src/tests.rs::posters_tile_with_overlap", "crates/auto
 notes = "tile scale, overlap, cut marks (labels pending)"
 
 [[feature]]
+id = "print.selected-area"
+title = "Print a selected area of the page (window)"
+area = "L"
+tier = "P2"
+milestone = "M10"
+status = "shipped"
+commands = ["print.dialog"]
+tools = ["doc_print"]
+evidence = ["crates/print/src/tests.rs::a_window_prints_only_that_area", "crates/ui-egui/tests/print.rs::window_tab_prints_the_selected_area", "crates/ui-egui/tests/print.rs::window_picker_draws_and_moves_the_area", "crates/ui-egui/tests/print.rs::window_geometry"]
+notes = "PeDeeFe's Window tab, like AutoCAD's plot window: drag a rectangle in a large picker (zoom, pan, move); locked to the A4/A3 sheet's proportions it fills the sheet at the largest size, unlocked it prints on one sheet or as a poster; the area applies to every page printed. doc_print region. Acrobat's own route is a snapshot of the selected graphic."
+
+[[feature]]
 id = "print.orientation"
 title = "Auto portrait/landscape"
 area = "L"
@@ -7975,7 +7987,7 @@ status = "shipped"
 commands = ["print.dialog"]
 tools = []
 evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf"]
-notes = "live sheet preview with sheet navigation"
+notes = "live sheet preview with sheet navigation, drawn sharp at the screen's resolution (pages rendered at the displayed scale, thumbnails only while they render)"
 
 [[feature]]
 id = "print.grayscale"
@@ -7987,7 +7999,7 @@ status = "partial"
 commands = ["print.dialog"]
 tools = ["doc_print"]
 evidence = ["crates/print/src/tests.rs::spooler_arguments_and_printer_list"]
-notes = "asks the printer for monochrome; the PDF itself stays in colour"
+notes = "CUPS asks the printer for monochrome (the PDF stays in colour); Windows draws the sheets in grayscale and asks for monochrome"
 
 [[feature]]
 id = "print.print-as-image"
@@ -7995,11 +8007,11 @@ title = "Print as image"
 area = "L"
 tier = "P1"
 milestone = "M10"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = ""
+status = "partial"
+commands = ["print.dialog"]
+tools = ["doc_print"]
+evidence = ["crates/print/src/tests.rs::sheets_are_drawn_as_images"]
+notes = "Windows always prints sheets as images (300 or 600 dpi, print quality in the dialog); no Print as image option for CUPS"
 
 [[feature]]
 id = "print.page-setup"

@@ -62,6 +62,8 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
     let modal = egui::Modal::new(egui::Id::new("dialog")).show(ctx, |ui| {
         ui.set_width(match dialog {
             Dialog::Properties(_) => 640.0,
+            // The window picker wants room: most of the app window.
+            Dialog::Print if app.print_draft.picking => (ctx.content_rect().width() - 80.0).clamp(820.0, 1600.0),
             Dialog::Print => 820.0,
             Dialog::FieldProps => 600.0,
             _ => 520.0,
@@ -743,9 +745,10 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                 let Some(doc) = app.session.get(id) else { return };
                 let sizes: Vec<(f64, f64)> = doc.info.pages.iter().map(|p| (p.width as f64, p.height as f64)).collect();
                 let labels: Vec<String> = doc.info.pages.iter().map(|p| p.label.clone()).collect();
-                let thumbs: std::collections::HashMap<usize, egui::TextureId> =
-                    (0..sizes.len()).filter_map(|p| app.views[i].thumb_id(p).map(|t| (p, t))).collect();
-                let (go, cancel) = crate::print_ui::body(ui, &mut app.print_draft, &t, &sizes, &labels, &|p| thumbs.get(&p).copied());
+                let view = &app.views[i];
+                let mut wants = Vec::new();
+                let (go, cancel) = crate::print_ui::body(ui, &mut app.print_draft, &t, &sizes, &labels, &|p| view.preview_id(p), &mut wants);
+                app.views[i].want_previews(wants);
                 print_go = go;
                 close = go || cancel;
                 return;

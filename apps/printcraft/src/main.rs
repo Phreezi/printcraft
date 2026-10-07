@@ -96,6 +96,8 @@ fn main() -> eframe::Result {
             if let Some(json) = cc.storage.and_then(|s| s.get_string("printcraft")) {
                 app.restore(&json);
             }
+            // Maximized last time (or the first start): maximize once the window is up.
+            app.restore_window();
             app.integrated_titlebar = integrated;
             app.update_source = Some(std::sync::Arc::new(updates::latest_release));
             app.keychain_ids = cfg!(target_os = "macos");
