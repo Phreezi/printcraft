@@ -98,6 +98,7 @@ $Msi = Join-Path $Dist "pedeefe-$Version-windows-$Arch.msi"
 Invoke-Native 'wix build' {
   wix build (Join-Path $PSScriptRoot 'printcraft.wxs') -arch $Arch `
     -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "IconPath=$(Join-Path $Root 'assets\app-icon\printcraft.ico')" `
+    -d "DocIconPath=$(Join-Path $Root 'assets\brand\pedeefe\document\pedeefe-document.ico')" `
     -o $Msi
 }
 # wix writes its debug symbols (.wixpdb) next to the MSI; keep them out of the release assets.

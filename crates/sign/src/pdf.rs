@@ -355,7 +355,7 @@ fn validate_into(doc: &Document, bytes: &[u8], trust: &TrustStore, v: &Dict, inf
     // The signed revision's number: its cross-reference sections (1 for a reconstructed file).
     info.revision = cache.revision(bytes, covered).map_or(1, |d| d.revisions().len().max(1));
     if info.sub_filter.as_deref() == Some("adbe.x509.rsa_sha1") {
-        info.details.push("This signature uses the legacy adbe.x509.rsa_sha1 format, which PrintCraft does not validate yet.".into());
+        info.details.push("This signature uses the legacy adbe.x509.rsa_sha1 format, which PeDeeFe does not validate yet.".into());
         return;
     }
     let sd = match SignedData::parse(&contents) {
@@ -706,7 +706,7 @@ pub fn sign(doc: &Document, id: &DigitalId, opts: &SignOptions) -> Result<Vec<u8
         }
     }
     let mut app = Dict::new();
-    app.set(b"Name".to_vec(), Object::name("PrintCraft"));
+    app.set(b"Name".to_vec(), Object::name("PeDeeFe"));
     let mut build = Dict::new();
     build.set(b"App".to_vec(), Object::Dict(app));
     v.set(b"Prop_Build".to_vec(), Object::Dict(build));

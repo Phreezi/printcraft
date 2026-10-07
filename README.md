@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/pedeefe/logo/pedeefe-logo-white.svg">
+    <img alt="PeDeeFe" src="assets/brand/pedeefe/logo/pedeefe-logo.svg" width="360">
+  </picture>
+</p>
+
 # PeDeeFe
 
 **An open-source PDF workbench written in Rust, with printing that works on Windows.**
@@ -22,8 +29,9 @@ splitting, comments, forms, signatures, redaction, the CLI and the MCP server), 
   size it can. Unlocked, pick any area and print it on one sheet or as a poster over several.
 - **A sharp print preview**, drawn at the screen's resolution instead of from thumbnails.
 - **The window remembers its size and position**, and whether it was maximized.
-- Its own identity: it installs next to an official PrintCraft instead of replacing it, keeps its
-  own settings, and checks this repository for updates.
+- Its own identity: its own name, logo and icons ([brand kit](assets/brand/pedeefe/README.md)); it
+  installs next to an official PrintCraft instead of replacing it, keeps its own settings, and checks
+  this repository for updates.
 
 ## Install a test build (Windows)
 

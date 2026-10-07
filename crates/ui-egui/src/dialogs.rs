@@ -1016,7 +1016,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
             }
             Dialog::About => {
                 ui.horizontal(|ui| {
-                    ui.add(crate::icons::image("file-text", 40.0, t.accent));
+                    widgets::app_icon(ui, 40.0);
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new(printcraft_engine::links::APP_NAME).font(theme::semibold(20.0)));
                         ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));

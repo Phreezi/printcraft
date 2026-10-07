@@ -1,35 +1,26 @@
-# PrintCraft app icon
+# PeDeeFe app icon
 
-<img src="printcraft-small.svg" alt="PrintCraft app icon: an engraved lion's head on green" width="128">
+<img src="printcraft.svg" alt="PeDeeFe app icon: an indigo tile with a dog-eared amber corner and a white p/d ligature" width="128">
 
-**Creature:** a lion, in a frontal head-and-shoulders portrait, mane running off the bottom of the tile.
+The app icon the builds and packages use: the PeDeeFe icon from the brand kit in
+[`assets/brand/pedeefe/`](../brand/pedeefe/README.md), copied here under the file names the packaging
+scripts expect (`printcraft.*`, and `ai.storyteller.printcraft` in `hicolor/`, the app id). The kit's
+`logo/pedeefe-icon.svg` is the master; regenerate the kit with its `render.sh`, then copy its
+`app-icon/` files here (or run `packaging/icons.sh`, which renders the same files from `printcraft.svg`).
 
-**Style:** an engraving (woodcut-weight line work) portrait in the Crafting Apps "owl template" framing:
-a full-bleed colour field, no frame or roundel, the animal looking at the viewer and filling the tile.
+**Tile:** `viewBox="0 0 512 512"`, a rounded square with `rx=112`. Windows and Linux icons use the
+full-bleed tile. macOS icons put it on Apple's grid (an 824 px body centred on a transparent 1024 px
+canvas).
 
-**Palette:** exactly three colours.
-
-| Colour | Hex | Used for |
-|---|---|---|
-| Ink | `#0b0b0c` | line work and the figure's contour |
-| Paper | `#efe9dc` | the figure (the lion's silhouette) |
-| PrintCraft green (app colour) | `#12a58a` | the full-bleed field |
-
-**Tile:** `viewBox="0 0 512 512"`, a rounded square with `rx=112` that clips everything. Windows and Linux
-icons use the full-bleed tile. macOS icons put it on Apple's grid (an 824 px body centred on a transparent
-1024 px canvas).
-
-**Provenance:** the project owner's original drawing, made in ArtCraft (2880 px, keyed to the palette), then
-vectorised with craftrules `assets/logo-options/_tools/vectorize_tile.py` (potrace; no filtering or
-warping). The source drawing is kept in craftrules at `assets/app-icons/printcraft/source.png`, not here.
-Licence: [LICENSE.txt](LICENSE.txt) (`MIT OR Apache-2.0`, like the repo).
+Licence: [LICENSE.txt](LICENSE.txt) (`MIT OR Apache-2.0`, like the repo). PeDeeFe no longer uses
+PrintCraft's lion icon.
 
 ## Files
 
 | File | What it is |
 |---|---|
 | `printcraft.svg` | the master vector (traced at 2048 px); every PNG, `.ico` and `.icns` is rendered from it |
-| `printcraft-small.svg` | a lighter vector (traced at 1024 px) for places where size matters, such as this README |
+| ~~`printcraft-small.svg`~~ (removed) | a lighter vector (traced at 1024 px) for places where size matters, such as this README |
 | `printcraft-1024.png` | 1024 px on Apple's grid; also the runtime Dock icon on macOS |
 | `printcraft.icns` | macOS icon (16–1024 px) |
 | `printcraft.ico` | Windows icon (16–256 px), embedded in `printcraft.exe` by `apps/printcraft/build.rs` |

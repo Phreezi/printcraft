@@ -51,6 +51,7 @@ fn about_dialog_names_the_app_and_its_origin() {
         app.dialog = Some(Dialog::About);
     });
     h.get_by_label("PeDeeFe");
+    h.get_by_label("PeDeeFe icon");
     h.get_by_label_contains("Based on PrintCraft by the ArtCraft team");
     assert_eq!(h.query_all_by_label("ArtCraft").count(), 0, "no ArtCraft mark (alt text)");
     h.get_by_label("Report a problem").click();

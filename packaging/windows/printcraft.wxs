@@ -2,7 +2,7 @@
 <!--
   PeDeeFe MSI (WiX Toolset v5: `dotnet tool install -g wix`). Built by package.ps1:
 
-    wix build printcraft.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -o out.msi
+    wix build printcraft.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -d DocIconPath=... -o out.msi
 
   PeDeeFe is a fork of PrintCraft with its own identity (name, manufacturer, UpgradeCode, component
   GUIDs, executable name, ProgID and registry keys), so it installs next to an official PrintCraft
@@ -64,7 +64,9 @@
              entry to pick was the advertised Start Menu shortcut, which Windows can't run as a
              file handler ("This app can't run on your PC"). -->
         <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document" Value="PDF Document" Type="string" />
-        <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\DefaultIcon" Value="[#PrintcraftExe],0" Type="string" />
+        <!-- PDF files opened with PeDeeFe show its document icon (assets/brand/pedeefe/document). -->
+        <File Id="PedeefeDocIcon" Source="$(var.DocIconPath)" Name="pedeefe-document.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\DefaultIcon" Value="[#PedeefeDocIcon]" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\shell\open\command" Value="&quot;[#PrintcraftExe]&quot; &quot;%1&quot;" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\.pdf\OpenWithProgids" Name="PeDeeFe.Document" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe" Name="FriendlyAppName" Value="PeDeeFe" Type="string" />

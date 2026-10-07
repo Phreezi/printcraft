@@ -40,7 +40,7 @@ fn main() {
                                     }
                                     ctx.request_repaint();
                                 }
-                                Err(e) => eframe::web_sys::console::error_1(&format!("PrintCraft: could not fetch {url}: {e}").into()),
+                                Err(e) => eframe::web_sys::console::error_1(&format!("PeDeeFe: could not fetch {url}: {e}").into()),
                             }
                         });
                     }

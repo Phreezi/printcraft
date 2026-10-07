@@ -107,6 +107,15 @@ pub fn toast(app: &mut PrintCraftApp, ctx: &egui::Context) {
     ctx.request_repaint_after(std::time::Duration::from_millis(100));
 }
 
+/// The PeDeeFe app icon (assets/brand/pedeefe/logo/pedeefe-icon.svg), `size` points square.
+pub fn app_icon(ui: &mut egui::Ui, size: f32) -> Response {
+    ui.add(
+        egui::Image::from_bytes("bytes://pedeefe-icon.svg", include_bytes!("../../../assets/brand/pedeefe/logo/pedeefe-icon.svg"))
+            .fit_to_exact_size(vec2(size, size))
+            .alt_text("PeDeeFe icon"),
+    )
+}
+
 /// Buttons for every project link (`printcraft_engine::links`), the first one prominent.
 /// Returns the registry command of the one clicked.
 pub fn community_links(ui: &mut egui::Ui) -> Option<&'static str> {
