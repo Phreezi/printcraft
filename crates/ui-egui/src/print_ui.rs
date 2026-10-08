@@ -305,6 +305,64 @@ pub fn poster_run(sheets: &[print::Sheet], i: usize) -> Option<std::ops::Range<u
     Some(start..end)
 }
 
+/// What the poster preview draws, in screen points (see [`poster_preview`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PosterPreview {
+    /// The page the poster prints.
+    pub page: usize,
+    /// The whole page (or the window), fitted to the area with a 12-point margin and centred.
+    pub page_rect: Rect,
+    /// The part of the page's texture inside `page_rect` (texture y runs down from the page top).
+    pub uv: Rect,
+    /// Screen points per page point.
+    pub zoom: f32,
+    /// The grid of tiles, columns × rows.
+    pub grid: (usize, usize),
+    /// Each tile over `page_rect`, in sheet order: its number (from 1) and where it is.
+    pub tiles: Vec<(usize, Rect)>,
+    /// The index in `tiles` of the current sheet's tile.
+    pub current: Option<usize>,
+}
+
+/// Where the poster preview draws the sheets of `run` (one page's tiles, from [`poster_run`]) in
+/// `area`, like Acrobat: the whole page (or the window `region`) fitted to the area, not one
+/// zoomed tile, with each sheet's tile over it and the tile of sheet `current` marked. `None`
+/// when there is nothing sensible to draw.
+pub fn poster_preview(
+    sheets: &[print::Sheet],
+    run: std::ops::Range<usize>,
+    sizes: &[(f64, f64)],
+    region: Option<[f64; 4]>,
+    area: Rect,
+    current: usize,
+) -> Option<PosterPreview> {
+    let first = sheets.get(run.start)?;
+    let page = first.placed.first()?.page;
+    let &(dw, dh) = sizes.get(page)?;
+    let ((ox, oy), (vw, vh)) = print::page_view((dw, dh), region)?;
+    if !(dw > 0.0 && dh > 0.0 && vw > 0.0 && vh > 0.0 && dw.is_finite() && dh.is_finite()) {
+        return None;
+    }
+    let zoom = ((area.width() - 24.0) / vw as f32).min((area.height() - 24.0) / vh as f32).max(0.001);
+    let page_rect = Rect::from_center_size(area.center(), vec2(vw as f32 * zoom, vh as f32 * zoom));
+    if !(zoom.is_finite() && page_rect.is_finite()) {
+        return None;
+    }
+    let to_screen = |x: f64, y: f64| pos2(page_rect.left() + (x - ox) as f32 * zoom, page_rect.bottom() - (y - oy) as f32 * zoom);
+    let uv = Rect::from_min_max(pos2((ox / dw) as f32, (1.0 - (oy + vh) / dh) as f32), pos2(((ox + vw) / dw) as f32, (1.0 - oy / dh) as f32));
+    let mut tiles = Vec::new();
+    let mut marked = None;
+    for (number, j) in (run.start..run.end.min(sheets.len())).enumerate() {
+        let Some(c) = sheets.get(j).and_then(|s| s.placed.first()).map(|pl| pl.clip) else { continue };
+        if j == current {
+            marked = Some(tiles.len());
+        }
+        tiles.push((number + 1, Rect::from_two_pos(to_screen(c[0], c[1]), to_screen(c[2], c[3]))));
+    }
+    let grid = first.tile.map_or((1, 1), |t| (t.cols, t.rows));
+    Some(PosterPreview { page, page_rect, uv, zoom, grid, tiles, current: marked })
+}
+
 impl PrintDraft {
     /// The engine settings for this draft (page count and labels from the document).
     pub fn settings(&self, count: usize, labels: &[String]) -> Result<print::Settings, String> {
@@ -1032,39 +1090,35 @@ fn draw_sheet(ui: &egui::Ui, area: Rect, sheet: &print::Sheet, grayscale: bool, 
 }
 
 /// A poster, like Acrobat previews one: the whole page (or the window) with its tiles over it as
-/// dashed lines, numbered, and the tile of the current sheet highlighted.
+/// dashed lines, numbered, and the tile of the current sheet highlighted. The geometry comes
+/// from [`poster_preview`]; screen readers (and the tests) read the grid and the highlighted
+/// tile from the drawing's label.
 fn draw_poster(ui: &egui::Ui, area: Rect, d: &PrintDraft, t: &Tokens, shown: &Shown, run: std::ops::Range<usize>, wants: &mut Vec<(usize, f32)>) {
-    let Some(p) = shown.sheets.get(run.start).and_then(|s| s.placed.first()).map(|pl| pl.page) else { return };
-    let Some(&(dw, dh)) = shown.sizes.get(p) else { return };
-    let Some(((ox, oy), (vw, vh))) = print::page_view((dw, dh), shown.region) else { return };
-    if !(dw > 0.0 && dh > 0.0 && vw > 0.0 && vh > 0.0) {
-        return;
-    }
-    let k = ((area.width() - 24.0) / vw as f32).min((area.height() - 24.0) / vh as f32).max(0.001);
-    let page = Rect::from_center_size(area.center(), vec2(vw as f32 * k, vh as f32 * k));
-    let to_screen = |x: f64, y: f64| pos2(page.left() + (x - ox) as f32 * k, page.bottom() - (y - oy) as f32 * k);
-    wants.push((p, k * ui.ctx().pixels_per_point()));
+    let Some(g) = poster_preview(shown.sheets, run, shown.sizes, shown.region, area, d.sheet) else { return };
+    let (p, page) = (g.page, g.page_rect);
+    wants.push((p, g.zoom * ui.ctx().pixels_per_point()));
     ui.painter().rect_filled(page.translate(vec2(0.0, 2.0)).expand(1.5), 2.0, t.page_shadow);
     ui.painter().rect_filled(page, 0.0, Color32::WHITE);
     let painter = ui.painter().with_clip_rect(area);
     match (shown.tex)(p) {
         Some(id) => {
-            // The part shown (texture y runs down from the page top).
-            let uv = Rect::from_min_max(pos2((ox / dw) as f32, (1.0 - (oy + vh) / dh) as f32), pos2(((ox + vw) / dw) as f32, (1.0 - oy / dh) as f32));
-            painter.image(id, page, uv, if d.grayscale { Color32::from_gray(235) } else { Color32::WHITE });
+            painter.image(id, page, g.uv, if d.grayscale { Color32::from_gray(235) } else { Color32::WHITE });
         }
         None => {
             painter.text(page.center(), egui::Align2::CENTER_CENTER, (p + 1).to_string(), theme::regular(13.0), Color32::from_gray(120));
         }
     }
     painter.rect_stroke(page, 0.0, Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
-    let mut current = None;
-    for (number, j) in run.enumerate() {
-        let Some(c) = shown.sheets.get(j).and_then(|s| s.placed.first()).map(|pl| pl.clip) else { continue };
-        let r = Rect::from_two_pos(to_screen(c[0], c[1]), to_screen(c[2], c[3]));
-        if j == d.sheet {
+    let current = g.current.and_then(|i| g.tiles.get(i));
+    let mut label = format!("Poster preview: {} × {} tiles", g.grid.0, g.grid.1);
+    if let Some((n, _)) = current {
+        label.push_str(&format!(", tile {n} highlighted"));
+    }
+    ui.interact(page, ui.id().with("poster-preview"), egui::Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &label));
+    for &(number, r) in &g.tiles {
+        if current.is_some_and(|c| c.0 == number) {
             painter.rect_filled(r, 0.0, t.accent.gamma_multiply(0.18));
-            current = Some(r);
         }
         let ring = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
         // A light line under the dashes keeps them visible on dark drawings.
@@ -1072,13 +1126,13 @@ fn draw_poster(ui: &egui::Ui, area: Rect, d: &PrintDraft, t: &Tokens, shown: &Sh
         painter.extend(egui::Shape::dashed_line(&ring, Stroke::new(1.0, Color32::from_gray(60)), 5.0, 3.0));
         // Numbers only where they leave the drawing readable.
         if r.width() >= 44.0 && r.height() >= 30.0 {
-            let galley = painter.layout_no_wrap((number + 1).to_string(), theme::medium(10.0), Color32::from_gray(50));
+            let galley = painter.layout_no_wrap(number.to_string(), theme::medium(10.0), Color32::from_gray(50));
             let chip = Rect::from_min_size(r.left_top() + vec2(3.0, 3.0), galley.size() + vec2(6.0, 2.0));
             painter.rect_filled(chip, 3.0, Color32::from_white_alpha(215));
             painter.galley(chip.min + vec2(3.0, 1.0), galley, Color32::from_gray(50));
         }
     }
-    if let Some(r) = current {
+    if let Some(&(_, r)) = current {
         painter.rect_stroke(r, 0.0, Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
     }
 }

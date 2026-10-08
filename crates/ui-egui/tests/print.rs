@@ -5,8 +5,8 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use printcraft_engine::print::{self, A4, Orientation, SizeMode};
 use printcraft_ui_egui::print_ui::{
-    PAPER_CHOICES, PickDrag, area_label, decimal_comma, drag_window, move_window, poster_run, printable_aspect, scale_label, sheet_label,
-    window_fit_percent, window_landscape,
+    PAPER_CHOICES, PickDrag, area_label, decimal_comma, drag_window, move_window, poster_preview, poster_run, printable_aspect, scale_label,
+    sheet_label, window_fit_percent, window_landscape,
 };
 use printcraft_ui_egui::{Dialog, PrintCraftApp, PrintDraft, PrintHandling, PrintWindowOutput};
 
@@ -369,10 +369,13 @@ fn poster_preview_shows_the_whole_page_grid() {
     h.get_by_label("Sheets: 9");
     h.get_by_label("A4 - 210 × 297 mm [529,17 × 705,56 mm]");
     h.get_by_label("Sheet 1 of 9");
+    // The drawing is the whole page with the grid over it, not one zoomed tile.
+    h.get_by_label("Poster preview: 3 × 3 tiles, tile 1 highlighted");
     h.get_by_label("›").click();
     h.run_steps(2);
     h.get_by_label("Sheet 2 of 9");
     h.get_by_label("Scale: 500%");
+    h.get_by_label("Poster preview: 3 × 3 tiles, tile 2 highlighted");
     // The default 200 %: two tiles.
     let h = dialog_with(|d| d.handling = PrintHandling::Poster);
     h.get_by_label("Sheets: 2");
@@ -394,6 +397,65 @@ fn poster_preview_shows_the_whole_page_grid() {
     assert_eq!(poster_run(&twice, 99), None);
     let size = print::layout(&[(300.0, 400.0)], &PrintDraft::default().settings(1, &[]).unwrap()).unwrap();
     assert_eq!(poster_run(&size, 0), None);
+
+    // What the preview draws. The whole 300 × 400 page fits 424 × 524 less the 12-point margin
+    // at 1.25 points per point, centred: 375 × 500.
+    let area = Rect::from_min_size(pos2(10.0, 20.0), vec2(424.0, 524.0));
+    let g = poster_preview(&sheets, 0..9, &[(300.0, 400.0)], None, area, 0).unwrap();
+    assert_eq!(g.page, 0);
+    assert_eq!(g.zoom, 1.25);
+    assert!(close(g.page_rect, Rect::from_center_size(area.center(), vec2(375.0, 500.0))), "{:?}", g.page_rect);
+    assert!(close(g.uv, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))), "{:?}", g.uv);
+    // Nine tiles, numbered in sheet order, in a 3 × 3 grid from the top left, row by row, that
+    // together cover exactly the page.
+    assert_eq!(g.grid, (3, 3));
+    assert_eq!(g.tiles.iter().map(|t| t.0).collect::<Vec<_>>(), (1..=9).collect::<Vec<_>>());
+    assert!(close(g.tiles.iter().fold(Rect::NOTHING, |u, t| u.union(t.1)), g.page_rect));
+    for (i, &(_, r)) in g.tiles.iter().enumerate() {
+        assert!(g.page_rect.expand(1e-3).contains_rect(r), "tile {i} {r:?}");
+        let (row, col) = (i / 3, i % 3);
+        if col > 0 {
+            assert!(r.left() > g.tiles[i - 1].1.left() && (r.top() - g.tiles[i - 1].1.top()).abs() < 1e-3, "tile {i} {r:?}");
+        }
+        if row > 0 {
+            assert!(r.top() > g.tiles[i - 3].1.top() && (r.left() - g.tiles[i - 3].1.left()).abs() < 1e-3, "tile {i} {r:?}");
+        }
+    }
+    assert!((g.tiles[0].1.min - g.page_rect.min).length() < 1e-3);
+    assert!((g.tiles[8].1.max - g.page_rect.max).length() < 1e-3);
+    assert!(g.tiles[4].1.contains(g.page_rect.center()));
+    // The highlighted tile is the current sheet's; a sheet outside the poster marks none.
+    for j in 0..9 {
+        assert_eq!(poster_preview(&sheets, 0..9, &[(300.0, 400.0)], None, area, j).unwrap().current, Some(j));
+    }
+    assert_eq!(poster_preview(&sheets, 0..9, &[(300.0, 400.0)], None, area, 9).unwrap().current, None);
+    // The second copy of a page printed twice: the same picture, numbered from 1 again.
+    let again = poster_preview(&twice, 9..18, &[(300.0, 400.0)], None, area, 10).unwrap();
+    assert_eq!((again.page_rect, again.current, again.tiles.len(), again.tiles[0].0), (g.page_rect, Some(1), 9, 1));
+    // A window printed as a poster: the window, not the page, fills the preview.
+    let window = PrintDraft {
+        handling: PrintHandling::Window,
+        window_output: PrintWindowOutput::Poster,
+        region: Some([0.0, 0.0, 200.0, 141.0]),
+        poster_scale: 500.0,
+        ..Default::default()
+    };
+    let wsheets = print::layout(&[(300.0, 400.0)], &window.settings(1, &[]).unwrap()).unwrap();
+    let run = poster_run(&wsheets, 0).unwrap();
+    let w = poster_preview(&wsheets, run.clone(), &[(300.0, 400.0)], window.region, area, 0).unwrap();
+    assert_eq!(w.zoom, 2.0);
+    assert!(close(w.page_rect, Rect::from_center_size(area.center(), vec2(400.0, 282.0))), "{:?}", w.page_rect);
+    assert!(close(w.uv, Rect::from_min_max(pos2(0.0, 1.0 - 141.0 / 400.0), pos2(200.0 / 300.0, 1.0))), "{:?}", w.uv);
+    assert_eq!(w.tiles.len(), run.len());
+    assert!(close(w.tiles.iter().fold(Rect::NOTHING, |u, t| u.union(t.1)), w.page_rect));
+    // Nothing to draw: no poster preview, no panic.
+    assert_eq!(poster_preview(&sheets, 0..9, &[], None, area, 0), None);
+    assert_eq!(poster_preview(&sheets, 50..60, &[(300.0, 400.0)], None, area, 0), None);
+    assert!(poster_preview(&sheets, 0..usize::MAX, &[(300.0, 400.0)], None, Rect::NOTHING, 0).is_none_or(|g| g.tiles.len() == 9));
+}
+
+fn close(a: Rect, b: Rect) -> bool {
+    (a.min - b.min).length() < 1e-3 && (a.max - b.max).length() < 1e-3
 }
 
 #[test]

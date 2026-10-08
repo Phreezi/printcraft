@@ -33,6 +33,11 @@ splitting, comments, forms, signatures, redaction, the CLI and the MCP server), 
   it and the sheet with the page's printed size below it (e.g. "A4 - 210 × 297 mm
   [1188,04 × 1680,13 mm]"). A poster previews the whole page with its tiles over it.
 - **A sharp print preview**, drawn at the screen's resolution instead of from thumbnails.
+- **Select and delete several boxes at once in Edit text & images**, as in Acrobat: drag a
+  rectangle over the page (every text box and image it touches is selected), Shift- or
+  Ctrl-click a box to add or remove it, or press Ctrl+A for every box on the page. Delete (or
+  Backspace) removes them all in one step, and one Undo brings them all back. Esc leaves Edit
+  text & images and keeps the text you were typing (it used to discard it).
 - **The window remembers its size and position**, and whether it was maximized. It opens straight
   in place, already drawn, instead of resizing itself after it appears.
 - Its own identity: its own name, logo and icons ([brand kit](assets/brand/pedeefe/README.md)); it
