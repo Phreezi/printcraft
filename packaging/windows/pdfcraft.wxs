@@ -11,7 +11,8 @@
   Per-machine install into Program Files, a Start Menu shortcut, a desktop shortcut (on by default,
   optional), an App Paths entry, and PeDeeFe registered as a PDF handler (offered under "Open with"
   and in Default apps, never forced as the default). Files opened with PeDeeFe arrive on its
-  command line.
+  command line; its "print" and "printto" verbs (Explorer's Print, Outlook's Quick Print) print
+  them without opening a window.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
@@ -70,11 +71,22 @@
         <!-- PDF files opened with PeDeeFe show its document icon (assets/brand/pedeefe/document). -->
         <File Id="PedeefeDocIcon" Source="$(var.DocIconPath)" Name="pedeefe-document.ico" />
         <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\DefaultIcon" Value="[#PedeefeDocIcon]" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\shell" Value="open" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\shell\open\command" Value="&quot;[#PdfcraftExe]&quot; &quot;%1&quot;" Type="string" />
+        <!-- Print and Print to: Explorer's Print command and Outlook's Quick Print run the
+             "print" verb of the PDF's handler; printing to a printer by name (dragging onto a
+             printer, other apps' "print to") runs "printto" with the printer, driver and port as
+             %2, %3 and %4. PeDeeFe prints with its default settings (Fit, A4 or A3 for larger
+             pages, auto orientation, the remembered quality), shows no window and exits
+             (apps/pdfcraft/src/quick_print.rs). -->
+        <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\shell\print\command" Value="&quot;[#PdfcraftExe]&quot; --print &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\shell\printto\command" Value="&quot;[#PdfcraftExe]&quot; --print-to &quot;%2&quot; &quot;%1&quot; --printer-driver &quot;%3&quot; --printer-port &quot;%4&quot;" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\.pdf\OpenWithProgids" Name="PeDeeFe.Document" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe" Name="FriendlyAppName" Value="PeDeeFe" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\SupportedTypes" Name=".pdf" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\shell\open\command" Value="&quot;[#PdfcraftExe]&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\shell\print\command" Value="&quot;[#PdfcraftExe]&quot; --print &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\shell\printto\command" Value="&quot;[#PdfcraftExe]&quot; --print-to &quot;%2&quot; &quot;%1&quot; --printer-driver &quot;%3&quot; --printer-port &quot;%4&quot;" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationName" Value="PeDeeFe" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationDescription" Value="Open-source PDF workbench" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationIcon" Value="[#PdfcraftExe],0" Type="string" />

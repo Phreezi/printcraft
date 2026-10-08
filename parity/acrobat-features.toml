@@ -8062,6 +8062,18 @@ evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_sav
 notes = "Save as PDF from the dialog"
 
 [[feature]]
+id = "print.shell-quick-print"
+title = "Print from the shell without the dialog (Explorer Print, Outlook Quick Print, print to a named printer)"
+area = "L"
+tier = "P1"
+milestone = "M10"
+status = "partial"
+commands = []
+tools = []
+evidence = ["apps/pdfcraft/src/main.rs::the_print_verbs_parse_to_quick_print_requests", "apps/pdfcraft/src/quick_print.rs::every_file_is_tried_and_the_failures_are_collected", "apps/pdfcraft/src/quick_print.rs::a_usage_mistake_is_reported_without_printing", "crates/ui-egui/src/quick_print.rs::a4_unless_a_page_is_larger", "crates/ui-egui/src/quick_print.rs::the_settings_are_the_dialogs_defaults", "crates/ui-egui/src/quick_print.rs::the_remembered_quality_is_used_when_it_is_valid", "crates/ui-egui/tests/print.rs::quick_print_prepares_fit_sheets_on_a4_without_the_dialog"]
+notes = "PeDeeFe: `--print FILE` (default printer) and `--print-to PRINTER FILE`, registered as the print and printto verbs of the PDF ProgID by the MSI (checked by packaging/windows/test-msi.ps1). Prints every page Fit, auto orientation, on A4 (A3 when a page is more than 5 % larger than A4), one colour copy at the Print dialog's remembered quality, with no window, then exits; failures are logged (logs/quick-print.log) and shown in a message box. Checked on Linux through CUPS's lp; not yet run on Windows (Outlook Quick Print, Explorer Print). Acrobat's own /p and /t switches are not offered."
+
+[[feature]]
 id = "print.print-pages-from-thumbnails"
 title = "Print selected pages from thumbnails"
 area = "L"

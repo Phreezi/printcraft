@@ -735,3 +735,20 @@ fn enter_does_not_print_while_a_menu_or_the_picker_is_open() {
     assert_eq!(h.state().dialog, None);
     assert!(!out.exists(), "cancelled, not printed");
 }
+
+#[test]
+fn quick_print_prepares_fit_sheets_on_a4_without_the_dialog() {
+    let (pdf, sheets) = pdfcraft_ui_egui::quick_print::prepare("form.pdf", include_bytes!("data/form.pdf").to_vec()).unwrap();
+    assert_eq!(sheets, 1);
+    let doc = pdfcraft_cos::Document::open(std::sync::Arc::new(pdf)).unwrap();
+    let pages = pdfcraft_model::pages(&doc);
+    assert_eq!(pages.len(), 1);
+    // The form's 300 × 400 pt page prints on A4; an A3 drawing (landscape) on A3, Fit, turned.
+    let settings = pdfcraft_ui_egui::quick_print::settings(&[(300.0, 400.0)]);
+    assert_eq!((settings.paper, settings.layout, settings.orientation), (A4, print::Layout::Size(SizeMode::Fit), Orientation::Auto));
+    let drawing = pdfcraft_ui_egui::quick_print::settings(&[(1190.55, 841.89)]);
+    let sheets = print::layout(&[(1190.55, 841.89)], &drawing).unwrap();
+    let sheet = sheets[0].size;
+    assert!((sheet.0 - print::A3.1).abs() < 0.01 && (sheet.1 - print::A3.0).abs() < 0.01, "a landscape A3 sheet: {sheet:?}");
+    assert!((sheets[0].placed[0].scale() - 1.0).abs() < 1e-6, "A3 on A3 prints at 100 %");
+}

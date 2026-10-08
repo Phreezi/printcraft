@@ -67,6 +67,7 @@ mod panels;
 mod pickers;
 pub mod prepare;
 pub mod print_ui;
+pub mod quick_print;
 pub use print_ui::{Handling as PrintHandling, PrintArea, PrintDraft, Which as PrintWhich};
 mod redact_ui;
 pub use redact_ui::{HiddenDraft, PagesDraft as RedactPagesDraft, RedactPrefs, SearchDraft as RedactSearchDraft};

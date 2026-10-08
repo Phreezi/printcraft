@@ -9,6 +9,11 @@
 //!  --organize on  --fields on  --dialog properties|shortcuts|about  --palette <query>  --home on
 //!  --cover on|off  --default-layout continuous|two-up|single  --default-zoom fit-width|fit-page|<percent>`
 //!
+//! `--print FILE…` prints the files on the default printer and `--print-to PRINTER FILE…` on the
+//! named one, with Quick Print's default settings and no window, then exits (the shell's print
+//! and printto verbs, Outlook's Quick Print; `quick_print`). `--printer-driver` and
+//! `--printer-port` (the printto verb's `%3` and `%4`) are accepted and ignored.
+//!
 //! `--new-instance` runs a separate app even when one is running. Otherwise a launch while the
 //! app runs hands its files to it and exits (`single_instance`).
 //!
@@ -28,6 +33,7 @@ use pdfcraft_ui_egui::{APP_NAME, PdfCraftApp};
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod logging;
+mod quick_print;
 mod single_instance;
 mod updates;
 
@@ -69,28 +75,18 @@ fn main() -> eframe::Result {
             let _ = std::io::Write::write_fmt(&mut std::io::stderr(), format_args!("pdfcraft: {report}\n"));
         }
     }));
-    let mut files = Vec::new();
-    let mut options: Vec<(String, String)> = Vec::new();
-    let mut control_file: Option<String> = None;
-    let mut create_images = false;
-    let mut new_instance = false;
-    let mut args = std::env::args().skip(1);
-    while let Some(a) = args.next() {
-        match a.as_str() {
-            "--version" => {
-                println!("pedeefe {}", pdfcraft_ui_egui::updates::APP_VERSION);
-                return Ok(());
-            }
-            "--control" => control_file = args.next(),
-            "--create-images" => create_images = true,
-            "--new-instance" => new_instance = true,
-            flag if flag.starts_with("--") => {
-                let value = args.next().unwrap_or_default();
-                options.push((flag.trim_start_matches("--").to_string(), value));
-            }
-            _ => files.push(a),
-        }
+    let cli = parse_args(std::env::args().skip(1));
+    if cli.version {
+        println!("pedeefe {}", pdfcraft_ui_egui::updates::APP_VERSION);
+        return Ok(());
     }
+    // The shell's print and printto verbs (Outlook's Quick Print): print, then exit, before any
+    // window or single-instance hand-off (quick_print.rs).
+    if let Some(request) = &cli.print {
+        let code = quick_print::run(logger, settings_dir().as_deref(), request, &cli.files);
+        std::process::exit(code);
+    }
+    let Cli { files, options, control_file, create_images, new_instance, .. } = cli;
     let integrated = cfg!(target_os = "macos");
     // A plain launch (files, or nothing) while the app runs: the running app takes the files and
     // comes to the front. Launches with options (`--control`, `--create-images`, view options)
@@ -212,6 +208,60 @@ fn main() -> eframe::Result {
     );
     drop(instance);
     result
+}
+
+/// The command line.
+#[derive(Debug, Default, PartialEq)]
+struct Cli {
+    /// `--version`: print the version and exit.
+    version: bool,
+    files: Vec<String>,
+    /// View options (`--page 3`, …) for `PdfCraftApp::set_option`.
+    options: Vec<(String, String)>,
+    control_file: Option<String>,
+    create_images: bool,
+    new_instance: bool,
+    /// `--print` / `--print-to PRINTER`: Quick Print the files (or the mistake to report).
+    print: Option<quick_print::Request>,
+}
+
+/// Read the arguments (without the program name). Every value is accepted; Quick Print's
+/// mistakes (no file, no printer name) are kept in [`Cli::print`] to be reported.
+fn parse_args(args: impl IntoIterator<Item = String>) -> Cli {
+    use pdfcraft_ui_egui::quick_print::Usage;
+    let mut cli = Cli::default();
+    let mut args = args.into_iter();
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--version" => {
+                cli.version = true;
+                return cli;
+            }
+            "--control" => cli.control_file = args.next(),
+            "--create-images" => cli.create_images = true,
+            "--new-instance" => cli.new_instance = true,
+            "--print" => cli.print = Some(Ok(quick_print::Target::Default)),
+            "--print-to" => {
+                cli.print = Some(match args.next().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
+                    Some(printer) => Ok(quick_print::Target::Printer(printer)),
+                    None => Err(Usage::NoPrinter),
+                })
+            }
+            // The printto verb's driver and port (`%3`, `%4`): Windows finds the printer by name.
+            "--printer-driver" | "--printer-port" => {
+                let _ = args.next();
+            }
+            flag if flag.starts_with("--") => {
+                let value = args.next().unwrap_or_default();
+                cli.options.push((flag.trim_start_matches("--").to_string(), value));
+            }
+            _ => cli.files.push(a),
+        }
+    }
+    if matches!(cli.print, Some(Ok(_))) && cli.files.is_empty() {
+        cli.print = Some(Err(Usage::NoFile));
+    }
+    cli
 }
 
 /// Write the control endpoint so that only the current user can read the token.
@@ -341,6 +391,50 @@ fn pick_adapter(adapters: &[(u32, u32, eframe::wgpu::DeviceType)], displays: &[(
 #[cfg(test)]
 mod tests {
     use pdfcraft_ui_egui::window_state::WindowState;
+
+    fn args(list: &[&str]) -> super::Cli {
+        super::parse_args(list.iter().map(|a| a.to_string()))
+    }
+
+    #[test]
+    fn plain_launches_keep_their_files_and_view_options() {
+        let cli = args(&["a.pdf", "--page", "3", "b.pdf", "--new-instance"]);
+        assert_eq!(
+            (cli.files, cli.options, cli.new_instance, cli.print),
+            (vec!["a.pdf".into(), "b.pdf".into()], vec![("page".into(), "3".into())], true, None)
+        );
+        assert!(args(&["--version", "--print"]).version);
+        let cli = args(&["--control", "ctl.json", "--create-images", "x.png"]);
+        assert_eq!((cli.control_file.as_deref(), cli.create_images, cli.files), (Some("ctl.json"), true, vec!["x.png".to_string()]));
+    }
+
+    #[test]
+    fn the_print_verbs_parse_to_quick_print_requests() {
+        use super::quick_print::Target;
+        use pdfcraft_ui_egui::quick_print::Usage;
+        // The print verb: "pedeefe.exe" --print "%1".
+        let cli = args(&["--print", r"C:\Users\me\AppData\Local\Temp\invoice.pdf"]);
+        assert_eq!(cli.print, Some(Ok(Target::Default)));
+        assert_eq!(cli.files, vec![r"C:\Users\me\AppData\Local\Temp\invoice.pdf".to_string()]);
+        // The printto verb: "pedeefe.exe" --print-to "%2" "%1" --printer-driver "%3" --printer-port "%4".
+        let cli = args(&["--print-to", "EPSON ET-16650 Series", "a b.pdf", "--printer-driver", "winspool", "--printer-port", "USB001"]);
+        assert_eq!(cli.print, Some(Ok(Target::Printer("EPSON ET-16650 Series".into()))));
+        assert_eq!(cli.files, vec!["a b.pdf".to_string()]);
+        assert!(cli.options.is_empty(), "driver and port are not view options: {:?}", cli.options);
+        // Callers that leave the driver and port empty.
+        let cli = args(&["--print-to", "Office", "x.pdf", "--printer-driver", "", "--printer-port", ""]);
+        assert_eq!((cli.print, cli.files.len()), (Some(Ok(Target::Printer("Office".into()))), 1));
+        // Several files, and the file before the flag.
+        let cli = args(&["one.pdf", "--print", "two.pdf"]);
+        assert_eq!((cli.print, cli.files.len()), (Some(Ok(Target::Default)), 2));
+        // Mistakes are kept, to be reported (never a crash, never the app opening instead).
+        assert_eq!(args(&["--print"]).print, Some(Err(Usage::NoFile)));
+        assert_eq!(args(&["--print-to", "Office"]).print, Some(Err(Usage::NoFile)));
+        assert_eq!(args(&["--print-to"]).print, Some(Err(Usage::NoPrinter)));
+        assert_eq!(args(&["--print-to", "  ", "a.pdf"]).print, Some(Err(Usage::NoPrinter)));
+        // A printer name that looks like a flag is still the printer's.
+        assert_eq!(args(&["--print-to", "--odd name", "a.pdf"]).print, Some(Ok(Target::Printer("--odd name".into()))));
+    }
 
     #[test]
     fn the_window_is_never_created_maximized_and_only_the_first_start_is_centred() {

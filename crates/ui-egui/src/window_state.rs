@@ -87,6 +87,31 @@ pub const LEGACY_STORAGE_KEY: &str = "printcraft";
 /// stamps; the window state is a few bytes).
 const MAX_SETTINGS_BYTES: u64 = 64 << 20;
 
+/// The app's JSON inside its settings as eframe stores them (`app.ron`: a RON map whose
+/// [`STORAGE_KEY`] entry, or else the [`LEGACY_STORAGE_KEY`] one, is the app's JSON). `None` when
+/// any layer is missing or damaged.
+pub fn app_settings(ron_text: &str) -> Option<serde_json::Value> {
+    let map: std::collections::HashMap<String, String> = ron::from_str(ron_text).ok()?;
+    let json = map.get(STORAGE_KEY).or_else(|| map.get(LEGACY_STORAGE_KEY))?;
+    serde_json::from_str(json).ok()
+}
+
+/// Read the app's saved JSON ([`app_settings`]) from the settings file without the app running:
+/// before the window opens, or in Quick Print, which opens none. `None` when the file is missing,
+/// too big or damaged.
+pub fn read_app_settings(path: &Path) -> Option<serde_json::Value> {
+    app_settings(&read_settings_text(path)?)
+}
+
+/// The settings file's text, `None` when it is missing or bigger than [`MAX_SETTINGS_BYTES`].
+fn read_settings_text(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    let mut text = String::new();
+    file.take(MAX_SETTINGS_BYTES.saturating_add(1)).read_to_string(&mut text).ok()?;
+    (text.len() as u64 <= MAX_SETTINGS_BYTES).then_some(text)
+}
+
 impl WindowState {
     /// Read saved settings field by field, so one damaged field doesn't lose the others.
     /// `None` when there is no window object at all.
@@ -108,24 +133,14 @@ impl WindowState {
     /// it reads the [`LEGACY_STORAGE_KEY`] entry when there is no current one. `None` when any
     /// layer is missing or damaged.
     pub fn from_settings(ron_text: &str) -> Option<Self> {
-        let map: std::collections::HashMap<String, String> = ron::from_str(ron_text).ok()?;
-        let json = map.get(STORAGE_KEY).or_else(|| map.get(LEGACY_STORAGE_KEY))?;
-        let app: serde_json::Value = serde_json::from_str(json).ok()?;
-        Self::from_json(app.get("window")?)
+        Self::from_json(app_settings(ron_text)?.get("window")?)
     }
 
     /// Read the window state from the settings file before the window is created (the desktop
     /// app calls this ahead of `eframe::run_native`). `None` when the file is missing, too big or
     /// damaged: the window then opens as on the first start.
     pub fn read_saved(path: &Path) -> Option<Self> {
-        use std::io::Read;
-        let file = std::fs::File::open(path).ok()?;
-        let mut text = String::new();
-        file.take(MAX_SETTINGS_BYTES.saturating_add(1)).read_to_string(&mut text).ok()?;
-        if text.len() as u64 > MAX_SETTINGS_BYTES {
-            return None;
-        }
-        Self::from_settings(&text)
+        Self::from_settings(&read_settings_text(path)?)
     }
 
     /// Settings are untrusted: sizes and positions must be finite and sane, or they are dropped.
@@ -450,6 +465,19 @@ mod tests {
         // As in the app, a damaged current entry isn't replaced by the legacy one.
         assert_eq!(WindowState::from_settings(&settings(&[(LEGACY_STORAGE_KEY, &at(10.0)), (STORAGE_KEY, "{")])), None);
         assert_eq!(WindowState::from_settings(&settings(&[("other", &at(10.0))])), None);
+    }
+
+    #[test]
+    fn quick_print_reads_the_saved_settings_without_the_app() {
+        let path = std::env::temp_dir().join(format!("pedeefe-app-settings-{}.ron", std::process::id()));
+        let json = r#"{"language": "en", "print": {"dpi": 600}}"#;
+        std::fs::write(&path, settings(&[(STORAGE_KEY, json)])).expect("write settings");
+        let app = super::read_app_settings(&path);
+        assert_eq!(app.as_ref().and_then(|v| v["print"]["dpi"].as_u64()), Some(600));
+        std::fs::write(&path, "not ron").expect("write junk");
+        assert_eq!(super::read_app_settings(&path), None);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(super::read_app_settings(&path), None, "no file");
     }
 
     #[test]

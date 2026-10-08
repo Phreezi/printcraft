@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Check the compiled MSI's shortcuts, desktop-shortcut checkbox and full-UI outcome wiring (#143), without installing it.
+  Check the compiled MSI's shortcuts, desktop-shortcut checkbox, PDF verbs (open, print, printto) and full-UI outcome wiring (#143), without installing it.
 .EXAMPLE
   pwsh packaging/windows/test-msi.ps1 dist/release/pedeefe-0.3.0-windows-x64.msi
 #>
@@ -68,6 +68,23 @@ foreach ($ext in @('png', 'jpg', 'jpeg', 'tif', 'tiff', 'gif', 'bmp', 'jp2', 'j2
   Assert-Equal $selection[0] 'Single' "$ext context menu selection"
 }
 
+# PDF verbs on PeDeeFe's ProgID and its Applications entry: open, and print / printto for
+# Explorer's Print and Outlook's Quick Print (apps/pdfcraft/src/quick_print.rs). Open stays the
+# default verb; the app component owns every row so uninstall removes them.
+$verbs = @(@('open', '"[#PdfcraftExe]" "%1"'),
+           @('print', '"[#PdfcraftExe]" --print "%1"'),
+           @('printto', '"[#PdfcraftExe]" --print-to "%2" "%1" --printer-driver "%3" --printer-port "%4"'))
+foreach ($root in @('Software\Classes\PeDeeFe.Document', 'Software\Classes\Applications\pedeefe.exe')) {
+  foreach ($verb in $verbs) {
+    $row = Read-Row ('SELECT `Value`, `Component_`, `Root` FROM `Registry` WHERE `Key` = ''' + $root + '\shell\' + $verb[0] + '\command'' AND `Name` IS NULL') 3
+    Assert-Equal $row[0] $verb[1] "$root $($verb[0]) command"
+    Assert-Equal $row[1] 'PdfcraftApp' "$root $($verb[0]) component"
+    Assert-Equal $row[2] '2' "$root $($verb[0]) HKLM root"
+  }
+}
+$defaultVerb = Read-Row 'SELECT `Value` FROM `Registry` WHERE `Key` = ''Software\Classes\PeDeeFe.Document\shell'' AND `Name` IS NULL' 1
+Assert-Equal $defaultVerb[0] 'open' 'PDF default verb'
+
 # Negative sequences are Windows Installer's success/user-exit/failure paths. Only full UI
 # shows these dialogs: an unattended /qn or /qb install must never wait for a Finish click.
 foreach ($exit in @(@('InstallComplete', '-1'), @('InstallCancelled', '-2'), @('InstallFailed', '-3'))) {
@@ -86,4 +103,4 @@ $rm = Read-Row 'SELECT `Dialog` FROM `Dialog` WHERE `Dialog` = ''MsiRMFilesInUse
 Assert-Equal $rm[0] 'MsiRMFilesInUse' 'Files-in-use dialog'
 [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($Database)
 [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($Installer)
-Write-Output 'ok MSI: Start Menu shortcut, optional desktop shortcut (default on, checkbox), icon/key path, full-UI success/cancel/error and Finish controls, files-in-use dialog'
+Write-Output 'ok MSI: Start Menu shortcut, optional desktop shortcut (default on, checkbox), icon/key path, PDF open/print/printto verbs, full-UI success/cancel/error and Finish controls, files-in-use dialog'

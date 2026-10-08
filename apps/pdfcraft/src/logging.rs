@@ -221,6 +221,28 @@ impl AppLogger {
         self.sink.lock().unwrap_or_else(PoisonError::into_inner).attach(file);
         Ok(path)
     }
+
+    /// Append records to the file at `path` (created with its folder if missing), without
+    /// rotating the app's logs: Quick Print runs next to a running app, often several at once
+    /// (one per attachment), and must leave the app's `pdfcraft.log` alone. A file past
+    /// [`MAX_APPEND_BYTES`] starts over.
+    pub fn attach_append(&self, path: &Path) -> Result<(), String> {
+        let file = open_append(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        self.sink.lock().unwrap_or_else(PoisonError::into_inner).attach(file);
+        Ok(())
+    }
+}
+
+/// A shared log file ([`AppLogger::attach_append`]) starts over past this size.
+pub const MAX_APPEND_BYTES: u64 = 1024 * 1024;
+
+/// Open `path` for appending, or truncate it when it has grown past [`MAX_APPEND_BYTES`].
+pub fn open_append(path: &Path) -> std::io::Result<File> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let big = std::fs::metadata(path).is_ok_and(|m| m.len() > MAX_APPEND_BYTES);
+    if big { File::create(path) } else { std::fs::OpenOptions::new().create(true).append(true).open(path) }
 }
 
 impl log::Log for AppLogger {
@@ -469,6 +491,30 @@ mod tests {
         assert!(logger.sink.is_poisoned());
         logger.log(&log::Record::builder().level(log::Level::Warn).target("pdfcraft").args(format_args!("after the panic")).build());
         assert!(read(&path).contains("pdfcraft: after the panic\n"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quick_print_appends_to_its_own_log_and_leaves_the_apps_alone() {
+        use log::Log;
+        let dir = temp_dir("append");
+        let app_log = dir.join(LOG_FILE);
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(&app_log, "the running app's log\n").expect("app log");
+        let path = dir.join("quick-print.log");
+        for n in 0..2 {
+            let logger = AppLogger::new(Filter::parse("info"), false);
+            logger.attach_append(&path).expect("attach");
+            logger.log(&log::Record::builder().level(log::Level::Error).target("pdfcraft").args(format_args!("job {n}")).build());
+        }
+        let text = read(&path);
+        assert!(text.contains("job 0") && text.contains("job 1"), "{text}");
+        assert_eq!(read(&app_log), "the running app's log\n", "not rotated");
+        assert!(!dir.join("pdfcraft.1.log").exists());
+        // A log that grew too big starts over.
+        std::fs::write(&path, vec![b'x'; usize::try_from(MAX_APPEND_BYTES).unwrap_or(0) + 1]).expect("big");
+        drop(open_append(&path).expect("reopen"));
+        assert_eq!(std::fs::metadata(&path).map(|m| m.len()).ok(), Some(0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

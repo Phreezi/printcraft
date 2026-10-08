@@ -1932,5 +1932,10 @@
 	The pages, form fields and stamps, without other comments.	页面、表单域和图章，不含其他注释。
 	Only what is in the form fields.	仅表单域中的内容。
 
+# PeDeeFe Quick Print (the shell's print and printto verbs, Outlook's Quick Print).
+	Couldn't print {name}: {e}	无法打印 {name}：{e}
+	Quick Print needs a PDF file to print.	快速打印需要一个要打印的 PDF 文件。
+	Quick Print needs the name of a printer.	快速打印需要打印机名称。
+
 @plural	{n} page|{n} pages	{n} 页
 @plural	{n} field|{n} fields	{n} 个字段

@@ -39,6 +39,9 @@ splitting, comments, forms, signatures, redaction, the CLI and the MCP server), 
   Ctrl-click a box to add or remove it, or press Ctrl+A for every box on the page. Delete (or
   Backspace) removes them all in one step, and one Undo brings them all back. Esc leaves Edit
   text & images and keeps the text you were typing (it used to discard it).
+- **Quick Print from Outlook and Explorer**: PeDeeFe answers Windows' *Print* command for PDF
+  files, so Outlook's *Quick Print* on a PDF attachment prints it straight away, with no window
+  ([below](#print-from-outlook-and-explorer)).
 - **The window remembers its size and position**, and whether it was maximized. It opens straight
   in place, already drawn, instead of resizing itself after it appears.
 - Its own identity: its own name, logo and icons ([brand kit](assets/brand/pedeefe/README.md)); it
@@ -56,6 +59,38 @@ Every change pushed to this repository builds a Windows installer on GitHub Acti
 3. Later, **Help ▸ Check for updates** in the app says when a newer build is out.
 
 There is also a portable `.zip` (no installation: unzip and run `pedeefe.exe`).
+
+## Print from Outlook and Explorer
+
+The installer registers PeDeeFe's **print** and **printto** commands for PDF files. They print
+with the default settings, show no window and close when the job has reached the printer:
+
+- every page, **Fit** (the page fills the sheet, keeping its proportions; an A4 page prints at
+  100 % on A4), **automatic orientation** (each sheet turns to its page), one copy, one-sided, in
+  colour;
+- on **A4**, or on **A3** when a page is larger than A4 (by more than 5 %: a US Letter page still
+  prints on A4, an A3 or larger drawing on A3);
+- at the **print quality** last chosen in the Print dialog (Standard, 300 dpi, until then);
+- on Windows' **default printer** (*print*), or on the printer named by the caller (*printto*).
+
+To use it from **Outlook**, PeDeeFe must be the app that opens PDF files: in Windows **Settings ▸
+Apps ▸ Default apps**, set *.pdf* to PeDeeFe (or right-click a PDF ▸ *Open with* ▸ *Choose another
+app* ▸ PeDeeFe, *Always*). Then right-click a PDF attachment in Outlook (in the message, or the
+attachment list) and choose **Quick Print**. In Explorer, right-click a PDF ▸ *Show more options*
+(Windows 11) ▸ **Print** does the same.
+
+The same from a command prompt (also with the portable `.zip`):
+
+```bat
+pedeefe.exe --print "C:\Docs\invoice.pdf"
+pedeefe.exe --print-to "EPSON ET-16650 Series" "C:\Docs\drawing.pdf"
+```
+
+A file that can't be printed (unreadable, password-protected, printing not allowed, the printer
+unavailable) is reported in a message box and logged in `logs\quick-print.log` in PeDeeFe's
+settings folder (`%APPDATA%\PeDeeFe\data`); the app never crashes over it. To choose other
+settings (pages, paper, two-sided, Poster, a window of the page), open the PDF and use
+**File ▸ Print**.
 
 ## Interface language
 
@@ -100,6 +135,11 @@ impressão por janela (como no AutoCAD) e uma pré-visualização nítida. Para 
 [Releases](https://github.com/Phreezi/printcraft/releases) descarrega o `.msi` mais recente e
 instala-o. Fica ao lado do PdfCraft oficial, sem o substituir. Na app, **Help ▸ Check for
 updates** avisa quando há uma versão nova.
+
+A **Impressão Rápida** do Outlook também funciona: com o PeDeeFe como aplicação predefinida para
+PDF (Definições ▸ Aplicações ▸ Aplicações predefinidas), clica com o botão direito num anexo PDF
+e escolhe **Impressão Rápida**. Imprime na impressora predefinida, em Ajustar, A4 (ou A3 se a
+página for maior), orientação automática e com a qualidade usada da última vez, sem abrir janela.
 
 Com o Windows em português, os menus aparecem em português (do Brasil); o idioma muda em
 **Menu ▸ Editar ▸ Preferências… ▸ Idioma da interface**.

@@ -17,7 +17,9 @@ terminal, so this file is what to attach to a bug report: a failed autosave, a p
 render, a render worker that could not start and the report of an internal error all land there.
 Each launch moves the previous log to `pdfcraft.1.log` (and that one to `pdfcraft.2.log`), so the
 log of a run that crashed survives the next start. The file stops growing at 16 MiB. `--version`
-writes no file.
+writes no file. Quick Print (`--print`, `--print-to`: the shell's print and printto verbs) runs
+next to the app, often several at once, so it appends to `logs/quick-print.log` instead and
+leaves `pdfcraft.log` alone; that file starts over once it passes 1 MiB.
 
 By default the app's own crates (`pdfcraft*`) log at `info` and everything else at `warn`.
 `RUST_LOG` replaces that with env_logger-style directives, for example `RUST_LOG=debug`,
@@ -34,6 +36,11 @@ exits. The running app listens on a random loopback port and writes the port and
 (the app crashed and left the file behind) replaces it and runs normally. `--new-instance`, and any
 launch with options (`--control`, `--create-images`, view options), runs a separate app. The code
 and the protocol are in `apps/pdfcraft/src/single_instance.rs`.
+
+Quick Print (`--print FILE…`, `--print-to PRINTER FILE…`) never involves the running app: it
+prints in its own process with no window and exits (`apps/pdfcraft/src/quick_print.rs`). Outlook
+may delete the attachment's temporary file once the verb's process exits, so the file is read and
+spooled before that.
 
 ## Environment variables
 
