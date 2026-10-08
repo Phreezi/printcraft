@@ -331,7 +331,7 @@ impl PdfCraftApp {
         match self.session.apply_ocr(doc, &found) {
             Ok(words) => {
                 if let Some(info) = self.session.get(doc).map(|d| d.info.clone())
-                    && let Some(view) = self.views.iter_mut().find(|v| v.id == doc)
+                    && let Some(view) = self.view_of_mut(doc)
                 {
                     view.document_changed(&info);
                 }

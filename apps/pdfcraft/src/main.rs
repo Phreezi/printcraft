@@ -9,6 +9,9 @@
 //!  --organize on  --fields on  --dialog properties|shortcuts|about  --palette <query>  --home on
 //!  --cover on|off  --default-layout continuous|two-up|single  --default-zoom fit-width|fit-page|<percent>`
 //!
+//! `--new-instance` runs a separate app even when one is running. Otherwise a launch while the
+//! app runs hands its files to it and exits (`single_instance`).
+//!
 //! `--control <file>` enables the UI control channel (off by default): the app listens on a random
 //! loopback port and writes `{"port", "token", "pid"}` to `<file>` (owner-only permissions).
 //! Agents then drive it with `pdfcraft-cli ui --control <file> <method> …`.
@@ -25,6 +28,7 @@ use pdfcraft_ui_egui::{APP_NAME, PdfCraftApp};
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod logging;
+mod single_instance;
 mod updates;
 
 /// Freedesktop app id: the `.desktop` file name and the hicolor icon name.
@@ -69,6 +73,7 @@ fn main() -> eframe::Result {
     let mut options: Vec<(String, String)> = Vec::new();
     let mut control_file: Option<String> = None;
     let mut create_images = false;
+    let mut new_instance = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -78,6 +83,7 @@ fn main() -> eframe::Result {
             }
             "--control" => control_file = args.next(),
             "--create-images" => create_images = true,
+            "--new-instance" => new_instance = true,
             flag if flag.starts_with("--") => {
                 let value = args.next().unwrap_or_default();
                 options.push((flag.trim_start_matches("--").to_string(), value));
@@ -86,12 +92,27 @@ fn main() -> eframe::Result {
         }
     }
     let integrated = cfg!(target_os = "macos");
+    // A plain launch (files, or nothing) while the app runs: the running app takes the files and
+    // comes to the front. Launches with options (`--control`, `--create-images`, view options)
+    // and `--new-instance` run on their own.
+    let plain = options.is_empty() && control_file.is_none() && !create_images && !new_instance;
+    let instance = match settings_dir().filter(|_| plain) {
+        None => None,
+        Some(dir) => match single_instance::start(&dir, &single_instance::absolute_paths(&files)) {
+            single_instance::Outcome::Forwarded => return Ok(()),
+            single_instance::Outcome::Primary(server) => Some(server),
+            single_instance::Outcome::Alone(why) => {
+                log::warn!("running without single instance: {why}");
+                None
+            }
+        },
+    };
     let persistence_path = settings_dir().map(|d| d.join("app.ron"));
     // How the window was left, read before it exists so that it opens once, in place
     // (window_state.rs explains the steps).
     let startup = persistence_path.as_deref().and_then(WindowState::read_saved).unwrap_or_default().startup();
-    let mut viewport = startup
-        .builder(egui::ViewportBuilder::default())
+    // Every window: tabs torn off into new windows get the same (window_state.rs places only the first).
+    let mut template = egui::ViewportBuilder::default()
         .with_title(APP_NAME)
         .with_min_inner_size([820.0, 520.0])
         .with_drag_and_drop(true)
@@ -99,12 +120,13 @@ fn main() -> eframe::Result {
         .with_app_id(APP_ID);
     // Dock, taskbar, Alt-Tab and launcher icon when running unbundled.
     match eframe::icon_data::from_png_bytes(APP_ICON_PNG) {
-        Ok(icon) => viewport = viewport.with_icon(icon),
+        Ok(icon) => template = template.with_icon(icon),
         Err(e) => log::warn!("app icon: {e}"),
     }
     if integrated {
-        viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
+        template = template.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
     }
+    let viewport = startup.builder(template.clone());
     // The log file lives in the settings folder; opened after the arguments, so `--version` leaves
     // no file behind. Records logged until now are written to it first.
     if let (Some(logger), Some(dir)) = (logger, settings_dir()) {
@@ -123,7 +145,9 @@ fn main() -> eframe::Result {
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
-    eframe::run_native(
+    // Requests from later launches; the server itself lives until the app ends.
+    let later = instance.as_ref().map(|server| (server.waker(), server.events()));
+    let result = eframe::run_native(
         APP_NAME,
         native,
         Box::new(move |cc| {
@@ -136,10 +160,24 @@ fn main() -> eframe::Result {
             app.integrated_titlebar = integrated;
             app.update_source = Some(std::sync::Arc::new(updates::latest_release));
             app.keychain_ids = cfg!(target_os = "macos");
+            app.window_template = template;
+            // Files from Finder (macOS) and from later launches of the app.
             #[cfg(target_os = "macos")]
-            {
-                app.os_events = Some(apple_events.connect(&cc.egui_ctx));
-            }
+            let mut apple = apple_events.connect(&cc.egui_ctx);
+            let mut later = later.map(|(wake, events)| {
+                wake(&cc.egui_ctx);
+                events
+            });
+            app.os_events = Some(Box::new(move || {
+                #[cfg(target_os = "macos")]
+                let mut events = apple();
+                #[cfg(not(target_os = "macos"))]
+                let mut events = Vec::new();
+                if let Some(poll) = later.as_mut() {
+                    events.extend(poll());
+                }
+                events
+            }));
             if let Some(file) = &control_file {
                 let client = app.attach_control(&cc.egui_ctx);
                 match pdfcraft_ui_egui::control::serve(client).and_then(|ep| write_control_file(file, ep.port, &ep.token).map(|()| ep.port)) {
@@ -171,7 +209,9 @@ fn main() -> eframe::Result {
             app.prepare(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
-    )
+    );
+    drop(instance);
+    result
 }
 
 /// Write the control endpoint so that only the current user can read the token.

@@ -247,10 +247,10 @@ impl PdfCraftApp {
         match self.session.mark_saved(id, bytes, Some(dest.to_string())) {
             Ok(()) => {
                 self.forget_recovery(id);
-                if let Some(doc) = self.session.get(id)
-                    && let Some(view) = self.views.iter_mut().find(|v| v.id == id)
+                if let Some(info) = self.session.get(id).map(|d| d.info.clone())
+                    && let Some(view) = self.view_of_mut(id)
                 {
-                    view.document_changed(&doc.info);
+                    view.document_changed(&info);
                 }
                 self.notify_fmt("Saved {name}", &[("name", &short_name(dest))]);
                 true
@@ -324,7 +324,8 @@ impl PdfCraftApp {
             },
         };
         match choice {
-            None => {} // cancelled: nothing closes
+            // Cancelled: nothing closes, and a quit stops here.
+            None => self.windows.quitting = false,
             Some(false) => self.close_and_continue(ctx, index, req),
             Some(true) => {
                 let Some(id) = self.views.get(index).map(|v| v.id) else { return };
@@ -354,22 +355,43 @@ impl PdfCraftApp {
         }
     }
 
+    /// Quit, once no window has unsaved changes left: otherwise ask about the next one, in its
+    /// window, which comes to the front.
     fn quit(&mut self, ctx: &egui::Context) {
+        if let Some(key) = self.window_with_dirty() {
+            self.close_request = Some(CloseRequest::Quit);
+            self.windows.request_focus(key);
+            return;
+        }
         self.allow_quit = true;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
     }
 
-    /// Intercept window close while documents have unsaved changes.
+    /// Intercept the root window's close while documents have unsaved changes. With other windows
+    /// open, closing the root window only closes its tabs (see [`crate::windows`]); the system's
+    /// Quit closes them all.
     pub(crate) fn guard_quit(&mut self, ctx: &egui::Context) {
         if !ctx.input(|i| i.viewport().close_requested()) {
             return;
         }
-        if !self.allow_quit && self.first_dirty().is_some() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.close_request = Some(CloseRequest::Quit);
-        } else {
+        if self.allow_quit {
             // A clean quit: nothing is left to recover.
             self.shutdown_recovery();
+            return;
+        }
+        if self.windows.several() && !self.windows.quitting {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.close_current_window();
+            return;
+        }
+        match self.window_with_dirty() {
+            Some(key) => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.close_request = Some(CloseRequest::Quit);
+                self.windows.request_focus(key);
+            }
+            // A clean quit: nothing is left to recover.
+            None => self.shutdown_recovery(),
         }
     }
 }

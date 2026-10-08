@@ -25,6 +25,16 @@ By default the app's own crates (`pdfcraft*`) log at `info` and everything else 
 covers every target starting with it (`pdfcraft*=debug`). The logger is
 `apps/pdfcraft/src/logging.rs`. It never records the control-channel token or document passwords.
 
+## One app per user
+
+A launch while the app runs (a double-clicked PDF, Open With, a shortcut) hands its files to the
+running app, which opens them as tabs in the window used last and brings it to the front, and
+exits. The running app listens on a random loopback port and writes the port and a random token to
+`instance.json` in the settings folder (readable by the user only); a launch that can't reach it
+(the app crashed and left the file behind) replaces it and runs normally. `--new-instance`, and any
+launch with options (`--control`, `--create-images`, view options), runs a separate app. The code
+and the protocol are in `apps/pdfcraft/src/single_instance.rs`.
+
 ## Environment variables
 
 | Variable | Effect |

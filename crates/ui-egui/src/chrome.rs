@@ -4,7 +4,9 @@ use egui::{Align, Align2, Color32, CornerRadius, Layout, Rect, Sense, Stroke, ve
 
 use crate::canvas::{DocView, Fit, PageLayout};
 use crate::theme::{self, ThemePreference, Tokens};
+use crate::windows::{TabDrag, TabTarget};
 use crate::{Dialog, Mode, PdfCraftApp, PropsTab, RightPanel, icons, widgets};
+use pdfcraft_engine::DocId;
 
 pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
@@ -22,6 +24,7 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
             }
+            let mut tabs: Vec<(DocId, Rect)> = Vec::new();
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 if icons::button(ui, "house", 28.0, app.active.is_none(), tl!("Home")).clicked() {
@@ -29,9 +32,12 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 }
                 let mut close = None;
                 for i in 0..app.views.len() {
-                    let Some(doc) = app.session.get(app.views[i].id) else { continue };
+                    let id = app.views[i].id;
+                    let Some(doc) = app.session.get(id) else { continue };
                     let (name, dirty) = (doc.display_name(), doc.dirty);
-                    if tab(ui, &t, &name, dirty, app.active == Some(i), &mut close, i).clicked() {
+                    let resp = tab(ui, &t, &name, dirty, app.active == Some(i), &mut close, i, id);
+                    tabs.push((id, resp.rect));
+                    if resp.clicked() {
                         app.active = Some(i);
                     }
                 }
@@ -56,7 +62,116 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     }
                 });
             });
+            tab_drag(app, ui, full, &tabs);
+            drop_marker(app, ui, &t, &tabs);
+            app.windows.set_strip(full, tabs);
         });
+}
+
+/// The widget id of document `doc`'s tab: the same wherever the tab is, so a drag survives the
+/// tab moving along the strip.
+fn tab_id(doc: DocId) -> egui::Id {
+    egui::Id::new(("pdfcraft-tab", doc.0))
+}
+
+/// Dragging a tab by its label: along the strip it changes places; released away from the strip
+/// it moves to the window whose tab strip is under the pointer, or to a new window there (see
+/// [`crate::windows`]). Not where windows can't be created (the web, tests).
+fn tab_drag(app: &mut PdfCraftApp, ui: &egui::Ui, strip: Rect, tabs: &[(DocId, Rect)]) {
+    let ctx = ui.ctx().clone();
+    let current = app.windows.current();
+    let pointer = ctx.input(|i| i.pointer.latest_pos());
+    for (doc, rect) in tabs {
+        if ctx.is_being_dragged(tab_id(*doc)) && app.windows.drag.as_ref().is_none_or(|d| d.doc != *doc || d.window != current) {
+            let origin = ctx.input(|i| i.pointer.press_origin()).or(pointer).unwrap_or(rect.min);
+            let name = app.session.get(*doc).map(|d| d.display_name()).unwrap_or_default();
+            app.windows.drag =
+                Some(TabDrag { window: current, doc: *doc, name, grab: origin - rect.min, tab_min: rect.min, pointer: None, screen: None });
+        }
+    }
+    let Some(mut d) = app.windows.drag.clone().filter(|d| d.window == current) else { return };
+    let dragging = ctx.is_being_dragged(tab_id(d.doc));
+    let stopped = ctx.drag_stopped_id() == Some(tab_id(d.doc));
+    if !dragging && !stopped {
+        // The drag ended without a release seen here (the tab closed, the window lost the pointer).
+        app.windows.drag = None;
+        return;
+    }
+    // The pointer may be outside the window (the system lets the window follow it while the
+    // button is down); the last position seen is kept for when it is gone.
+    if let Some(p) = pointer {
+        d.pointer = Some(p);
+        d.screen = app.windows.geometry(current).and_then(|g| g.to_screen(p));
+    }
+    let in_strip = d.pointer.is_none_or(|p| strip.expand2(vec2(0.0, crate::windows::STRIP_SLACK)).contains(p));
+    let can_tear_off = !ctx.embed_viewports();
+    if in_strip {
+        // Along the strip: before the first other tab whose middle is right of the pointer.
+        if let Some(p) = d.pointer {
+            let at = tabs.iter().filter(|(doc, _)| *doc != d.doc).filter(|(_, r)| r.center().x < p.x).count();
+            let now = tabs.iter().position(|(doc, _)| *doc == d.doc);
+            if now.is_some_and(|n| n != at) {
+                app.move_tab(d.doc, TabTarget::Window(current, Some(at)));
+            }
+        }
+    } else if can_tear_off {
+        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        if let Some(p) = d.pointer {
+            tab_ghost(&ctx, &d.name, p);
+        }
+    }
+    if stopped {
+        app.windows.drag = None;
+        if !in_strip && can_tear_off {
+            let first = tabs.first().map_or(d.tab_min, |(_, r)| r.min);
+            let target = app.windows.drop_target(current, d.screen, d.grab + first.to_vec2());
+            app.windows.queue_move(d.doc, target);
+        }
+    } else {
+        app.windows.drag = Some(d);
+    }
+}
+
+/// The dragged tab's label, following the pointer.
+fn tab_ghost(ctx: &egui::Context, name: &str, at: egui::Pos2) {
+    let t = Tokens::get(ctx);
+    egui::Area::new(egui::Id::new("pdfcraft-tab-ghost")).order(egui::Order::Tooltip).interactable(false).fixed_pos(at + vec2(12.0, 10.0)).show(
+        ctx,
+        |ui| {
+            egui::Frame::NONE
+                .fill(t.chrome)
+                .stroke(Stroke::new(1.0, t.divider))
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(10, 6))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add(icons::image("file-text", 15.0, t.accent));
+                        ui.label(egui::RichText::new(name).font(theme::regular(13.0)).color(t.text));
+                    });
+                });
+        },
+    );
+}
+
+/// A tab dragged from another window over this window's tab strip: where it would land, and its
+/// label (it left the window it came from).
+fn drop_marker(app: &PdfCraftApp, ui: &egui::Ui, t: &Tokens, tabs: &[(DocId, Rect)]) {
+    let current = app.windows.current();
+    let Some(d) = app.windows.drag.as_ref().filter(|d| d.window != current) else { return };
+    let Some(screen) = d.screen else { return };
+    let Some((key, at)) = app.windows.hovered_strip(d.window, screen) else { return };
+    if key != current {
+        return;
+    }
+    let x = match at.and_then(|i| tabs.get(i)) {
+        Some((_, r)) => r.left() - 2.0,
+        None => tabs.last().map_or(ui.max_rect().left() + 40.0, |(_, r)| r.right() + 2.0),
+    };
+    let y = tabs.first().map_or(ui.max_rect().y_range(), |(_, r)| r.y_range());
+    ui.painter().vline(x, y, Stroke::new(2.0, t.accent));
+    if let Some(local) = app.windows.geometry(current).and_then(|g| g.inner).map(|inner| screen - inner.min.to_vec2()) {
+        tab_ghost(ui.ctx(), &d.name, local);
+    }
 }
 
 /// Both theme entry points use the same choices and command path.
@@ -73,11 +188,14 @@ fn theme_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     }
 }
 
-fn tab(ui: &mut egui::Ui, t: &Tokens, name: &str, dirty: bool, active: bool, close: &mut Option<usize>, index: usize) -> egui::Response {
+#[allow(clippy::too_many_arguments)]
+fn tab(ui: &mut egui::Ui, t: &Tokens, name: &str, dirty: bool, active: bool, close: &mut Option<usize>, index: usize, doc: DocId) -> egui::Response {
     let font = theme::regular(13.0);
     let label: String = if name.chars().count() > 28 { format!("{}…", name.chars().take(27).collect::<String>()) } else { name.to_string() };
     let text_w = ui.fonts_mut(|f| f.layout_no_wrap(label.clone(), font.clone(), t.text).size().x);
-    let (rect, resp) = ui.allocate_exact_size(vec2(text_w + 64.0, 30.0), Sense::click());
+    let (rect, _) = ui.allocate_exact_size(vec2(text_w + 64.0, 30.0), Sense::hover());
+    // Clicked to show, dragged to move (along the strip, to another window or out to a new one).
+    let resp = ui.interact(rect, tab_id(doc), Sense::click_and_drag());
     let a11y = if dirty { format!("{name} (edited)") } else { name.to_string() };
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, &a11y));
     let bg = if active {
@@ -97,7 +215,7 @@ fn tab(ui: &mut egui::Ui, t: &Tokens, name: &str, dirty: bool, active: bool, clo
     );
     ui.painter().text(rect.min + vec2(28.0, rect.height() / 2.0), Align2::LEFT_CENTER, label, font, if active { t.text } else { t.text_muted });
     let x_rect = Rect::from_center_size(rect.right_center() - vec2(16.0, 0.0), vec2(20.0, 20.0));
-    let x = ui.interact(x_rect, ui.id().with(("tabclose", index)), Sense::click());
+    let x = ui.interact(x_rect, tab_id(doc).with("close"), Sense::click());
     if x.hovered() {
         ui.painter().rect_filled(x_rect, CornerRadius::same(4), t.pressed);
     }

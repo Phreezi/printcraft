@@ -80,8 +80,10 @@ pub mod theme;
 pub mod updates;
 mod wheel_pager;
 pub mod window_state;
+pub mod windows;
 /// The app's name as people see it (window title, About, installer).
 pub use pdfcraft_engine::links::APP_NAME;
+pub use windows::{Geometry as WindowGeometry, ROOT_WINDOW, TabTarget, WindowKey};
 mod widgets;
 
 use pdfcraft_engine::{DocId, Session};
@@ -298,8 +300,11 @@ pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 /// double-clicks, Open With and drops on the Dock icon arrive as Apple events, not arguments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OsEvent {
-    /// Open these files.
+    /// Open these files (as tabs of the window the user worked in last, which comes to the front).
     Open(Vec<String>),
+    /// Bring the window the user worked in last to the front (the app was launched again, with no
+    /// files).
+    Activate,
     /// Quit (the Dock's Quit, logging out), asking about unsaved changes first.
     Quit,
 }
@@ -517,6 +522,11 @@ pub struct PdfCraftApp {
     pub last_opened_url: Option<String>,
     /// A document asked to open this address; the user hasn't answered yet (#90, #91).
     pub pending_link: Option<PendingLink>,
+    /// The open windows and the tabs of those not being drawn (see [`windows`]).
+    pub windows: windows::Windows,
+    /// How windows other than the first are created: icon, minimum size, app id (the desktop app
+    /// sets it to match its main window).
+    pub window_template: egui::ViewportBuilder,
 }
 
 /// Where in a document a request to open an address came from.
@@ -685,6 +695,8 @@ impl PdfCraftApp {
             text_style: content_ui::default_style(),
             replace_draft: None,
             number_draft: NumberDraft { from: 1, to: 1, style: pdfcraft_engine::LabelStyle::Decimal, prefix: String::new(), start: 1 },
+            windows: Default::default(),
+            window_template: egui::ViewportBuilder::default().with_min_inner_size([820.0, 520.0]).with_drag_and_drop(true),
         }
     }
 
@@ -1175,7 +1187,7 @@ impl PdfCraftApp {
 
     /// `true` while any open document still waits for page renders (used by headless capture).
     pub fn render_pending(&self) -> bool {
-        self.views.iter().any(|v| v.render_pending())
+        self.views.iter().chain(self.windows.parked_views()).any(|v| v.render_pending())
     }
 
     /// Apply a named view option (`--page 3`, `--panel bookmarks`, `--theme dark`, …).
@@ -1478,7 +1490,9 @@ impl PdfCraftApp {
         // properties; Escape cancels it rather than clearing a selection), and nothing may run
         // underneath it. They are read here, before the canvas can consume them.
         if self.close_request.is_some() {
-            if let Some(choice) = dialogs::save_prompt_key(ctx) {
+            if self.draws_overlays()
+                && let Some(choice) = dialogs::save_prompt_key(ctx)
+            {
                 self.resolve_close(ctx, choice);
             }
             return;
@@ -1505,6 +1519,82 @@ impl PdfCraftApp {
                 self.views[i].select_all();
             }
             canvas::shortcuts(&mut self.views[i], ctx);
+        }
+    }
+}
+
+impl PdfCraftApp {
+    /// The keys typed in the window being drawn, and its autoscroll (each window reads its own).
+    pub(crate) fn window_keys(&mut self, ctx: &egui::Context) {
+        // While a modal is open in the focus window, the other windows are disabled.
+        if self.draws_overlays() || !self.modal_open() {
+            self.shortcuts(ctx);
+        }
+        // Scrolling is transient: never resume after changing tabs, opening a modal/palette,
+        // or returning to a window that lost focus.
+        let blocked = self.modal_open() || !ctx.input(|i| i.focused);
+        for (index, view) in self.views.iter_mut().enumerate() {
+            if blocked || self.active != Some(index) {
+                view.auto_scroll.cancel();
+            }
+        }
+    }
+
+    /// Draw the window whose tabs are current (see [`windows`]).
+    pub(crate) fn draw_window(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let overlays = self.draws_overlays();
+        if !overlays && self.modal_open() {
+            // A dialog is open in another window: this one waits for it.
+            ui.disable();
+        }
+        // The window shows the active document's name (or title, if it asks for that).
+        let title = self
+            .active
+            .and_then(|i| self.views.get(i))
+            .and_then(|v| self.session.get(v.id))
+            .map_or_else(|| pdfcraft_engine::links::APP_NAME.to_owned(), |d| format!("{} — {}", d.display_name(), pdfcraft_engine::links::APP_NAME));
+        if title != self.window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
+        if self.full_screen && self.active.is_some() {
+            // Full screen: the page, nothing else (Esc or ⌘L to leave).
+            let t = theme::Tokens::get(&ctx);
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(if t.dark() { t.pasteboard } else { egui::Color32::from_gray(32) })).show(
+                ui,
+                |ui| {
+                    if let Some(i) = self.active {
+                        canvas::document_area(self, i, ui);
+                    }
+                },
+            );
+            if overlays {
+                dialogs::show(self, &ctx);
+            }
+            return;
+        }
+        chrome::tab_strip(self, ui);
+        chrome::mode_bar(self, ui);
+        if self.active.is_some() {
+            chrome::right_rail(self, ui);
+            if self.right.is_some() && self.mode != Mode::Read {
+                panels::right_panel(self, ui);
+            }
+        }
+        if self.left_open && self.mode != Mode::Read {
+            panels::left_panel(self, ui);
+        }
+        let t = theme::Tokens::get(&ctx);
+        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.pasteboard)).show(ui, |ui| match self.active {
+            None => home::show(self, ui),
+            Some(i) => canvas::document_area(self, i, ui),
+        });
+        self.process_pending_edits();
+        if overlays {
+            palette::show(self, &ctx);
+            dialogs::show(self, &ctx);
+            widgets::toast(self, &ctx);
         }
     }
 }
@@ -1543,10 +1633,15 @@ impl eframe::App for PdfCraftApp {
             }
         }
         self.sync_theme(ctx);
+        // The focus window's tabs are current here (`tidy_windows`); the root's own input (files
+        // dropped on it, its close button, its keys) is read with the root's tabs current.
+        self.enter_window(ROOT_WINDOW);
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         for f in dropped {
             self.open_dropped(f, ctx);
         }
+        // Files from outside the window open in the window the user worked in last.
+        self.enter_window(self.windows.focus());
         let arrived: Vec<(String, Vec<u8>)> = self.inbox.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
         for (name, bytes) in arrived {
             if let Err(e) = self.open_bytes(&name, None, bytes) {
@@ -1557,32 +1652,34 @@ impl eframe::App for PdfCraftApp {
         for e in os_events {
             match e {
                 #[cfg(not(target_arch = "wasm32"))]
-                OsEvent::Open(paths) => paths.iter().for_each(|p| self.open_path(p)),
+                OsEvent::Open(paths) => {
+                    paths.iter().for_each(|p| self.open_path(p));
+                    self.windows.request_focus(self.windows.focus());
+                }
                 #[cfg(target_arch = "wasm32")]
                 OsEvent::Open(_) => {}
-                // Like closing the window: `guard_quit` asks about unsaved changes.
-                OsEvent::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                OsEvent::Activate => self.windows.request_focus(self.windows.focus()),
+                // Like closing the window: `guard_quit` asks about unsaved changes, in every window.
+                OsEvent::Quit => {
+                    self.windows.quitting = true;
+                    ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
+                }
             }
         }
         if let Some(mut control) = self.control.take() {
             control.tick(ctx, self);
             self.control = Some(control);
         }
+        self.enter_window(ROOT_WINDOW);
         self.guard_quit(ctx);
         let now = ctx.input(|i| i.time);
         self.autosave_tick(now);
         self.poll_updates();
         self.poll_print();
         self.window_tick(ctx);
-        self.shortcuts(ctx);
-        // Scrolling is transient: never resume after changing tabs, opening a modal/palette,
-        // or returning to a window that lost focus.
-        let blocked = self.dialog.is_some() || self.close_request.is_some() || self.palette_open || !ctx.input(|i| i.focused);
-        for (index, view) in self.views.iter_mut().enumerate() {
-            if blocked || self.active != Some(index) {
-                view.auto_scroll.cancel();
-            }
-        }
+        self.window_keys(ctx);
+        // Results of pickers and background work land in the window the user worked in last.
+        self.enter_window(self.windows.focus());
         self.process_pending_edits();
         self.poll_export();
         self.poll_ocr();
@@ -1590,12 +1687,16 @@ impl eframe::App for PdfCraftApp {
         self.process_file_requests();
         #[cfg(not(target_arch = "wasm32"))]
         self.process_picked();
-        // Pull finished renders into textures for every open document.
-        for view in &mut self.views {
-            if let Some(doc) = self.session.get(view.id) {
+        // Pull finished renders into textures for every open document, in every window.
+        let session = &self.session;
+        let views = self.views.iter_mut().chain(self.windows.parked_views_mut());
+        for view in views {
+            if let Some(doc) = session.get(view.id) {
                 view.receive(ctx, &doc.renderer);
             }
         }
+        // The root is drawn first.
+        self.enter_window(ROOT_WINDOW);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -1606,48 +1707,10 @@ impl eframe::App for PdfCraftApp {
             ctx.request_repaint();
             return;
         }
-        // The window shows the active document's name (or title, if it asks for that).
-        let title = self
-            .active
-            .and_then(|i| self.session.get(self.views[i].id))
-            .map_or_else(|| pdfcraft_engine::links::APP_NAME.to_owned(), |d| format!("{} — {}", d.display_name(), pdfcraft_engine::links::APP_NAME));
-        if title != self.window_title {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
-            self.window_title = title;
-        }
-        if self.full_screen && self.active.is_some() {
-            // Full screen: the page, nothing else (Esc or ⌘L to leave).
-            let t = theme::Tokens::get(&ctx);
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(if t.dark() { t.pasteboard } else { egui::Color32::from_gray(32) })).show(
-                ui,
-                |ui| {
-                    if let Some(i) = self.active {
-                        canvas::document_area(self, i, ui);
-                    }
-                },
-            );
-            dialogs::show(self, &ctx);
-            return;
-        }
-        chrome::tab_strip(self, ui);
-        chrome::mode_bar(self, ui);
-        if self.active.is_some() {
-            chrome::right_rail(self, ui);
-            if self.right.is_some() && self.mode != Mode::Read {
-                panels::right_panel(self, ui);
-            }
-        }
-        if self.left_open && self.mode != Mode::Read {
-            panels::left_panel(self, ui);
-        }
-        let t = theme::Tokens::get(&ctx);
-        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.pasteboard)).show(ui, |ui| match self.active {
-            None => home::show(self, ui),
-            Some(i) => canvas::document_area(self, i, ui),
-        });
-        self.process_pending_edits();
-        palette::show(self, &ctx);
-        dialogs::show(self, &ctx);
-        widgets::toast(self, &ctx);
+        self.enter_window(ROOT_WINDOW);
+        self.note_window(&ctx);
+        self.draw_window(ui);
+        self.show_other_windows(&ctx);
+        self.tidy_windows(&ctx);
     }
 }

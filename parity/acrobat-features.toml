@@ -22,8 +22,8 @@ milestone = "M1"
 status = "shipped"
 commands = ["file.open"]
 tools = ["doc_open"]
-evidence = ["crates/automation/tests/automation.rs::open_inspect_render_and_find", "crates/ui-egui/tests/ui.rs::opening_a_pdf_shows_comments_and_bookmarks", "crates/ui-egui/tests/ui.rs::files_and_quit_from_the_operating_system"]
-notes = "File ▸ Open, the command line (Linux and Windows file associations), and on macOS Finder, Open With and the Dock (Apple events; the bundle declares PDF as a document type)"
+evidence = ["crates/automation/tests/automation.rs::open_inspect_render_and_find", "crates/ui-egui/tests/ui.rs::opening_a_pdf_shows_comments_and_bookmarks", "crates/ui-egui/tests/ui.rs::files_and_quit_from_the_operating_system", "apps/pdfcraft/src/single_instance.rs::the_second_launch_hands_its_files_to_the_first", "apps/pdfcraft/src/single_instance.rs::a_wrong_token_or_a_stale_file_is_not_trusted"]
+notes = "File ▸ Open, the command line (Linux and Windows file associations), and on macOS Finder, Open With and the Dock (Apple events; the bundle declares PDF as a document type). One app per user: a later launch hands its files to the running app over a loopback socket with a per-user token file (they open as tabs in the window used last, which comes to the front) and exits; `--new-instance` and launches with options run on their own. Checked on Linux (unit tests, and by hand under Xvfb/X11); not yet run on Windows or macOS, where bringing the window to the front may be limited by the system's focus rules."
 
 [[feature]]
 id = "core.repair-broken-files"
@@ -600,6 +600,18 @@ commands = ["file.close"]
 tools = ["doc_close"]
 evidence = ["crates/ui-egui/tests/editing.rs::clean_tabs_close_without_asking"]
 notes = ""
+
+[[feature]]
+id = "core.multi-window-tabs"
+title = "Several windows with document tabs; drag tabs out to a new window or onto another window's tabs"
+area = "A"
+tier = "P1"
+milestone = "M3"
+status = "shipped"
+commands = []
+tools = []
+evidence = ["crates/ui-egui/tests/windows.rs::tabs_move_to_a_new_window_and_back_and_an_empty_window_closes", "crates/ui-egui/tests/windows.rs::the_root_window_takes_over_another_when_its_last_tab_leaves", "crates/ui-egui/tests/windows.rs::closing_a_window_asks_about_its_unsaved_documents_there", "crates/ui-egui/tests/windows.rs::quitting_asks_about_unsaved_documents_in_every_window", "crates/ui-egui/tests/windows.rs::dragging_a_tab_along_the_strip_reorders_and_never_tears_off_where_windows_are_embedded", "crates/ui-egui/src/windows.rs::a_drop_on_another_windows_strip_goes_there_and_elsewhere_opens_a_new_window"]
+notes = "Native windows through egui viewports, each with its own ordered tabs. Drag a tab along the strip to reorder it; release it over another window's tab strip (an insertion marker shows where) to move it there; release it elsewhere to open it in a new window at that place (a window's only tab moves its window). A window left without tabs closes; closing a window closes its tabs, asking about unsaved changes there; the system's Quit asks in every window. Checked headlessly (model tests; other windows embedded in kittest) and by hand on Linux X11 under Xvfb with real windows. Not yet run on Windows or macOS; mixed-DPI monitors may misplace drops (window positions are compared in points); on Wayland, which reports no window positions, tabs tear off but can't be dropped onto another window; on the web tabs don't tear off. Panels, mode and tool choices are shared by all windows rather than kept per window."
 
 [[feature]]
 id = "core.close-all"

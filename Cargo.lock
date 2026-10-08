@@ -3452,6 +3452,7 @@ dependencies = [
  "eframe",
  "egui",
  "fmv-macos-events",
+ "getrandom 0.4.3",
  "log",
  "pdfcraft-ui-egui",
  "rustls-native-certs",
