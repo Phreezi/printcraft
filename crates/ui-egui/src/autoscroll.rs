@@ -1,4 +1,6 @@
-//! Linux middle-button scrolling for the document viewport.
+//! Middle-button autoscroll for the document viewport and the page grid, on every platform:
+//! press the wheel and the view scrolls toward the pointer, faster the farther it goes, like a
+//! joystick. A click latches it on until the next click; press, drag and release stops on release.
 
 use egui::{Context, CursorIcon, Event, Key, PointerButton, Pos2, Stroke, Vec2, vec2};
 
@@ -14,6 +16,15 @@ const MAX_DISPLACEMENT: f32 = 1_000_000.0;
 pub(crate) struct AutoScroll {
     anchor: Option<Pos2>,
     organize: bool,
+    /// The content can also move sideways, so the marker and cursor show four directions.
+    horizontal: bool,
+    /// The press that started scrolling is still held.
+    holding: bool,
+    /// While held, the pointer left the dead zone: releasing then stops (press, drag, release),
+    /// while a plain click latches scrolling on until the next click.
+    dragged: bool,
+    /// Per-axis direction of the last motion (-1, 0 or 1), for the cursor.
+    direction: Vec2,
     /// Own a cancelling click through its release, so it cannot also edit page content.
     cancel_button: Option<PointerButton>,
     block_input: bool,
@@ -26,6 +37,9 @@ impl AutoScroll {
 
     pub(crate) fn cancel(&mut self) {
         self.anchor = None;
+        self.holding = false;
+        self.dragged = false;
+        self.direction = Vec2::ZERO;
         self.cancel_button = None;
         self.block_input = false;
     }
@@ -35,19 +49,11 @@ impl AutoScroll {
     }
 
     /// Run before the document's widgets. Starting is restricted to the unobstructed viewport;
-    /// once started, moving outside that viewport still controls the speed.
-    pub(crate) fn update(&mut self, ui: &egui::Ui, viewport: egui::Rect, organize: bool) -> Vec2 {
-        self.update_for_platform(ui, viewport, organize, cfg!(target_os = "linux"))
-    }
-
-    fn update_for_platform(&mut self, ui: &egui::Ui, viewport: egui::Rect, organize: bool, supported: bool) -> Vec2 {
-        // Leave middle-button events and widget interactions to the existing platform behavior.
-        if !supported {
-            self.cancel();
-            return Vec2::ZERO;
-        }
+    /// once started, moving outside that viewport still controls the speed. `horizontal` says
+    /// whether the content is wider than the viewport (the page grid never scrolls sideways).
+    pub(crate) fn update(&mut self, ui: &egui::Ui, viewport: egui::Rect, organize: bool, horizontal: bool) -> Vec2 {
         let ctx = ui.ctx();
-        let (pointer, middle_press, middle_down, middle_released, cancel, cancel_button, dt) = ctx.input(|i| {
+        let (pointer, middle_press, middle_release, middle_down, middle_released, cancel, cancel_button, dt) = ctx.input(|i| {
             let cancel_button = [PointerButton::Primary, PointerButton::Secondary, PointerButton::Extra1, PointerButton::Extra2]
                 .into_iter()
                 .find(|button| i.pointer.button_pressed(*button));
@@ -56,6 +62,10 @@ impl AutoScroll {
                 // Read the press event itself: later movement in this frame must not move the anchor.
                 i.events.iter().find_map(|event| match event {
                     Event::PointerButton { pos, button: PointerButton::Middle, pressed: true, .. } if pos.is_finite() => Some(*pos),
+                    _ => None,
+                }),
+                i.events.iter().find_map(|event| match event {
+                    Event::PointerButton { pos, button: PointerButton::Middle, pressed: false, .. } if pos.is_finite() => Some(*pos),
                     _ => None,
                 }),
                 i.pointer.button_down(PointerButton::Middle),
@@ -68,6 +78,7 @@ impl AutoScroll {
                 i.stable_dt,
             )
         });
+        // The middle button never selects, draws or drags anything while it scrolls.
         self.block_input = self.active() || self.cancel_button.is_some() || middle_press.is_some() || middle_down || middle_released;
         if let Some(button) = self.cancel_button {
             if !ctx.input(|i| i.pointer.button_down(button)) {
@@ -94,18 +105,38 @@ impl AutoScroll {
             {
                 self.anchor = Some(pressed_at);
                 self.organize = organize;
+                self.holding = true;
+                self.dragged = false;
             }
         }
-        let (Some(anchor), Some(pointer)) = (self.anchor, pointer) else { return Vec2::ZERO };
-        let displacement = pointer.y - anchor.y;
+        let Some(anchor) = self.anchor else { return Vec2::ZERO };
+        self.horizontal = horizontal && !organize;
+        if self.holding {
+            if pointer.is_some_and(|p| outside_dead_zone(p - anchor)) {
+                self.dragged = true;
+            }
+            if middle_released || (!middle_down && middle_press.is_none()) {
+                // Press, drag, release stops where it was released; a click latches it on.
+                if self.dragged || middle_release.is_some_and(|p| outside_dead_zone(p - anchor)) {
+                    self.cancel();
+                    self.block_input = true;
+                    return Vec2::ZERO;
+                }
+                self.holding = false;
+            }
+        }
+        let Some(pointer) = pointer else { return Vec2::ZERO };
+        let displacement = pointer - anchor;
+        let displacement = if self.horizontal { displacement } else { vec2(0.0, displacement.y) };
         // Cap the elapsed time too: returning from an idle/hidden window must never jump pages.
-        let delta = scroll_delta(displacement, dt);
-        if displacement.is_finite() && displacement.abs() > DEAD_ZONE {
+        let delta = vec2(scroll_delta(displacement.x, dt), scroll_delta(displacement.y, dt));
+        self.direction = vec2(-delta.x.signum() * f32::from(delta.x != 0.0), -delta.y.signum() * f32::from(delta.y != 0.0));
+        if delta != Vec2::ZERO {
             // Continuous redraws let stable_dt use measured frame time. Delayed redraws
             // instead use predicted_dt, which can make speed depend on the actual frame rate.
             ctx.request_repaint();
         }
-        vec2(0.0, delta)
+        delta
     }
 
     /// Draw an original geometric marker at the activation point, above page content.
@@ -115,14 +146,16 @@ impl AutoScroll {
         let ink = ui.visuals().text_color();
         painter.circle(anchor, 13.0, ui.visuals().window_fill(), Stroke::new(1.0, ink));
         painter.circle_filled(anchor, 2.0, ink);
-        for direction in [-1.0, 1.0] {
-            painter.add(egui::Shape::convex_polygon(
-                vec![anchor + vec2(-4.0, direction * 6.0), anchor + vec2(4.0, direction * 6.0), anchor + vec2(0.0, direction * 10.0)],
-                ink,
-                Stroke::NONE,
-            ));
+        let mut arrows = vec![vec2(0.0, -1.0), vec2(0.0, 1.0)];
+        if self.horizontal {
+            arrows.extend([vec2(-1.0, 0.0), vec2(1.0, 0.0)]);
         }
-        ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
+        for d in arrows {
+            // The arrow tip points along `d`; its base is perpendicular to it.
+            let side = vec2(d.y, d.x) * 4.0;
+            painter.add(egui::Shape::convex_polygon(vec![anchor + d * 6.0 - side, anchor + d * 6.0 + side, anchor + d * 10.0], ink, Stroke::NONE));
+        }
+        ui.ctx().set_cursor_icon(cursor(self.direction, self.horizontal));
     }
 
     /// Escape belongs to autoscroll first, leaving selection/find/full-screen intact.
@@ -133,6 +166,27 @@ impl AutoScroll {
         } else {
             false
         }
+    }
+}
+
+fn outside_dead_zone(d: Vec2) -> bool {
+    d.is_finite() && (d.x.abs() > DEAD_ZONE || d.y.abs() > DEAD_ZONE)
+}
+
+/// The cursor points where the content is heading; at rest it shows the available axes.
+fn cursor(direction: Vec2, horizontal: bool) -> CursorIcon {
+    let (x, y) = (direction.x as i8, direction.y as i8);
+    match (x, y) {
+        (0, -1) => CursorIcon::ResizeNorth,
+        (0, 1) => CursorIcon::ResizeSouth,
+        (-1, 0) => CursorIcon::ResizeWest,
+        (1, 0) => CursorIcon::ResizeEast,
+        (-1, -1) => CursorIcon::ResizeNorthWest,
+        (1, -1) => CursorIcon::ResizeNorthEast,
+        (-1, 1) => CursorIcon::ResizeSouthWest,
+        (1, 1) => CursorIcon::ResizeSouthEast,
+        _ if horizontal => CursorIcon::AllScroll,
+        _ => CursorIcon::ResizeVertical,
     }
 }
 
@@ -155,37 +209,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unsupported_platform_leaves_middle_button_and_escape_input_untouched() {
-        for previously_active in [false, true] {
-            let ctx = Context::default();
-            let pos = egui::pos2(100.0, 100.0);
-            let mut scroll = AutoScroll { anchor: previously_active.then_some(pos), block_input: previously_active, ..Default::default() };
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(400.0, 400.0))),
-                    events: vec![
-                        Event::PointerMoved(pos),
-                        Event::PointerButton { pos, button: PointerButton::Middle, pressed: true, modifiers: egui::Modifiers::NONE },
-                        Event::Key { key: Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE },
-                    ],
-                    ..Default::default()
-                },
-                |ui| {
-                    assert_eq!(scroll.update_for_platform(ui, ui.max_rect(), false, false), Vec2::ZERO);
-                    assert!(!scroll.active(), "unsupported platforms must not start or retain custom scrolling");
-                    assert!(!scroll.blocks_input(), "middle-button input must reach the existing widgets");
-                    scroll.paint(ui, ui.max_rect());
-                    assert_eq!(ctx.output(|o| o.cursor_icon), CursorIcon::Default, "no custom marker or cursor");
-                    assert!(!scroll.escape(&ctx));
-                    ctx.input(|i| {
-                        assert!(i.pointer.button_pressed(PointerButton::Middle));
-                        assert!(i.key_pressed(Key::Escape), "Escape must remain available to the existing shortcuts");
-                    });
-                },
-            );
-            // This input-only test has no renderer to apply the generated font texture.
-            output.textures_delta.clear();
-        }
+    fn cursor_points_where_the_pointer_went_and_rest_shows_the_axes() {
+        assert_eq!(cursor(vec2(0.0, 1.0), false), CursorIcon::ResizeSouth);
+        assert_eq!(cursor(vec2(0.0, -1.0), true), CursorIcon::ResizeNorth);
+        assert_eq!(cursor(vec2(1.0, 1.0), true), CursorIcon::ResizeSouthEast);
+        assert_eq!(cursor(vec2(-1.0, 0.0), true), CursorIcon::ResizeWest);
+        assert_eq!(cursor(Vec2::ZERO, true), CursorIcon::AllScroll);
+        assert_eq!(cursor(Vec2::ZERO, false), CursorIcon::ResizeVertical);
+        assert_eq!(cursor(vec2(f32::NAN, f32::INFINITY), false), CursorIcon::ResizeVertical);
+    }
+
+    #[test]
+    fn dead_zone_is_per_axis_and_rejects_invalid_input() {
+        assert!(!outside_dead_zone(vec2(15.0, -15.0)));
+        assert!(outside_dead_zone(vec2(15.1, 0.0)));
+        assert!(outside_dead_zone(vec2(0.0, -40.0)));
+        assert!(!outside_dead_zone(vec2(f32::NAN, 100.0)));
+        assert!(!outside_dead_zone(vec2(f32::INFINITY, 0.0)));
     }
 
     #[test]

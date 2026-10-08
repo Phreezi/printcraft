@@ -125,7 +125,6 @@ fn language_switch_preserves_document_and_command_ids() {
     assert_eq!(ok(&mut h, &c, "ui.state", json!({}))["language"], "en");
 }
 
-#[cfg(target_os = "linux")]
 fn start_autoscroll(h: &mut Harness<'static, PdfCraftApp>, c: &ControlClient) -> egui::Pos2 {
     let p = h.state().views[0].viewport_rect().center();
     ok(h, c, "ui.click", json!({ "x": p.x, "y": p.y, "button": "middle" }));
@@ -133,7 +132,6 @@ fn start_autoscroll(h: &mut Harness<'static, PdfCraftApp>, c: &ControlClient) ->
     p
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn middle_click_autoscroll_latches_has_a_dead_zone_and_scrolls_both_directions() {
     let (mut h, c) = harness();
@@ -168,11 +166,10 @@ fn middle_click_autoscroll_latches_has_a_dead_zone_and_scrolls_both_directions()
     assert!(!h.state().session.get(h.state().views[0].id).unwrap().dirty, "scrolling never edits the PDF");
 }
 
-#[cfg(target_os = "linux")]
 #[test]
-fn moving_before_middle_button_release_keeps_scrolling_without_starting_page_tools() {
+fn press_drag_release_scrolls_while_held_and_stops_on_release_without_starting_page_tools() {
     let (mut h, c) = harness();
-    // Keep the tracked page on screen while the faster gesture continues after release.
+    // Keep the tracked page on screen while the gesture scrolls.
     h.state_mut().set_option("zoom", "400").unwrap();
     h.run_steps(3);
     h.state_mut().views[0].go_to_page(0);
@@ -183,19 +180,50 @@ fn moving_before_middle_button_release_keeps_scrolling_without_starting_page_too
     let top = h.state().views[0].page_screen_rect(0).unwrap().top();
     ok(&mut h, &c, "ui.drag", json!({ "from": [p.x, p.y], "to": [p.x, p.y + 60.0], "steps": 12, "button": "middle" }));
     h.run_steps(2);
-    assert!(h.state().views[0].page_screen_rect(0).unwrap().top() < top - 20.0);
-    assert!(h.state().views[0].auto_scrolling(), "release keeps scrolling toggled on even after movement");
+    assert!(h.state().views[0].page_screen_rect(0).unwrap().top() < top - 20.0, "holding the wheel away from the press scrolls");
+    assert!(!h.state().views[0].auto_scrolling(), "releasing after a drag stops, as in Acrobat and SumatraPDF");
     let released = h.state().views[0].page_screen_rect(0).unwrap().top();
     h.run_steps(8);
-    assert!(h.state().views[0].page_screen_rect(0).unwrap().top() < released - 30.0, "scrolling continues with no button held");
+    assert_eq!(h.state().views[0].page_screen_rect(0).unwrap().top(), released, "no motion after the release");
     assert!(h.state().views[0].crop_drag.is_none(), "the Crop tool must not receive a wheel drag");
     assert!(h.state().dialog.is_none());
     assert!(!h.state().session.get(h.state().views[0].id).unwrap().dirty);
-    ok(&mut h, &c, "ui.click", json!({ "x": p.x, "y": p.y + 60.0, "button": "middle" }));
+    // A press that stays inside the dead zone still latches on.
+    ok(&mut h, &c, "ui.drag", json!({ "from": [p.x, p.y], "to": [p.x + 5.0, p.y + 5.0], "steps": 3, "button": "middle" }));
+    assert!(h.state().views[0].auto_scrolling(), "a jittery click latches like a clean one");
+    ok(&mut h, &c, "ui.click", json!({ "x": p.x, "y": p.y, "button": "middle" }));
     assert!(!h.state().views[0].auto_scrolling(), "the next middle click toggles scrolling off");
 }
 
-#[cfg(target_os = "linux")]
+#[test]
+fn middle_button_never_selects_text() {
+    let (mut h, c) = harness();
+    h.state_mut().set_option("zoom", "200").unwrap();
+    h.run_steps(3);
+    h.state_mut().views[0].go_to_page(0);
+    let mut glyphs = None;
+    for _ in 0..200 {
+        h.run_steps(1);
+        let v = &h.state().views[0];
+        if let (Some(a), Some(b)) = (v.glyph_screen_pos(0, 0), v.glyph_screen_pos(0, 5)) {
+            glyphs = Some((a, b));
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let (from, to) = glyphs.expect("the text layer loads");
+    // Stay inside the dead zone vertically so the page does not move under the gesture.
+    ok(&mut h, &c, "ui.drag", json!({ "from": [from.x, from.y], "to": [to.x, to.y], "steps": 10, "button": "middle" }));
+    h.run_steps(2);
+    assert!(h.state().views[0].selected_text().is_none(), "a wheel drag scrolls, it never selects text");
+    ok(&mut h, &c, "ui.key", json!({ "key": "Escape" }));
+    h.run_steps(2);
+    // The same drag with the primary button does select: the test above is not vacuous.
+    ok(&mut h, &c, "ui.drag", json!({ "from": [from.x, from.y], "to": [to.x, to.y], "steps": 10 }));
+    h.run_steps(2);
+    assert!(h.state().views[0].selected_text().is_some_and(|t| t.contains("Page")), "{:?}", h.state().views[0].selected_text());
+}
+
 #[test]
 fn autoscroll_uses_the_initial_click_position_when_input_arrives_in_one_frame() {
     let (mut h, c) = harness();
@@ -205,19 +233,46 @@ fn autoscroll_uses_the_initial_click_position_when_input_arrives_in_one_frame() 
     h.event(egui::Event::PointerMoved(p));
     h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Middle, pressed: true, modifiers: egui::Modifiers::NONE });
     h.event(egui::Event::PointerMoved(moved));
-    h.event(egui::Event::PointerButton { pos: moved, button: egui::PointerButton::Middle, pressed: false, modifiers: egui::Modifiers::NONE });
     h.run_steps(8);
     assert!(h.state().views[0].auto_scrolling());
     assert!(h.state().views[0].page_screen_rect(0).unwrap().top() < top - 20.0, "distance is measured from the click, not the last mouse event");
-    ok(&mut h, &c, "ui.key", json!({ "key": "Escape" }));
+    h.event(egui::Event::PointerButton { pos: moved, button: egui::PointerButton::Middle, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.run_steps(2);
+    assert!(!h.state().views[0].auto_scrolling(), "releasing away from the press ends the held gesture");
+    // Press and release far apart within a single frame is a drag too: it never latches.
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Middle, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.event(egui::Event::PointerMoved(moved));
+    h.event(egui::Event::PointerButton { pos: moved, button: egui::PointerButton::Middle, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.run_steps(2);
+    assert!(!h.state().views[0].auto_scrolling());
+    let _ = c;
 }
 
-#[cfg(target_os = "linux")]
+#[test]
+fn zoomed_in_autoscroll_also_moves_sideways_like_a_joystick() {
+    let (mut h, c) = harness();
+    h.state_mut().set_option("zoom", "400").unwrap();
+    h.run_steps(3);
+    h.state_mut().views[0].go_to_page(0);
+    h.run_steps(2);
+    let p = start_autoscroll(&mut h, &c);
+    let start = h.state().views[0].page_screen_rect(0).unwrap();
+    ok(&mut h, &c, "ui.move", json!({ "x": p.x + 90.0, "y": p.y + 90.0 }));
+    h.run_steps(8);
+    let moved = h.state().views[0].page_screen_rect(0).unwrap();
+    assert!(moved.left() < start.left() - 30.0, "right of the anchor scrolls right: {} -> {}", start.left(), moved.left());
+    assert!(moved.top() < start.top() - 30.0, "below the anchor scrolls down: {} -> {}", start.top(), moved.top());
+    ok(&mut h, &c, "ui.key", json!({ "key": "Escape" }));
+    assert!(!h.state().views[0].auto_scrolling());
+}
+
 #[test]
 fn farther_from_the_click_scrolls_faster_in_the_viewer_and_page_grid() {
     use egui_kittest::kittest::Queryable;
     for organize in [false, true] {
         let (mut h, c) = harness_pages(40);
+        // Only the page grid lists "Page N": close the thumbnails a 40-page document opens with.
+        h.state_mut().right = None;
         h.state_mut().views[0].organize = organize;
         h.run_steps(3);
         let top = |h: &Harness<'static, PdfCraftApp>| {
@@ -243,13 +298,14 @@ fn farther_from_the_click_scrolls_faster_in_the_viewer_and_page_grid() {
     }
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn autoscroll_uses_elapsed_frame_time_and_preserves_fractional_motion_in_both_views() {
     use egui_kittest::kittest::Queryable;
     for (organize, scale, zoom) in [(false, 1.0, "100"), (false, 2.0, "100"), (false, 1.0, "400"), (true, 1.0, "100"), (true, 2.0, "100")] {
         for frames in [30, 60, 120, 144] {
             let (mut h, c) = harness_pages(40);
+            // Only the page grid lists "Page N": close the thumbnails a 40-page document opens with.
+            h.state_mut().right = None;
             h.set_pixels_per_point(scale);
             h.state_mut().set_option("zoom", zoom).unwrap();
             h.state_mut().views[0].organize = organize;
@@ -305,7 +361,6 @@ fn autoscroll_uses_elapsed_frame_time_and_preserves_fractional_motion_in_both_vi
     }
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn escape_stops_autoscroll_without_closing_find() {
     let (mut h, c) = harness();
@@ -321,7 +376,6 @@ fn escape_stops_autoscroll_without_closing_find() {
     assert!(h.state().views[0].find.is_some(), "Escape cancels the scrolling gesture first");
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn autoscroll_cancels_on_click_wheel_focus_loss_and_pointer_exit() {
     let (mut h, c) = harness();
@@ -349,7 +403,6 @@ fn autoscroll_cancels_on_click_wheel_focus_loss_and_pointer_exit() {
     assert!(!h.state().views[0].auto_scrolling());
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn autoscroll_is_scoped_to_the_active_view_and_cannot_start_under_a_dialog() {
     let (mut h, c) = harness();
@@ -370,11 +423,12 @@ fn autoscroll_is_scoped_to_the_active_view_and_cannot_start_under_a_dialog() {
     assert!(call(&mut h, &c, "ui.drag", json!({ "from": [1, 2], "to": [3, 4], "button": "bad" })).is_err());
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn the_click_that_stops_autoscroll_preserves_the_page_selection() {
     use egui_kittest::kittest::Queryable;
     let (mut h, c) = harness_pages(40);
+    // Only the page grid lists "Page N": close the thumbnails a 40-page document opens with.
+    h.state_mut().right = None;
     h.state_mut().execute("page.organize");
     h.state_mut().views[0].select_pages(&[0]);
     h.run_steps(3);
@@ -388,11 +442,12 @@ fn the_click_that_stops_autoscroll_preserves_the_page_selection() {
     assert_eq!(h.state().views[0].target_pages(), vec![1]);
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn organize_pages_supports_autoscroll_without_selecting_or_reordering_pages() {
     use egui_kittest::kittest::Queryable;
     let (mut h, c) = harness_pages(40);
+    // Only the page grid lists "Page N": close the thumbnails a 40-page document opens with.
+    h.state_mut().right = None;
     h.state_mut().execute("page.organize");
     h.run_steps(3);
     let top = h.get_by_label("Page 1").rect().top();
@@ -408,25 +463,11 @@ fn organize_pages_supports_autoscroll_without_selecting_or_reordering_pages() {
     assert!(h.state().views[0].selected.is_empty());
     assert!(h.state().views[0].org_drag.is_none());
     assert!(!h.state().session.get(h.state().views[0].id).unwrap().dirty);
-    assert!(h.state().views[0].auto_scrolling(), "releasing the wheel leaves the grid scrolling on");
+    assert!(!h.state().views[0].auto_scrolling(), "releasing the wheel after a drag stops the grid too");
+    start_autoscroll(&mut h, &c);
     h.state_mut().views[0].organize = false;
     h.run_steps(2);
     assert!(!h.state().views[0].auto_scrolling(), "changing canvas mode cancels the gesture");
-}
-
-#[cfg(not(target_os = "linux"))]
-#[test]
-fn middle_button_input_does_not_start_custom_scrolling_outside_linux() {
-    for organize in [false, true] {
-        let (mut h, c) = harness_pages(40);
-        h.state_mut().views[0].organize = organize;
-        h.run_steps(3);
-        let p = h.state().views[0].viewport_rect().center();
-        ok(&mut h, &c, "ui.click", json!({ "x": p.x, "y": p.y, "button": "middle" }));
-        ok(&mut h, &c, "ui.move", json!({ "x": p.x, "y": p.y + 50.0 }));
-        h.run_steps(8);
-        assert!(!h.state().views[0].auto_scrolling(), "custom scrolling must be Linux-only: organize={organize}");
-    }
 }
 
 #[test]
@@ -475,6 +516,8 @@ fn japanese_controls_and_search_keep_command_ids() {
 #[test]
 fn preferences_menu_and_shortcut_allow_switching_interface_languages() {
     let (mut h, c) = harness();
+    // The thumbnails panel has its own "Close" button; keep one to click.
+    h.state_mut().right = None;
     ok(&mut h, &c, "ui.set", json!({ "key": "language", "value": "ja" }));
     ok(&mut h, &c, "ui.click", json!({ "label": "メニュー" }));
     ok(&mut h, &c, "ui.click", json!({ "label": "編集 ⏵" }));

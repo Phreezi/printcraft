@@ -890,8 +890,8 @@ milestone = "M3"
 status = "partial"
 commands = []
 tools = []
-evidence = ["crates/ui-egui/tests/control.rs::middle_click_autoscroll_latches_has_a_dead_zone_and_scrolls_both_directions", "crates/ui-egui/tests/control.rs::organize_pages_supports_autoscroll_without_selecting_or_reordering_pages", "crates/ui-egui/tests/control.rs::moving_before_middle_button_release_keeps_scrolling_without_starting_page_tools", "crates/ui-egui/tests/control.rs::farther_from_the_click_scrolls_faster_in_the_viewer_and_page_grid", "crates/ui-egui/tests/control.rs::autoscroll_uses_the_initial_click_position_when_input_arrives_in_one_frame", "crates/ui-egui/tests/control.rs::autoscroll_uses_elapsed_frame_time_and_preserves_fractional_motion_in_both_views"]
-notes = "Linux-only middle-button vertical autoscroll in the document and Organize Pages; other targets retain their existing middle-button input behavior. Click to toggle, release keeps scrolling on, and a Chromium-style nonlinear curve increases speed with vertical screen distance from the initial click. A 15-point dead zone pauses immediately. Continuous redraws use elapsed frame time and preserve fractional movement, tested at 30/60/120/144 fps. Cancels on another middle click, Escape, other pointer/wheel input, focus loss, tab changes and dialogs. Driven headlessly through the opt-in UI control channel (ui.click/ui.move/ui.drag). Keyboard-started timed scrolling is not implemented."
+evidence = ["crates/ui-egui/tests/control.rs::middle_click_autoscroll_latches_has_a_dead_zone_and_scrolls_both_directions", "crates/ui-egui/tests/control.rs::organize_pages_supports_autoscroll_without_selecting_or_reordering_pages", "crates/ui-egui/tests/control.rs::press_drag_release_scrolls_while_held_and_stops_on_release_without_starting_page_tools", "crates/ui-egui/tests/control.rs::zoomed_in_autoscroll_also_moves_sideways_like_a_joystick", "crates/ui-egui/tests/control.rs::middle_button_never_selects_text", "crates/ui-egui/tests/control.rs::farther_from_the_click_scrolls_faster_in_the_viewer_and_page_grid", "crates/ui-egui/tests/control.rs::autoscroll_uses_the_initial_click_position_when_input_arrives_in_one_frame", "crates/ui-egui/tests/control.rs::autoscroll_uses_elapsed_frame_time_and_preserves_fractional_motion_in_both_views"]
+notes = "Middle-button autoscroll on every platform, in the document and Organize Pages, like Acrobat and SumatraPDF on Windows: an original marker at the press point (two arrows, four when the pages are wider than the view and it can also scroll sideways; the page grid is vertical only) and a cursor pointing where the view moves. A click latches it on until the next click; press, drag and release scrolls while held and stops on release. A Chromium-style nonlinear curve increases speed with the distance from the press, per axis, with a 15-point dead zone that pauses immediately. Continuous redraws use elapsed frame time and preserve fractional movement, tested at 30/60/120/144 fps. The middle button never selects text, draws or drags pages. Cancels on another middle click, Escape, other pointer/wheel input, focus loss, tab changes and dialogs. Driven headlessly through the opt-in UI control channel (ui.click/ui.move/ui.drag); tested headlessly on Linux only, not yet on a real Windows or macOS mouse. Keyboard-started timed scrolling is not implemented."
 
 [[feature]]
 id = "view.zoom-in-out"
@@ -1214,8 +1214,8 @@ milestone = "M3"
 status = "shipped"
 commands = []
 tools = []
-evidence = ["crates/ui-egui/tests/ui.rs::theme_and_view_options_apply"]
-notes = ""
+evidence = ["crates/ui-egui/tests/ui.rs::theme_and_view_options_apply", "crates/ui-egui/tests/ui.rs::page_thumbnails_open_by_themselves_only_for_documents_with_several_pages", "crates/ui-egui/tests/ui.rs::page_thumbnails_panel_shows_for_a_multi_page_document_and_not_for_one_page"]
+notes = "PeDeeFe opens the thumbnails by itself only for documents with 2+ pages (a one-page document opens with no right panel, also when its /PageMode asks for thumbnails); a panel the user picked stays across opens, one opened automatically follows the next document. A PDF's own /PageMode for bookmarks, attachments or layers is still honoured. Unlike upstream, Comments and Bookmarks no longer open by themselves."
 
 [[feature]]
 id = "view.thumbnail-context-ops"
@@ -1622,8 +1622,8 @@ milestone = "M4"
 status = "shipped"
 commands = []
 tools = []
-evidence = ["crates/ui-egui/tests/ui.rs::every_catalog_tool_is_listed_after_view_more", "crates/engine/src/commands.rs::every_ready_catalogue_item_is_a_registered_command"]
-notes = ""
+evidence = ["crates/ui-egui/tests/ui.rs::every_catalog_tool_is_listed_after_view_more", "crates/engine/src/commands.rs::every_ready_catalogue_item_is_a_registered_command", "crates/ui-egui/tests/ui.rs::the_all_tools_panel_starts_closed_and_its_state_is_remembered"]
+notes = "The left tool panel starts closed on a first run and its open/closed state is remembered across sessions (settings key left_open)."
 
 [[feature]]
 id = "view.command-palette"

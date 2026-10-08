@@ -46,7 +46,11 @@ fn harness(pages: usize, setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harn
 }
 
 fn organize(pages: usize) -> Harness<'static, PdfCraftApp> {
-    harness(pages, |app| app.set_option("organize", "on").unwrap())
+    harness(pages, |app| {
+        app.set_option("organize", "on").unwrap();
+        // Only the grid lists "Page N": close the thumbnails a multi-page document opens with.
+        app.set_option("panel", "none").unwrap();
+    })
 }
 
 /// Page labels of the active document, read back from its current bytes.
@@ -644,6 +648,7 @@ fn restricted_documents_show_a_notice_and_block_page_changes() {
         let mut app = PdfCraftApp::new();
         app.open_bytes("locked.pdf", None, protected("", "owner", 0b0100)).unwrap(); // opens without a password
         app.set_option("organize", "on").unwrap();
+        app.set_option("panel", "none").unwrap();
         app
     });
     h.run_steps(4);

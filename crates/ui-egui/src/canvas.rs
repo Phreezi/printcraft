@@ -1224,18 +1224,18 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         }
     }
     view.viewport_screen = avail;
-    let auto_delta = if unobstructed {
-        view.auto_scroll.update(ui, avail, false)
-    } else {
-        view.auto_scroll.cancel();
-        Vec2::ZERO
-    };
-
     let max_w = info.pages.iter().map(|p| view.display_size(p).0).fold(0.0, f32::max)
         * view.zoom
         * PT
         * if view.layout == PageLayout::TwoUp { 2.0 } else { 1.0 };
     let content_w = (max_w + 2.0 * SIDE).max(avail.width());
+    let auto_delta = if unobstructed {
+        // Sideways only when the pages are wider than the view (zoomed in).
+        view.auto_scroll.update(ui, avail, false, content_w > avail.width() + 0.5)
+    } else {
+        view.auto_scroll.cancel();
+        Vec2::ZERO
+    };
     let rects = view.layout(info, content_w);
     let middle_gesture = view.auto_scroll.blocks_input();
     // Single page: when the whole page fits, the wheel would do nothing, so it turns pages
@@ -2616,7 +2616,7 @@ fn organize_grid(view: &mut DocView, info: &DocInfo, pool: &RenderPool, editable
     let viewport = ui.available_rect_before_wrap();
     view.viewport_screen = viewport;
     let auto_delta = if auto_scroll_enabled {
-        view.auto_scroll.update(ui, viewport, true)
+        view.auto_scroll.update(ui, viewport, true, false)
     } else {
         view.auto_scroll.cancel();
         Vec2::ZERO

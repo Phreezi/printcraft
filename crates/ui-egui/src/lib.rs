@@ -338,8 +338,12 @@ pub struct PdfCraftApp {
     /// Explicit CLI/control mode lasts for this session and is never persisted.
     mode_override: Option<Mode>,
     pub left: LeftPanel,
+    /// The left tool panel is showing. Closed on a first run, then remembered across sessions.
     pub left_open: bool,
     pub right: Option<RightPanel>,
+    /// The right panel opening a document chose by itself (Pages for 2+ pages), while the user
+    /// hasn't changed it: the next document opened decides again.
+    auto_right: Option<RightPanel>,
     pub quick_tool: QuickTool,
     /// Comment author, per-tool colours and widths, pin.
     pub comment_prefs: comments::CommentPrefs,
@@ -570,8 +574,10 @@ impl PdfCraftApp {
             view_defaults: Default::default(),
             mode_override: None,
             left: LeftPanel::AllTools,
-            left_open: true,
+            // As clear a window as possible on a first run: the tool panel opens on demand.
+            left_open: false,
             right: None,
+            auto_right: None,
             quick_tool: QuickTool::Select,
             comment_prefs: Default::default(),
             theme: ThemeKind::Light,
@@ -696,6 +702,8 @@ impl PdfCraftApp {
         match v.navigation {
             N::PageOnly => {}
             N::Bookmarks => self.right = Some(RightPanel::Bookmarks),
+            // Thumbnails of a single page would only take room.
+            N::Pages if pages < 2 => {}
             N::Pages => self.right = Some(RightPanel::Pages),
             N::Attachments => self.right = Some(RightPanel::Attachments),
             N::Layers => self.right = Some(RightPanel::Layers),
@@ -750,15 +758,12 @@ impl PdfCraftApp {
         self.password_prompt = None;
         let doc = self.session.get(id).ok_or("the document could not be opened")?;
         let pages = doc.info.pages.len();
-        // Acrobat opens straight to the Comments panel when a document has comments.
-        if self.right.is_none() {
-            self.right = if !doc.info.annotations.is_empty() {
-                Some(RightPanel::Comments)
-            } else if !doc.info.outline.is_empty() {
-                Some(RightPanel::Bookmarks)
-            } else {
-                None
-            };
+        // Keep the window clear: only a document with several pages opens the page thumbnails
+        // by itself. A panel the user picked stays; one opened automatically follows the new
+        // document (closing for a one-page one).
+        if self.right.is_none() || self.right == self.auto_right {
+            self.right = (pages >= 2).then_some(RightPanel::Pages);
+            self.auto_right = self.right;
         }
         let initial = doc.initial_view();
         self.views.push(DocView::new(id, &doc.info, self.view_defaults));
@@ -1078,6 +1083,7 @@ impl PdfCraftApp {
             "actions": actions_ui::encode(&self.custom_actions),
             "print": self.print_draft.prefs(),
             "window": self.window_state,
+            "left_open": self.left_open,
         })
         .to_string()
     }
@@ -1131,6 +1137,9 @@ impl PdfCraftApp {
             self.window_state = w;
         }
         self.custom_actions = actions_ui::decode(&v["actions"]);
+        if let Some(open) = v["left_open"].as_bool() {
+            self.left_open = open;
+        }
         if let Some(on) = v["javascript"].as_bool() {
             self.session.set_javascript(on);
         }

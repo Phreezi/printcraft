@@ -30,7 +30,8 @@ fn harness(setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, P
 
 #[test]
 fn home_shows_welcome_and_tools() {
-    let h = harness(|_| {});
+    // The All tools panel was left open last time.
+    let h = harness(|app| app.restore(r#"{"left_open": true}"#));
     h.get_by_label_contains("Welcome to PeDeeFe");
     assert!(h.query_all_by_label("Organize pages").count() >= 2, "tool list + home card");
     h.get_by_label("Open file");
@@ -38,7 +39,7 @@ fn home_shows_welcome_and_tools() {
 
 #[test]
 fn every_catalog_tool_is_listed_after_view_more() {
-    let mut h = harness(|_| {});
+    let mut h = harness(|app| app.left_open = true);
     h.get_by_label("View more").click();
     h.run_steps(3);
     for g in pdfcraft_engine::catalog::TOOL_GROUPS {
@@ -49,12 +50,92 @@ fn every_catalog_tool_is_listed_after_view_more() {
 #[test]
 fn opening_a_pdf_shows_comments_and_bookmarks() {
     let mut h = harness(|app| app.open_bytes("fixture.pdf", None, FIXTURE.to_vec()).expect("fixture opens"));
-    // Documents with comments open on the Comments panel, like Acrobat.
+    // A two-page document opens on its page thumbnails (PeDeeFe keeps the window clear: no
+    // Comments or Bookmarks panel by itself); both are one click away on the rail.
+    assert_eq!(h.state().right, Some(pdfcraft_ui_egui::RightPanel::Pages));
+    h.get_by_label("Comments").click();
+    h.run_steps(3);
     h.get_by_label_contains("Check the numbers");
     h.get_by_label("Bookmarks").click();
     h.run_steps(3);
     h.get_by_label("Alpha section");
     h.get_by_label("Beta section");
+}
+
+/// `FIXTURE` with only its first page (which keeps the comment and the bookmarks).
+fn one_page_fixture() -> Vec<u8> {
+    String::from_utf8(FIXTURE.to_vec()).unwrap().replace("/Kids [3 0 R 4 0 R] /Count 2", "/Kids [3 0 R] /Count 1").into_bytes()
+}
+
+#[test]
+fn page_thumbnails_open_by_themselves_only_for_documents_with_several_pages() {
+    use pdfcraft_ui_egui::RightPanel;
+    let mut app = PdfCraftApp::new();
+    app.open_bytes("one.pdf", None, one_page_fixture()).unwrap();
+    assert_eq!(app.session.get(app.views[0].id).unwrap().info.pages.len(), 1);
+    assert_eq!(app.right, None, "a one-page document keeps the window clear, even with comments and bookmarks");
+    app.open_bytes("two.pdf", None, FIXTURE.to_vec()).unwrap();
+    assert_eq!(app.right, Some(RightPanel::Pages), "two pages open the thumbnails");
+    app.open_bytes("one-again.pdf", None, one_page_fixture()).unwrap();
+    assert_eq!(app.right, None, "thumbnails that opened by themselves close for a one-page document");
+    // A panel the user picked stays, whatever is opened next.
+    app.right = Some(RightPanel::Comments);
+    app.open_bytes("two-again.pdf", None, FIXTURE.to_vec()).unwrap();
+    assert_eq!(app.right, Some(RightPanel::Comments));
+    app.right = Some(RightPanel::Pages);
+    app.open_bytes("one-more.pdf", None, one_page_fixture()).unwrap();
+    assert_eq!(app.right, Some(RightPanel::Pages), "thumbnails the user opened stay open");
+    // A one-page PDF asking to open on its thumbnails (/PageMode /UseThumbs) doesn't either.
+    let mut app = PdfCraftApp::new();
+    let thumbs = String::from_utf8(one_page_fixture()).unwrap().replace("/Outlines 6 0 R >>", "/Outlines 6 0 R /PageMode /UseThumbs >>");
+    app.open_bytes("thumbs.pdf", None, thumbs.into_bytes()).unwrap();
+    assert_eq!(app.right, None);
+}
+
+#[test]
+fn page_thumbnails_panel_shows_for_a_multi_page_document_and_not_for_one_page() {
+    for (bytes, shown) in [(FIXTURE.to_vec(), true), (one_page_fixture(), false)] {
+        let h = harness(move |app| app.open_bytes("doc.pdf", None, bytes).expect("opens"));
+        // The panel's header reads "Pages", with the page count next to it.
+        assert_eq!(h.query_by_label("Pages").is_some(), shown);
+        assert_eq!(h.state().right.is_some(), shown);
+    }
+}
+
+#[test]
+fn the_all_tools_panel_starts_closed_and_its_state_is_remembered() {
+    use egui_kittest::kittest::Queryable;
+    // First run: no settings, the window is as clear as possible.
+    let mut h = harness(|app| app.open_bytes("doc.pdf", None, FIXTURE.to_vec()).expect("opens"));
+    assert!(!h.state().left_open);
+    assert!(h.query_by_label("Export a PDF").is_none(), "no tool list on a first run");
+    // Opening it from the mode bar is remembered for the next session.
+    h.get_by_label("All tools").click();
+    h.run_steps(3);
+    assert!(h.state().left_open);
+    h.get_by_label("Export a PDF");
+    let saved = h.state().persist();
+    let mut next = harness(move |app| {
+        app.restore(&saved);
+        app.open_bytes("doc.pdf", None, FIXTURE.to_vec()).expect("opens");
+    });
+    assert!(next.state().left_open, "left open last time, open again");
+    next.get_by_label("Export a PDF");
+    // Closing it is remembered too.
+    next.state_mut().left_open = false;
+    let saved = next.state().persist();
+    let again = harness(move |app| {
+        app.restore(&saved);
+        app.open_bytes("doc.pdf", None, FIXTURE.to_vec()).expect("opens");
+    });
+    assert!(!again.state().left_open);
+    assert!(again.query_by_label("Export a PDF").is_none());
+    // Settings from older versions (no entry) or a wrong type keep the default.
+    let mut app = PdfCraftApp::new();
+    app.restore(r#"{"left_open": "yes"}"#);
+    assert!(!app.left_open);
+    app.restore(r#"{"theme": "dark"}"#);
+    assert!(!app.left_open);
 }
 
 #[test]
