@@ -109,9 +109,10 @@ fn stdout_line(line: std::fmt::Arguments<'_>) -> Result<(), CliError> {
 
 fn version() -> Result<(), CliError> {
     stdout_line(format_args!("pdfcraft-cli {}", env!("CARGO_PKG_VERSION")))?;
-    stdout_line(format_args!("{} command line, based on PdfCraft", pdfcraft_engine::links::APP_NAME))?;
+    stdout_line(format_args!("{} command line", pdfcraft_engine::links::APP_NAME))?;
     stdout_line(format_args!("Issues:  {}  (help and feedback)", pdfcraft_engine::links::ISSUES))?;
     stdout_line(format_args!("Source:  {}", pdfcraft_engine::links::GITHUB))?;
+    stdout_line(format_args!("{}: {}", pdfcraft_engine::links::CREDIT, pdfcraft_engine::links::UPSTREAM))?;
     Ok(())
 }
 

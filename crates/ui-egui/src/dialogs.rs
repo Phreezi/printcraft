@@ -1096,9 +1096,10 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
                         // Plain-text credit only (NOTICE): PeDeeFe is not an ArtCraft product and
                         // shows none of its marks, so no "Part of" ArtCraft logo here.
                         ui.label(
-                            egui::RichText::new(
-                                "Based on PdfCraft (formerly PrintCraft) by the ArtCraft team. Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors.",
-                            )
+                            egui::RichText::new(format!(
+                                "{}. Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors.",
+                                pdfcraft_engine::links::CREDIT
+                            ))
                             .color(t.text_muted),
                         );
                         ui.add_space(6.0);

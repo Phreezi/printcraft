@@ -11,7 +11,7 @@
   <key>CFBundleName</key>
   <string>PeDeeFe</string>
   <key>CFBundleExecutable</key>
-  <string>PdfCraft</string>
+  <string>PeDeeFe</string>
   <key>CFBundleIdentifier</key>
   <string>ai.storyteller.pdfcraft</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -29,7 +29,7 @@
   <key>PdfCraftBuildCommit</key>
   <string>@BUILD_SHA@</string>
   <key>CFBundleIconFile</key>
-  <string>PdfCraft</string>
+  <string>PeDeeFe</string>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.graphics-design</string>
   <!-- Must match MACOSX_DEPLOYMENT_TARGET in package.sh. Big Sur is the first release on
@@ -43,7 +43,7 @@
   <key>NSRequiresAquaSystemAppearance</key>
   <false/>
   <key>NSHumanReadableCopyright</key>
-  <string>PeDeeFe, based on PdfCraft. Copyright © 2026 ArtCraft Team and the PdfCraft contributors. MIT OR Apache-2.0.</string>
+  <string>PeDeeFe. Based on PdfCraft (formerly PrintCraft) by the ArtCraft team. Copyright © 2026 ArtCraft Team and the PdfCraft contributors. MIT OR Apache-2.0.</string>
 
   <!-- Documents PdfCraft opens (#73): it is offered under Open With and can be made the default
        for PDFs, without taking over from the system's viewer on install ("Alternate"). Declared by

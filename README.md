@@ -9,10 +9,11 @@
 
 **An open-source PDF workbench written in Rust, with printing that works on Windows.**
 
-PeDeeFe is a modified version of [PdfCraft](https://github.com/storytold/pdfcraft) by the
-ArtCraft team. It keeps PdfCraft's engine and app and adds the changes listed below. PeDeeFe is
-not made, sponsored or endorsed by the ArtCraft Team, and it carries none of the ArtCraft names or
-logos (see [NOTICE](NOTICE)).
+PeDeeFe is based on [PdfCraft](https://github.com/storytold/pdfcraft) (formerly PrintCraft) by
+the ArtCraft team: a modified version that keeps PdfCraft's engine and app and adds the changes
+listed below. For the original, go to [storytold/pdfcraft](https://github.com/storytold/pdfcraft).
+PeDeeFe is not made, sponsored or endorsed by the ArtCraft Team, and it carries none of the
+ArtCraft names or logos (see [NOTICE](NOTICE)).
 
 For the full tour of what the app can do (viewing, search, organizing pages, combining and
 splitting, comments, forms, signatures, redaction, the CLI and the MCP server), read
@@ -93,7 +94,8 @@ Logs, environment variables and other development notes are in [docs/development
 
 ## Em português
 
-O PeDeeFe é uma versão modificada do PdfCraft, com impressão a sério no Windows, papel A4/A3,
+O PeDeeFe é uma versão modificada do [PdfCraft](https://github.com/storytold/pdfcraft) (antes
+PrintCraft), da equipa ArtCraft, com impressão a sério no Windows, papel A4/A3,
 impressão por janela (como no AutoCAD) e uma pré-visualização nítida. Para testar: em
 [Releases](https://github.com/Phreezi/printcraft/releases) descarrega o `.msi` mais recente e
 instala-o. Fica ao lado do PdfCraft oficial, sem o substituir. Na app, **Help ▸ Check for

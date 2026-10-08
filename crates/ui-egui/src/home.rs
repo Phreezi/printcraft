@@ -33,11 +33,15 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         ui.add(icons::image("message-square-text", 28.0, t.accent));
                         ui.vertical(|ui| {
                             // PeDeeFe's own card (no ArtCraft community or Discord): English until a
-                            // catalog translates it.
+                            // catalog translates it. The credit stays as written (links::CREDIT).
                             ui.label(egui::RichText::new(crate::i18n::t("Help and feedback")).font(theme::semibold(15.0)));
                             ui.label(
-                                egui::RichText::new(crate::i18n::t("Report a problem or suggest a change on GitHub. PeDeeFe is based on PdfCraft."))
-                                    .color(t.text_muted),
+                                egui::RichText::new(format!(
+                                    "{} {}.",
+                                    crate::i18n::t("Report a problem or suggest a change on GitHub."),
+                                    pdfcraft_engine::links::CREDIT
+                                ))
+                                .color(t.text_muted),
                             );
                         });
                     });

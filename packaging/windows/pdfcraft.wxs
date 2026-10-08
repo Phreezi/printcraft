@@ -22,7 +22,7 @@
       Scope="perMachine"
       Compressed="yes"
       Language="1033">
-    <SummaryInformation Description="PeDeeFe PDF workbench (based on PdfCraft)" Manufacturer="Phreezi" />
+    <SummaryInformation Description="PeDeeFe PDF workbench" Manufacturer="Phreezi" />
     <!-- Same-version upgrades let successive pre-releases of one X.Y.Z replace each other
          (MSI versions are numeric, so 1.2.3-rc.1 and 1.2.3-rc.2 are both 1.2.3). -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
@@ -76,7 +76,7 @@
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\SupportedTypes" Name=".pdf" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\shell\open\command" Value="&quot;[#PdfcraftExe]&quot; &quot;%1&quot;" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationName" Value="PeDeeFe" Type="string" />
-        <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationDescription" Value="Open-source PDF workbench, based on PdfCraft" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationDescription" Value="Open-source PDF workbench" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationIcon" Value="[#PdfcraftExe],0" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities\FileAssociations" Name=".pdf" Value="PeDeeFe.Document" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\RegisteredApplications" Name="PeDeeFe" Value="Software\PeDeeFe\Capabilities" Type="string" />

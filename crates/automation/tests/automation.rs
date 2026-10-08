@@ -533,6 +533,10 @@ fn mcp_session_over_stdio() {
 
     assert_eq!(replies[0]["result"]["protocolVersion"], "2025-03-26");
     assert_eq!(replies[0]["result"]["serverInfo"]["name"], "pdfcraft");
+    assert_eq!(replies[0]["result"]["serverInfo"]["title"], "PeDeeFe");
+    let instructions = replies[0]["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.starts_with("PeDeeFe edits PDFs.") && !instructions.contains("PdfCraft"), "{instructions}");
+    assert!(instructions.contains("pdfcraft://doc/{doc}/info"), "{instructions}");
     assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), tools().len());
     assert_eq!(replies[2]["result"]["structuredContent"]["pages"], 3);
     assert_eq!(replies[2]["result"]["isError"], false);

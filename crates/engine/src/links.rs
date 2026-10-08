@@ -14,6 +14,9 @@ pub const ISSUES: &str = "https://github.com/Phreezi/printcraft/issues";
 pub const RELEASES: &str = "https://github.com/Phreezi/printcraft/releases";
 /// The project PeDeeFe is based on.
 pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
+/// The plain-text credit, the one place people see the original project's name (About, home
+/// screen, CLI, packaging). It stays in English, as written here.
+pub const CREDIT: &str = "Based on PdfCraft (formerly PrintCraft) by the ArtCraft team";
 
 /// A link and the registry command that opens it.
 #[derive(Clone, Copy, Debug)]
@@ -154,6 +157,15 @@ mod tests {
             assert!(!l.label.contains("ArtCraft") && !l.url.contains("artcraft"), "{}", l.url);
             assert!(crate::commands::command(l.command).is_some(), "{} is a registered command", l.command);
         }
+    }
+
+    #[test]
+    fn the_credit_names_the_original_and_links_to_it() {
+        assert_eq!(super::CREDIT, "Based on PdfCraft (formerly PrintCraft) by the ArtCraft team");
+        assert_eq!(super::UPSTREAM, "https://github.com/storytold/pdfcraft");
+        let upstream = super::for_command("help.upstream").expect("the credit's link is in the Help menu");
+        assert_eq!(upstream.url, super::UPSTREAM);
+        assert!(super::CREDIT.starts_with(upstream.label), "the link label is the credit's opening words");
     }
 
     #[test]

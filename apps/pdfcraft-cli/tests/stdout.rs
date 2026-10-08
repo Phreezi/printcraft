@@ -82,3 +82,16 @@ fn ordinary_output_keeps_its_format() {
     assert!(tools.as_array().unwrap().iter().any(|t| t["name"] == "doc_open"));
     assert!(out.stdout.ends_with(b"\n"));
 }
+
+#[test]
+fn version_names_the_app_and_credits_the_original() {
+    let out = Command::new(BIN).arg("--version").output().unwrap();
+    assert!(out.status.success() && out.stderr.is_empty());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("PeDeeFe command line\n"), "{text}");
+    let credit = "Based on PdfCraft (formerly PrintCraft) by the ArtCraft team: https://github.com/storytold/pdfcraft\n";
+    assert!(text.contains(credit), "{text}");
+    // Apart from the credit, the original's names don't show (the binary keeps its crate name).
+    let rest = text.replace(credit, "");
+    assert!(!rest.contains("PdfCraft") && !rest.contains("PrintCraft") && !rest.contains("ArtCraft"), "{text}");
+}

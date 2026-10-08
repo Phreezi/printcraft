@@ -45,6 +45,10 @@ fn versions_compare_by_number() {
     assert!(!is_newer("v0.2.1-test.9", "0.2.1-test.10"));
     assert!(!is_newer("v0.2.1-test.9", "0.2.1-test.9"));
     assert!(is_newer("v0.2.2-test.1", "0.2.1-test.40"), "the core version comes first");
+    // The workspace moved to 0.3.0 with PdfCraft's version: its test builds replace the 0.2.1 ones.
+    assert!(is_newer("v0.3.0-test.41", "0.2.1-test.40"));
+    assert!(is_newer("v0.3.0-test.1", "0.2.1-test.99"), "whatever the run numbers");
+    assert!(!is_newer("v0.2.1-test.99", "0.3.0-test.41"), "an older line is never offered");
     assert!(is_newer("v0.2.1-rc.1", "0.2.1-beta.5"), "identifiers compare in ASCII order");
     assert!(is_newer("v0.2.1-test.1.1", "0.2.1-test.1"), "more identifiers win a tie");
     assert!(!is_newer("v0.2.1+build.5", "0.2.1"), "build metadata is ignored");

@@ -26,10 +26,16 @@ const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 
-const INSTRUCTIONS: &str = "PdfCraft edits PDFs. Open a file with doc_open to get a document id, then inspect \
+/// What the server tells agents about itself, under the app's name ([`pdfcraft_engine::links::APP_NAME`]).
+fn instructions() -> String {
+    format!(
+        "{} edits PDFs. Open a file with doc_open to get a document id, then inspect \
 (doc_info, text_extract, text_find, page_render) or edit it (page_*, doc_set_info). Edits are undoable \
 (edit_undo) and stay in memory until doc_save. Page numbers are 1-based. Open documents are also \
-resources: pdfcraft://doc/{doc}/info, /text, /page/{page}/text and /page/{page}/image.";
+resources: pdfcraft://doc/{{doc}}/info, /text, /page/{{page}}/text and /page/{{page}}/image.",
+        pdfcraft_engine::links::APP_NAME
+    )
+}
 
 pub struct McpServer {
     automation: Automation,
@@ -93,7 +99,7 @@ impl McpServer {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false }, "resources": { "listChanged": false, "subscribe": false } },
                     "serverInfo": { "name": "pdfcraft", "title": pdfcraft_engine::links::APP_NAME, "version": env!("CARGO_PKG_VERSION"), "websiteUrl": pdfcraft_engine::links::GITHUB },
-                    "instructions": INSTRUCTIONS,
+                    "instructions": instructions(),
                 }))
             }
             "ping" => Ok(json!({})),

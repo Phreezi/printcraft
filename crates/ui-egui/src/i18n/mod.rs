@@ -842,6 +842,21 @@ mod tests {
         }
     }
 
+    /// PeDeeFe carries none of the ArtCraft marks or community links (NOTICE): no catalog keeps the
+    /// entries PdfCraft's community buttons used, so none can come back on screen.
+    #[test]
+    fn catalogs_carry_no_artcraft_community_text() {
+        for l in &LANGUAGES {
+            let (entries, _) = parse_entries(l.source, l.plural_forms());
+            for e in &entries {
+                for text in [&e.source, &e.translation] {
+                    let lower = text.to_lowercase();
+                    assert!(!lower.contains("artcraft") && !lower.contains("discord"), "{}: {text:?}", l.code);
+                }
+            }
+        }
+    }
+
     /// Every bundled catalog is well-formed and consistent with its sources.
     #[test]
     fn bundled_catalogs_are_consistent() {

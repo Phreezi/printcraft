@@ -15,7 +15,7 @@ fn main() {
     let mut res = winresource::WindowsResource::new();
     res.set_icon("../../assets/app-icon/pdfcraft.ico")
         .set("ProductName", "PeDeeFe")
-        .set("FileDescription", "PeDeeFe PDF workbench (based on PdfCraft)")
+        .set("FileDescription", "PeDeeFe PDF workbench")
         .set("LegalCopyright", "Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors. MIT OR Apache-2.0.")
         .set("OriginalFilename", "pedeefe.exe")
         .set("InternalName", "pedeefe");

@@ -65,8 +65,8 @@ deliberately.
 ### macOS
 
 `packaging/macos/package.sh` builds both architectures, joins them with `lipo`, and assembles
-`PdfCraft.app` from `Info.plist.in` (bundle id `ai.storyteller.pdfcraft`, macOS 11+, PDF declared
-as a document type with rank Alternate, so PdfCraft is offered under Open With without taking over
+`PeDeeFe.app` from `Info.plist.in` (bundle id `ai.storyteller.pdfcraft`, macOS 11+, PDF declared
+as a document type with rank Alternate, so PeDeeFe is offered under Open With without taking over
 from Preview). Files opened from Finder arrive as Apple events, which
 `apps/pdfcraft/src/apple_events.rs` receives.
 

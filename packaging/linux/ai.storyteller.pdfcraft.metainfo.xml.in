@@ -12,8 +12,11 @@
   </developer>
   <description>
     <p>
-      PeDeeFe is an open-source PDF workbench based on PdfCraft. Read, comment on, fill in and
-      sign PDFs; organize, combine and split pages; edit, redact, protect and export documents.
+      PeDeeFe is an open-source PDF workbench. Read, comment on, fill in and sign PDFs; organize,
+      combine and split pages; edit, redact, protect and export documents.
+    </p>
+    <p>
+      Based on PdfCraft (formerly PrintCraft) by the ArtCraft team.
     </p>
   </description>
   <launchable type="desktop-id">ai.storyteller.pdfcraft.desktop</launchable>
