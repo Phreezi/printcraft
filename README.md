@@ -25,8 +25,13 @@ splitting, comments, forms, signatures, redaction, the CLI and the MCP server), 
   and print quality. PrintCraft could only save a print-ready PDF on Windows.
 - **A4 and A3 only** in the Print dialog's paper list, A4 by default.
 - **Window printing**, like AutoCAD's plot window: drag a rectangle over the page and print just
-  that area. Locked to the sheet's proportions, the area fills the A4 or A3 sheet at the largest
-  size it can. Unlocked, pick any area and print it on one sheet or as a poster over several.
+  that area, exactly as drawn, on one sheet at the largest size it fits or as a poster over
+  several. Hold Shift while dragging to keep the A4 or A3 sheet's proportions, so the area fills
+  the sheet; drag a corner to resize it.
+- **A clearer Print dialog**: each section in its own coloured panel, the sizing modes as a
+  segmented control, and an Acrobat-like preview with the scale and the number of sheets above
+  it and the sheet with the page's printed size below it (e.g. "A4 - 210 × 297 mm
+  [1188,04 × 1680,13 mm]"). A poster previews the whole page with its tiles over it.
 - **A sharp print preview**, drawn at the screen's resolution instead of from thumbnails.
 - **The window remembers its size and position**, and whether it was maximized.
 - Its own identity: its own name, logo and icons ([brand kit](assets/brand/pedeefe/README.md)); it

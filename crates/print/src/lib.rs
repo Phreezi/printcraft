@@ -191,6 +191,34 @@ pub struct Placement {
     pub clip: [f64; 4],
 }
 
+impl Placement {
+    /// The scale the page prints at (1 = 100 %), whatever its rotation: √|det| of the matrix.
+    /// Every layout scales uniformly, so this is exact. 0 for a degenerate matrix.
+    pub fn scale(&self) -> f64 {
+        let [a, b, c, d, _, _] = self.matrix.0;
+        let s = (a * d - b * c).abs().sqrt();
+        if s.is_finite() { s } else { 0.0 }
+    }
+}
+
+/// The printed size (points) of a page of display size `size` under the window `region` (or
+/// the whole page) at `scale`: what the preview reports next to the sheet. `None` when the
+/// window misses the page or the numbers aren't finite.
+pub fn printed_size(size: (f64, f64), region: Option<[f64; 4]>, scale: f64) -> Option<(f64, f64)> {
+    let (_, (w, h)) = page_view(size, region)?;
+    let p = (w * scale, h * scale);
+    (p.0.is_finite() && p.1.is_finite()).then_some(p)
+}
+
+/// A poster sheet's place in its page's grid of tiles (numbered row by row from the top-left).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tile {
+    pub col: usize,
+    pub row: usize,
+    pub cols: usize,
+    pub rows: usize,
+}
+
 /// One output sheet.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Sheet {
@@ -199,6 +227,8 @@ pub struct Sheet {
     /// Page borders (Multiple) and cut marks (Poster), in sheet space: rectangles and lines.
     pub borders: Vec<[f64; 4]>,
     pub lines: Vec<[f64; 4]>,
+    /// Poster: this sheet's tile in its page's grid. `None` in the other layouts.
+    pub tile: Option<Tile>,
 }
 
 fn oriented(paper: (f64, f64), o: Orientation, landscape_wanted: bool) -> (f64, f64) {
@@ -397,7 +427,12 @@ pub fn layout(sizes: &[(f64, f64)], settings: &Settings) -> Result<Vec<Sheet>, P
                         let wy1 = sh - ty as f64 * stepy;
                         let matrix = Matrix([s, 0.0, 0.0, s, MARGIN - wx0, size.1 - MARGIN - wy1]);
                         let clip = [wx0 / s, (wy1 - th) / s, (wx0 + tw) / s, wy1 / s];
-                        let mut sheet = Sheet { size, placed: vec![fix(Placement { page: p, matrix, clip })], ..Sheet::default() };
+                        let mut sheet = Sheet {
+                            size,
+                            placed: vec![fix(Placement { page: p, matrix, clip })],
+                            tile: Some(Tile { col: tx, row: ty, cols: nx, rows: ny }),
+                            ..Sheet::default()
+                        };
                         if cut_marks {
                             let (x0, y0, x1, y1) = (MARGIN, MARGIN, size.0 - MARGIN, size.1 - MARGIN);
                             for (x, y) in [(x0, y0), (x1, y0), (x0, y1), (x1, y1)] {

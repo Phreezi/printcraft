@@ -79,6 +79,97 @@ pub fn section_title(ui: &mut egui::Ui, text: &str) {
     ui.add_space(2.0);
 }
 
+/// A titled panel for one section of a dialog: a header band tinted with the section's `hue`
+/// (with a marker bar in that hue and the title in Title Case), then the content on the group
+/// fill, inside a rounded border. Returns what `add` returns.
+pub fn group<R>(ui: &mut egui::Ui, title: &str, hue: Color32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let t = Tokens::get(ui.ctx());
+    group_with(
+        ui,
+        hue,
+        |ui| {
+            ui.label(egui::RichText::new(title).font(theme::semibold(13.5)).color(t.text));
+        },
+        add,
+    )
+}
+
+/// [`group`] with its own header row (after the marker bar).
+pub fn group_with<R>(ui: &mut egui::Ui, hue: Color32, header: impl FnOnce(&mut egui::Ui), add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let t = Tokens::get(ui.ctx());
+    let r = 8;
+    egui::Frame::new()
+        .fill(t.group_fill)
+        .stroke(Stroke::new(1.0, t.border))
+        .corner_radius(CornerRadius::same(r))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let spacing = ui.spacing().item_spacing;
+            ui.spacing_mut().item_spacing.y = 0.0;
+            egui::Frame::new()
+                .fill(t.section_band(hue))
+                .corner_radius(CornerRadius { nw: r - 1, ne: r - 1, sw: 0, se: 0 })
+                .inner_margin(egui::Margin { left: 10, right: 12, top: 6, bottom: 6 })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = spacing;
+                        let (bar, _) = ui.allocate_exact_size(vec2(4.0, 15.0), Sense::hover());
+                        ui.painter().rect_filled(bar, CornerRadius::same(2), hue);
+                        header(ui);
+                    });
+                });
+            egui::Frame::new()
+                .inner_margin(egui::Margin { left: 12, right: 12, top: 8, bottom: 10 })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing = spacing;
+                    add(ui)
+                })
+                .inner
+        })
+        .inner
+}
+
+/// A segmented control: one strip of buttons, the selected one filled. Returns the index of
+/// the segment clicked. Each segment is a selectable button labelled with its text.
+pub fn segmented(ui: &mut egui::Ui, id_salt: &str, labels: &[&str], selected: usize) -> Option<usize> {
+    let t = Tokens::get(ui.ctx());
+    let font = theme::medium(13.0);
+    let bold = theme::semibold(13.0);
+    let widths: Vec<f32> = labels.iter().map(|l| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), bold.clone(), t.text).size().x) + 28.0).collect();
+    let total: f32 = widths.iter().sum::<f32>() + 4.0;
+    let (strip, _) = ui.allocate_exact_size(vec2(total, 32.0), Sense::hover());
+    ui.painter().rect(strip, CornerRadius::same(8), t.field, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    let (sel_fill, sel_text) = t.selected_pair();
+    let mut clicked = None;
+    let mut x = strip.left() + 2.0;
+    for (i, (label, w)) in labels.iter().zip(&widths).enumerate() {
+        let seg = Rect::from_min_size(egui::pos2(x, strip.top() + 2.0), vec2(*w, strip.height() - 4.0));
+        x += w;
+        let resp = ui.interact(seg, egui::Id::new((id_salt, i)), Sense::click());
+        let on = i == selected;
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, *label));
+        if on {
+            let stroke = if t.dark() { Stroke::new(1.0, t.accent) } else { Stroke::NONE };
+            ui.painter().rect(seg, CornerRadius::same(6), sel_fill, stroke, egui::StrokeKind::Inside);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(seg, CornerRadius::same(6), t.hover);
+        }
+        // A thin separator between two unselected neighbours.
+        if i + 1 < labels.len() && !on && i + 1 != selected {
+            let sx = seg.right();
+            ui.painter().line_segment([egui::pos2(sx, seg.top() + 7.0), egui::pos2(sx, seg.bottom() - 7.0)], Stroke::new(1.0, t.border));
+        }
+        let (f, c) = if on { (bold.clone(), sel_text) } else { (font.clone(), if resp.hovered() { t.text } else { t.text_muted }) };
+        ui.painter().text(seg.center(), Align2::CENTER_CENTER, *label, f, c);
+        if resp.clicked() {
+            clicked = Some(i);
+        }
+    }
+    clicked
+}
+
 /// Transient message at the bottom centre.
 pub fn toast(app: &mut PrintCraftApp, ctx: &egui::Context) {
     let Some((msg, start)) = app.toast.clone() else { return };

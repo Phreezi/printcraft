@@ -38,6 +38,13 @@ pub struct Tokens {
     pub field: Color32,
     pub badge_new: Color32,
     pub page_shadow: Color32,
+    /// Grouped panels inside a dialog (the Print dialog's sections), set off from `card`.
+    pub group_fill: Color32,
+    /// Behind sheets and pages shown in a preview or picker, so white paper stands out.
+    pub preview_fill: Color32,
+    /// Marker hues for a dialog's sections, told apart at a glance (Print: printer, pages,
+    /// sizing, orientation, comments & forms).
+    pub section: [Color32; 5],
     pub radius: u8,
 }
 
@@ -66,6 +73,15 @@ impl Tokens {
                 field: Color32::from_rgb(0xFF, 0xFF, 0xFF),
                 badge_new: Color32::from_rgb(0x1B, 0x63, 0xE0),
                 page_shadow: Color32::from_black_alpha(34),
+                group_fill: Color32::from_rgb(0xF5, 0xF6, 0xF8),
+                preview_fill: Color32::from_rgb(0xE6, 0xE7, 0xEB),
+                section: [
+                    Color32::from_rgb(0x1B, 0x63, 0xE0),
+                    Color32::from_rgb(0x0E, 0x8C, 0x80),
+                    Color32::from_rgb(0x7B, 0x4B, 0xD6),
+                    Color32::from_rgb(0xC2, 0x7A, 0x0E),
+                    Color32::from_rgb(0xC2, 0x41, 0x6F),
+                ],
                 radius: 6,
             },
             ThemeKind::Dark => Self {
@@ -90,6 +106,15 @@ impl Tokens {
                 field: Color32::from_rgb(0x1E, 0x1E, 0x22),
                 badge_new: Color32::from_rgb(0x3D, 0x7D, 0xEE),
                 page_shadow: Color32::from_black_alpha(120),
+                group_fill: Color32::from_rgb(0x24, 0x24, 0x28),
+                preview_fill: Color32::from_rgb(0x1A, 0x1A, 0x1D),
+                section: [
+                    Color32::from_rgb(0x4B, 0x8B, 0xF5),
+                    Color32::from_rgb(0x34, 0xC3, 0xB3),
+                    Color32::from_rgb(0xA5, 0x84, 0xF2),
+                    Color32::from_rgb(0xE5, 0xA9, 0x3F),
+                    Color32::from_rgb(0xEC, 0x7F, 0xA5),
+                ],
                 radius: 6,
             },
         }
@@ -102,6 +127,24 @@ impl Tokens {
     pub fn dark(&self) -> bool {
         self.kind == ThemeKind::Dark
     }
+
+    /// The header band of a section panel: `group_fill` tinted with the section's hue.
+    pub fn section_band(&self, hue: Color32) -> Color32 {
+        mix(self.group_fill, hue, if self.dark() { 0.16 } else { 0.10 })
+    }
+
+    /// A selected segment (or a badge on a selection): its fill and text colour. White on the
+    /// light accent; the dark accent is too light for white text, so it uses the soft accent.
+    pub fn selected_pair(&self) -> (Color32, Color32) {
+        if self.dark() { (self.accent_soft, self.accent_text) } else { (self.accent, Color32::WHITE) }
+    }
+}
+
+/// `a` blended towards `b` by `k` (0..=1), opaque.
+pub fn mix(a: Color32, b: Color32, k: f32) -> Color32 {
+    let k = if k.is_finite() { k.clamp(0.0, 1.0) } else { 0.0 };
+    let ch = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * k).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgb(ch(a.r(), b.r()), ch(a.g(), b.g()), ch(a.b(), b.b()))
 }
 
 pub fn install_fonts(ctx: &egui::Context) {
@@ -227,11 +270,38 @@ mod tests {
         for kind in [ThemeKind::Light, ThemeKind::Dark] {
             let t = Tokens::for_kind(kind);
             for (name, fg) in [("text", t.text), ("text_muted", t.text_muted), ("text_faint", t.text_faint)] {
-                for bg in [t.chrome, t.panel, t.card, t.pasteboard] {
+                for bg in [t.chrome, t.panel, t.card, t.pasteboard, t.group_fill] {
                     let r = contrast(fg, bg);
                     assert!(r >= 4.5, "{kind:?} {name} on {bg:?}: {r:.2}:1, WCAG AA needs 4.5:1");
                 }
             }
+            // Previews and section headers carry text and muted text (never the faint one).
+            let bands = t.section.map(|h| t.section_band(h));
+            for (name, fg) in [("text", t.text), ("text_muted", t.text_muted)] {
+                for bg in std::iter::once(t.preview_fill).chain(bands) {
+                    let r = contrast(fg, bg);
+                    assert!(r >= 4.5, "{kind:?} {name} on {bg:?}: {r:.2}:1, WCAG AA needs 4.5:1");
+                }
+            }
+            // A selected segment and the print area's size badge.
+            let (fill, text) = t.selected_pair();
+            let r = contrast(text, fill);
+            assert!(r >= 4.5, "{kind:?} selected segment: {r:.2}:1");
+            // The section markers stand out from their panel (non-text: 3:1).
+            for hue in t.section {
+                let r = contrast(hue, t.group_fill);
+                assert!(r >= 3.0, "{kind:?} marker {hue:?}: {r:.2}:1");
+            }
         }
+    }
+
+    #[test]
+    fn mixing_colours() {
+        let (a, b) = (Color32::from_rgb(0, 100, 200), Color32::from_rgb(200, 100, 0));
+        assert_eq!(mix(a, b, 0.0), a);
+        assert_eq!(mix(a, b, 1.0), b);
+        assert_eq!(mix(a, b, 0.5), Color32::from_rgb(100, 100, 100));
+        assert_eq!(mix(a, b, f32::NAN), a);
+        assert_eq!(mix(a, b, 7.0), b);
     }
 }

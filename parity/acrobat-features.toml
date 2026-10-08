@@ -7818,8 +7818,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["doc_print", "printers"]
-evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf", "crates/engine/src/tests.rs::printing_lays_out_sheets_that_render"]
-notes = "⌘P; settings and live sheet preview"
+evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf", "crates/ui-egui/tests/print.rs::print_dialog_opens_at_its_final_size", "crates/engine/src/tests.rs::printing_lays_out_sheets_that_render"]
+notes = "⌘P; settings in grouped panels like Acrobat's (Printer, Pages to Print, Page Sizing & Handling, Orientation, Comments & Forms; each with a coloured header, light and dark themes), the sizing modes as a segmented control, live sheet preview; scrolls on short screens (1280 × 720). Not yet: the printer's own properties dialog, Acrobat's Advanced and Page Setup."
 
 [[feature]]
 id = "print.printer-selection"
@@ -7878,8 +7878,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["doc_print"]
-evidence = ["crates/print/src/tests.rs::size_modes"]
-notes = "fit, actual size, shrink oversized, custom %"
+evidence = ["crates/print/src/tests.rs::size_modes", "crates/print/src/tests.rs::placement_scale_and_printed_size", "crates/ui-egui/tests/print.rs::preview_reports_the_real_scale_and_printed_size"]
+notes = "fit, actual size, shrink oversized, custom %; the preview shows the real scale of every mode"
 
 [[feature]]
 id = "print.paper-source-by-size"
@@ -7938,8 +7938,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["doc_print"]
-evidence = ["crates/print/src/tests.rs::posters_tile_with_overlap", "crates/automation/tests/automation.rs::printing_through_tools"]
-notes = "tile scale, overlap, cut marks (labels pending)"
+evidence = ["crates/print/src/tests.rs::posters_tile_with_overlap", "crates/automation/tests/automation.rs::printing_through_tools", "crates/ui-egui/tests/print.rs::poster_preview_shows_the_whole_page_grid"]
+notes = "tile scale, overlap, cut marks; the preview shows the whole page with the tile grid dashed over it (tiles numbered when large enough) and the current sheet's tile highlighted, like Acrobat's. Not yet: tile labels printed on the sheets, Acrobat's Tile large pages only."
 
 [[feature]]
 id = "print.selected-area"
@@ -7950,8 +7950,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["doc_print"]
-evidence = ["crates/print/src/tests.rs::a_window_prints_only_that_area", "crates/ui-egui/tests/print.rs::window_tab_prints_the_selected_area", "crates/ui-egui/tests/print.rs::window_picker_draws_and_moves_the_area", "crates/ui-egui/tests/print.rs::window_geometry"]
-notes = "PeDeeFe's Window tab, like AutoCAD's plot window: drag a rectangle in a large picker (zoom, pan, move); locked to the A4/A3 sheet's proportions it fills the sheet at the largest size, unlocked it prints on one sheet or as a poster; the area applies to every page printed. doc_print region. Acrobat's own route is a snapshot of the selected graphic."
+evidence = ["crates/print/src/tests.rs::a_window_prints_only_that_area", "crates/ui-egui/tests/print.rs::window_tab_prints_the_selected_area", "crates/ui-egui/tests/print.rs::window_picker_draws_and_moves_the_area", "crates/ui-egui/tests/print.rs::window_picker_shift_drag_keeps_the_sheet_shape", "crates/ui-egui/tests/print.rs::window_geometry"]
+notes = "PeDeeFe's Window tab, like AutoCAD's plot window: drag a rectangle in a large picker (zoom, pan; drag inside to move, a corner to resize; Escape cancels the picker); the area drawn prints exactly, fitted to the A4/A3 sheet at the largest size or as a poster; Shift while dragging keeps the sheet's proportions so the area fills the sheet; outside the area is dimmed and its size shows on a badge; the area applies to every page printed. doc_print region. Acrobat's own route is a snapshot of the selected graphic."
 
 [[feature]]
 id = "print.orientation"
@@ -7998,8 +7998,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = []
-evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf"]
-notes = "live sheet preview with sheet navigation, drawn sharp at the screen's resolution (pages rendered at the displayed scale, thumbnails only while they render)"
+evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf", "crates/ui-egui/tests/print.rs::preview_reports_the_real_scale_and_printed_size", "crates/ui-egui/tests/print.rs::preview_labels_format_like_acrobat"]
+notes = "live sheet preview with sheet navigation, drawn sharp at the screen's resolution (pages rendered at the displayed scale, thumbnails only while they render); like Acrobat's, \"Scale: N%   Sheets: M\" above it and below the sheet with the printed size of the page at that scale (\"A4 - 210 × 297 mm [197,30 × 263,07 mm]\", decimal comma), exact for every mode. Not yet: Acrobat's page slider, and the scale of each page when pages of different sizes share a sheet (the first page's is shown)."
 
 [[feature]]
 id = "print.grayscale"

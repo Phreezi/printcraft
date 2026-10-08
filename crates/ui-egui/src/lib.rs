@@ -991,7 +991,20 @@ impl PrintCraftApp {
                 let r = <[f64; 4]>::try_from(r).map_err(|_| "print-region must be x0,y0,x1,y1 in points")?;
                 self.print_draft.region = r.iter().all(|v| v.is_finite()).then_some(r);
             }
-            ("print-lock", _) => self.print_draft.lock_aspect = value != "off",
+            ("print-window-output", _) => {
+                self.print_draft.window_output = match value {
+                    "fit" => PrintWindowOutput::Fit,
+                    "poster" => PrintWindowOutput::Poster,
+                    _ => return Err("print-window-output must be fit or poster".into()),
+                };
+            }
+            ("print-poster-scale", _) => {
+                let pct: f64 = value.trim().trim_end_matches('%').trim().parse().map_err(|_| "print-poster-scale must be a percentage")?;
+                if !(pct.is_finite() && (10.0..=1000.0).contains(&pct)) {
+                    return Err("print-poster-scale must be from 10 to 1000".into());
+                }
+                self.print_draft.poster_scale = pct;
+            }
             ("print-pick", _) => {
                 self.print_draft.picking = value == "on";
                 self.print_draft.region_page = self.print_draft.current_page;

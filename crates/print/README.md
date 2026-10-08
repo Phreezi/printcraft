@@ -27,6 +27,10 @@ garbage-collected file (callers check the print permission).
 - **Window** (`Settings::region`): print only an area of each page; every layout treats the
   area as the page (Fit fills the sheet with it, Poster tiles it). PeDeeFe's Print dialog picks it
   like AutoCAD's plot window.
+- **Preview helpers**: `Placement::scale()` is the scale a page prints at in every layout
+  (rotated or not), `printed_size(size, region, scale)` the printed size of the page (or window)
+  at that scale, and `Sheet::tile` a poster sheet's column and row in its page's tile grid, so a
+  preview can draw the whole page with the grid over it.
 
 `spool` talks to CUPS on macOS and Linux (`lpstat -p -d`, `lp` with copies, collation, duplex and
 monochrome options). On Windows, `raster` draws each sheet as a PNG at the job's resolution

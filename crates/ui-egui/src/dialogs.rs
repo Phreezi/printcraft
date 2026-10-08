@@ -63,8 +63,8 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
         ui.set_width(match dialog {
             Dialog::Properties(_) => 640.0,
             // The window picker wants room: most of the app window.
-            Dialog::Print if app.print_draft.picking => (ctx.content_rect().width() - 80.0).clamp(820.0, 1600.0),
-            Dialog::Print => 820.0,
+            Dialog::Print if app.print_draft.picking => (ctx.content_rect().width() - 80.0).clamp(crate::print_ui::DIALOG_WIDTH, 1600.0),
+            Dialog::Print => crate::print_ui::DIALOG_WIDTH,
             Dialog::FieldProps => 600.0,
             _ => 520.0,
         });

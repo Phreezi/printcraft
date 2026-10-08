@@ -136,6 +136,45 @@ fn posters_tile_with_overlap() {
     let c1 = sheets[1].placed[0].clip;
     assert!(close(c0[2] - c1[0], 36.0 / 4.0), "neighbouring tiles share the overlap");
     assert!(layout(&[(200.0, 300.0)], &settings(vec![0], Layout::Poster { scale: 400.0, overlap: 400.0, cut_marks: false })).is_err());
+    // Each sheet knows its tile, row by row from the top-left; other layouts have none.
+    for (k, s) in sheets.iter().enumerate() {
+        assert_eq!(s.tile, Some(Tile { col: k % 2, row: k / 2, cols: 2, rows: 2 }), "sheet {k}");
+    }
+    // Together the tiles cover the whole page, and the first is its top-left corner.
+    let union = sheets
+        .iter()
+        .map(|s| s.placed[0].clip)
+        .fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |u, c| [u[0].min(c[0]), u[1].min(c[1]), u[2].max(c[2]), u[3].max(c[3])]);
+    assert_eq!(union, [0.0, 0.0, 200.0, 300.0]);
+    assert!(close(sheets[0].placed[0].clip[0], 0.0) && close(sheets[0].placed[0].clip[3], 300.0));
+    let size = layout(&[(200.0, 300.0)], &settings(vec![0], Layout::Size(SizeMode::Fit))).unwrap();
+    assert_eq!(size[0].tile, None);
+}
+
+#[test]
+fn placement_scale_and_printed_size() {
+    // Fit of 200 × 300 on Letter (576 × 756 printable): min(2.88, 2.52) = 2.52.
+    let fit = layout(&[(200.0, 300.0)], &settings(vec![0], Layout::Size(SizeMode::Fit))).unwrap();
+    let s = fit[0].placed[0].scale();
+    assert!(close(s, 2.52), "{s}");
+    let p = printed_size((200.0, 300.0), None, s).unwrap();
+    assert!(close(p.0, 504.0) && close(p.1, 756.0), "{p:?}");
+    // A page turned on its cell (Multiple, auto-rotate) prints at the same scale as unturned.
+    let sizes = [(200.0, 300.0), (300.0, 200.0)];
+    let multi = layout(&sizes, &settings(vec![0, 1], Layout::multiple(2))).unwrap();
+    let (upright, turned) = (multi[0].placed[0], multi[0].placed[1]);
+    assert_eq!(turned.matrix.0[0], 0.0, "the landscape page is rotated");
+    assert!(turned.scale() > 0.0 && close(turned.scale(), upright.scale()), "{} {}", turned.scale(), upright.scale());
+    // A window: its own size times the scale; one off the page has no size.
+    let p = printed_size((200.0, 300.0), Some([100.0, 150.0, 200.0, 300.0]), 5.04).unwrap();
+    assert!(close(p.0, 504.0) && close(p.1, 756.0), "{p:?}");
+    assert_eq!(printed_size((200.0, 300.0), Some([300.0, 300.0, 400.0, 400.0]), 1.0), None);
+    assert_eq!(printed_size((200.0, 300.0), None, f64::INFINITY), None);
+    // A poster at 400%: every tile prints at 4×.
+    let poster = layout(&[(200.0, 300.0)], &settings(vec![0], Layout::Poster { scale: 400.0, overlap: 36.0, cut_marks: false })).unwrap();
+    assert!(poster.iter().all(|s| close(s.placed[0].scale(), 4.0)));
+    let degenerate = Placement { page: 0, matrix: Matrix([f64::NAN, 0.0, 0.0, 1.0, 0.0, 0.0]), clip: [0.0; 4] };
+    assert_eq!(degenerate.scale(), 0.0);
 }
 
 #[test]
