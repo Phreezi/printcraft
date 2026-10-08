@@ -193,7 +193,13 @@ mod tests {
 
     #[test]
     fn the_window_is_never_created_maximized_and_only_the_first_start_is_centred() {
-        let saved = WindowState { size: Some([1100.0, 700.0]), pos: Some([100.0, 80.0]), maximized: true, max_pos: Some([-8.0, -8.0]) };
+        let saved = WindowState {
+            size: Some([1100.0, 700.0]),
+            pos: Some([100.0, 80.0]),
+            maximized: true,
+            max_pos: Some([-8.0, -8.0]),
+            max_size: Some([1920.0, 1009.0]),
+        };
         let mut native = eframe::NativeOptions::default();
         super::configure_window(&mut native, saved.startup());
         assert!(native.persist_window && !native.centered);

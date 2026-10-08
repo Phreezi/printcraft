@@ -232,8 +232,13 @@ pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
     if !t.dark() {
         v.text_options.color_transfer_function = egui::epaint::FontColorTransferFunction::Gamma(0.75);
     }
-    ctx.set_visuals(v);
-    ctx.global_style_mut(|s| {
+    // egui keeps a light and a dark style and draws with the one the system theme picks. The app
+    // has its own theme setting, so both hold the app's look: the desktop app styles egui before
+    // the first pass, when egui doesn't know the system theme yet (it would style only the dark
+    // one, and a light system would then get egui's default look all session).
+    ctx.set_visuals_of(egui::Theme::Dark, v.clone());
+    ctx.set_visuals_of(egui::Theme::Light, v);
+    ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = egui::vec2(8.0, 6.0);
         s.spacing.button_padding = egui::vec2(10.0, 5.0);
         s.spacing.menu_margin = egui::Margin::same(6);
@@ -291,6 +296,50 @@ mod tests {
             for hue in t.section {
                 let r = contrast(hue, t.group_fill);
                 assert!(r >= 3.0, "{kind:?} marker {hue:?}: {r:.2}:1");
+            }
+        }
+    }
+
+    /// The desktop app styles egui before its first pass, when egui doesn't know the system's theme
+    /// yet; from the first pass egui picks its light or dark style by the system theme (Windows and
+    /// macOS always report one). The app's look must hold whichever it picks, in the first frame,
+    /// after it, and after switching the theme in Preferences.
+    #[test]
+    fn the_app_theme_holds_whatever_theme_the_system_reports() {
+        for kind in [ThemeKind::Light, ThemeKind::Dark] {
+            for system in [Some(egui::Theme::Light), Some(egui::Theme::Dark), None] {
+                let ctx = egui::Context::default();
+                let mut app = crate::PrintCraftApp::new();
+                app.theme = kind;
+                app.prepare(&ctx);
+                let mut f = eframe::Frame::_new_kittest();
+                let mut want = kind;
+                for pass in 0..3 {
+                    if pass == 2 {
+                        want = if kind == ThemeKind::Light { ThemeKind::Dark } else { ThemeKind::Light };
+                        app.set_theme(&ctx, want);
+                    }
+                    let input = egui::RawInput { system_theme: system, ..Default::default() };
+                    let mut seen = None;
+                    let mut out = ctx.run_ui(input, |ui| {
+                        eframe::App::logic(&mut app, ui.ctx(), &mut f);
+                        let s = ui.ctx().global_style();
+                        seen = Some((
+                            s.visuals.panel_fill,
+                            s.visuals.dark_mode,
+                            s.spacing.item_spacing,
+                            s.text_styles.get(&egui::TextStyle::Body).cloned(),
+                        ));
+                    });
+                    out.textures_delta.clear();
+                    let (panel, dark, spacing, body) = seen.unwrap_or_default();
+                    let t = Tokens::for_kind(want);
+                    let at = format!("app {kind:?} then {want:?}, system {system:?}, pass {pass}");
+                    assert_eq!(panel, t.panel, "{at}: the app's panel colour");
+                    assert_eq!(dark, t.dark(), "{at}");
+                    assert_eq!(spacing, egui::vec2(8.0, 6.0), "{at}: the app's spacing");
+                    assert_eq!(body, Some(regular(13.0)), "{at}: the app's text sizes");
+                }
             }
         }
     }

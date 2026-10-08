@@ -17,15 +17,21 @@ fn info(maximized: bool, inner: [f32; 4], outer: [f32; 2]) -> egui::ViewportInfo
     }
 }
 
-const SAVED: WindowState = WindowState { size: Some([1100.0, 700.0]), pos: Some([100.0, 100.0]), maximized: true, max_pos: Some([-8.0, -8.0]) };
+const SAVED: WindowState = WindowState {
+    size: Some([1100.0, 700.0]),
+    pos: Some([100.0, 100.0]),
+    maximized: true,
+    max_pos: Some([-8.0, -8.0]),
+    max_size: Some([1920.0, 1009.0]),
+};
 
 #[test]
 fn the_normal_size_survives_maximizing() {
     let mut s = WindowState::default();
     s.observe(&info(false, [108.0, 140.0, 1100.0, 700.0], [100.0, 100.0]));
     assert_eq!(s, WindowState { size: Some([1100.0, 700.0]), pos: Some([100.0, 100.0]), ..WindowState::default() });
-    // Maximized: the normal size and position are kept for un-maximizing, and where the maximized
-    // window sits is noted (the next start creates the window there).
+    // Maximized: the normal size and position are kept for un-maximizing, and the area the
+    // maximized window covers is noted (the next start creates the window there).
     s.observe(&info(true, [0.0, 31.0, 1920.0, 1009.0], [-8.0, -8.0]));
     assert_eq!(s, SAVED);
     // Minimized and full screen aren't remembered.
@@ -37,10 +43,20 @@ fn the_normal_size_survives_maximizing() {
 fn the_start_is_decided_before_the_window_exists() {
     // The first start opens centred at the default size, then maximized.
     let first = WindowState::default().startup();
-    assert_eq!(first, Startup { size: DEFAULT_SIZE, centered: true, maximized: true, max_pos: None });
+    assert_eq!(first, Startup { size: DEFAULT_SIZE, pos: None, centered: true, maximized: true, max_pos: None, max_size: None });
     assert_eq!(first.builder(ViewportBuilder::default()).inner_size, Some(vec2(1440.0, 920.0)));
     // Afterwards: as it was left, never re-centred.
-    assert_eq!(SAVED.startup(), Startup { size: [1100.0, 700.0], centered: false, maximized: true, max_pos: Some([-8.0, -8.0]) });
+    assert_eq!(
+        SAVED.startup(),
+        Startup {
+            size: [1100.0, 700.0],
+            pos: Some([100.0, 100.0]),
+            centered: false,
+            maximized: true,
+            max_pos: Some([-8.0, -8.0]),
+            max_size: Some([1920.0, 1009.0])
+        }
+    );
     let normal = WindowState { maximized: false, ..SAVED }.startup();
     assert!(!normal.maximized && !normal.centered);
 }
@@ -65,21 +81,37 @@ fn the_window_is_never_created_maximized_and_a_maximized_one_starts_exactly_in_p
     let normal = WindowState { maximized: false, ..SAVED }.startup();
     let b = normal.adjust(eframe_restored([300.0, 200.0], [1000.0, 650.0], false));
     assert_eq!((b.position, b.inner_size, b.maximized), (Some(pos2(300.0, 200.0)), Some(vec2(1000.0, 650.0)), Some(false)));
-    // eframe recorded a maximized window but the app's own record says normal: the normal size,
-    // placed by the system, rather than a full-screen window that isn't maximized.
+    // eframe recorded a maximized window but the app's own record says normal: the normal size and
+    // position (on that screen), rather than a full-screen window that isn't maximized.
     let b = normal.adjust(eframe_restored([0.0, 0.0], [1920.0, 1009.0], true));
-    assert_eq!((b.position, b.inner_size), (None, Some(vec2(1100.0, 700.0))));
+    assert_eq!((b.position, b.inner_size, b.maximized), (Some(pos2(100.0, 100.0)), Some(vec2(1100.0, 700.0)), Some(false)));
+}
+
+/// What eframe hands over after the app quit minimized on Windows: it saw 0 × 0 at
+/// (-32000, -32000), clamped the size to 64 × 64 and moved the position onto a connected monitor
+/// (the main one's top-left corner, the only monitor point that close).
+fn eframe_minimized() -> ViewportBuilder {
+    eframe_restored([0.0, 0.0], [64.0, 64.0], false)
+}
+
+/// After the app quit in full screen: the whole monitor.
+fn eframe_full_screen(origin: [f32; 2]) -> ViewportBuilder {
+    ViewportBuilder::default().with_position(origin).with_inner_size([1920.0, 1080.0]).with_fullscreen(true).with_maximized(false)
 }
 
 #[test]
 fn a_window_eframe_recorded_minimized_or_full_screen_opens_at_the_normal_size() {
     let start = WindowState { maximized: false, ..SAVED }.startup();
-    // Minimized at exit: eframe saw 0 × 0 far off screen (and clamped it to 64 × 64).
-    let b = start.adjust(eframe_restored([0.0, 0.0], [64.0, 64.0], false));
+    // Minimized at exit: where it was isn't known to be on a connected screen, so the system
+    // places the normal window.
+    let b = start.adjust(eframe_minimized());
     assert_eq!((b.position, b.inner_size, b.maximized), (None, Some(vec2(1100.0, 700.0)), Some(false)));
-    // Full screen at exit.
-    let b = start.adjust(ViewportBuilder::default().with_position([0.0, 0.0]).with_inner_size([1920.0, 1080.0]).with_fullscreen(true));
-    assert_eq!((b.position, b.inner_size, b.fullscreen), (None, Some(vec2(1100.0, 700.0)), Some(false)));
+    // Full screen at exit: back where it was on that screen, at its normal size.
+    let b = start.adjust(eframe_full_screen([0.0, 0.0]));
+    assert_eq!((b.position, b.inner_size, b.fullscreen), (Some(pos2(100.0, 100.0)), Some(vec2(1100.0, 700.0)), Some(false)));
+    // Full screen on another monitor than the one it was on: placed by the system.
+    let b = start.adjust(eframe_full_screen([1920.0, 0.0]));
+    assert_eq!((b.position, b.inner_size), (None, Some(vec2(1100.0, 700.0))));
     // Nothing saved by eframe: the size the app chose, never maximized at creation.
     let b = WindowState::default().startup().adjust(WindowState::default().startup().builder(ViewportBuilder::default()));
     assert_eq!((b.position, b.inner_size, b.maximized), (None, Some(vec2(1440.0, 920.0)), Some(false)));
@@ -107,20 +139,61 @@ fn un_maximizing_gives_back_the_normal_size_and_a_position_on_that_screen() {
     assert_eq!(big.unmaximize_commands(&restored, created).first(), Some(&ViewportCommand::InnerSize(vec2(1920.0, 700.0))));
     let normal = info(false, [108.0, 131.0, 1100.0, 700.0], [100.0, 100.0]);
     assert!(SAVED.unmaximize_commands(&normal, created).is_empty());
-    assert!(WindowState::default().unmaximize_commands(&restored, created).is_empty(), "no normal size known");
+    // Kept maximized, so no normal size known: the default size, smaller than the screen, centred.
+    let kept = WindowState { size: None, pos: None, ..SAVED };
+    let cmds = kept.unmaximize_commands(&restored, created);
+    let [ViewportCommand::InnerSize(s), ViewportCommand::OuterPosition(p)] = cmds.as_slice() else { panic!("{cmds:?}") };
+    assert!(s.x == 1440.0 && (800.0..1000.0).contains(&s.y), "{s:?}");
+    assert!((p.x - 232.0).abs() < 0.5 && (0.0..100.0).contains(&p.y), "centred: {p:?}");
+}
+
+/// Review finding: quitting while minimized or in full screen made eframe record a geometry the
+/// window can't be created with, and the app then dropped its own position too: a maximized window
+/// appeared at the normal size where the system put it, then grew to maximized.
+#[test]
+fn a_maximized_window_quit_minimized_or_in_full_screen_still_opens_over_its_area() {
+    let start = SAVED.startup();
+    for b in [eframe_minimized(), eframe_full_screen([0.0, 0.0])] {
+        let b = start.adjust(b);
+        assert_eq!(
+            (b.position, b.inner_size, b.maximized, b.fullscreen),
+            (Some(pos2(-8.0, -8.0)), Some(vec2(1920.0, 1009.0)), Some(false), Some(false)),
+            "created over the maximized area, maximized once shown"
+        );
+    }
+    // Maximized on the second monitor, full screen there at exit.
+    let second = WindowState { max_pos: Some([1912.0, -8.0]), pos: Some([2100.0, 100.0]), ..SAVED }.startup();
+    let b = second.adjust(eframe_full_screen([1920.0, 0.0]));
+    assert_eq!((b.position, b.inner_size), (Some(pos2(1912.0, -8.0)), Some(vec2(1920.0, 1009.0))));
+    // eframe kept only the main monitor: the second one may be unplugged, so its area isn't used
+    // (the frame hanging 8 points into the main monitor doesn't count); the system places it.
+    for b in [eframe_minimized(), eframe_full_screen([0.0, 0.0])] {
+        let b = second.adjust(b);
+        assert_eq!((b.position, b.inner_size), (None, Some(vec2(1100.0, 700.0))));
+    }
+    // Settings from before the maximized size was recorded: the normal size, as before.
+    let old = WindowState { max_size: None, ..SAVED }.startup();
+    let b = old.adjust(eframe_minimized());
+    assert_eq!((b.position, b.inner_size), (None, Some(vec2(1100.0, 700.0))));
 }
 
 #[test]
 fn window_state_is_saved_with_the_settings_and_checked_on_the_way_back() {
     let mut app = PrintCraftApp::new();
-    app.window_state = WindowState { size: Some([1200.0, 800.0]), pos: Some([40.0, 30.0]), maximized: true, max_pos: Some([-11.0, -11.0]) };
+    app.window_state = WindowState {
+        size: Some([1200.0, 800.0]),
+        pos: Some([40.0, 30.0]),
+        maximized: true,
+        max_pos: Some([-11.0, -11.0]),
+        max_size: Some([1902.0, 1000.0]),
+    };
     let saved = app.persist();
     let mut again = PrintCraftApp::new();
     again.restore(&saved);
     assert_eq!(again.window_state, app.window_state);
     // Untrusted settings: impossible sizes and positions are dropped.
     let mut odd = PrintCraftApp::new();
-    odd.restore(r#"{"window": {"size": [1e9, 5], "pos": [null, 3], "maximized": true, "max_pos": [1e30, 0]}}"#);
+    odd.restore(r#"{"window": {"size": [1e9, 5], "pos": [null, 3], "maximized": true, "max_pos": [1e30, 0], "max_size": [5, 1e9]}}"#);
     assert_eq!(odd.window_state, WindowState { maximized: true, ..WindowState::default() });
     odd.restore(r#"{"window": "nonsense"}"#);
     assert!(odd.window_state.maximized, "unreadable: unchanged");
