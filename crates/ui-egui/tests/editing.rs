@@ -919,19 +919,24 @@ fn dragging_a_paragraph_moves_it_and_its_edge_rewraps_it() {
 }
 
 /// A 300 × 300 page with five one-line paragraphs ("Alpha" at the top … "Echo"), 40 pt apart so
-/// none joins another, and one small image at the bottom right.
-fn boxes_fixture() -> Vec<u8> {
+/// none joins another, and one small image at the bottom right; with `comment`, also a square
+/// comment at the top right.
+fn boxes_fixture(comment: bool) -> Vec<u8> {
     let body = "q 60 0 0 30 200 30 cm /Im0 Do Q \
                 BT /F1 12 Tf 20 260 Td (Alpha) Tj ET BT /F1 12 Tf 20 220 Td (Bravo) Tj ET BT /F1 12 Tf 20 180 Td (Charlie) Tj ET \
                 BT /F1 12 Tf 20 140 Td (Delta) Tj ET BT /F1 12 Tf 20 100 Td (Echo) Tj ET";
-    let objs: Vec<String> = vec![
+    let annots = if comment { " /Annots [7 0 R]" } else { "" };
+    let mut objs: Vec<String> = vec![
         "<< /Type /Catalog /Pages 2 0 R >>".into(),
         "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 300 300] >>".into(),
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
-        "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> /XObject << /Im0 6 0 R >> >> >>".into(),
+        format!("<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> /XObject << /Im0 6 0 R >> >>{annots} >>"),
         format!("<< /Length {} >>\nstream\n{body}\nendstream", body.len()),
         "<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 2 >>\nstream\nAB\nendstream".into(),
     ];
+    if comment {
+        objs.push("<< /Type /Annot /Subtype /Square /Rect [200 200 280 280] /Contents (Check) /C [1 0 0] >>".into());
+    }
     let mut out = b"%PDF-1.7\n".to_vec();
     let mut offsets = Vec::new();
     for (i, o) in objs.iter().enumerate() {
@@ -949,9 +954,14 @@ fn boxes_fixture() -> Vec<u8> {
 
 /// The boxes fixture open in Edit text & images.
 fn open_boxes() -> Harness<'static, PrintCraftApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
+    open_boxes_with(false)
+}
+
+/// [`open_boxes`], on the fixture with a comment when `comment` is set.
+fn open_boxes_with(comment: bool) -> Harness<'static, PrintCraftApp> {
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
         let mut app = PrintCraftApp::new();
-        app.open_bytes("boxes.pdf", None, boxes_fixture()).expect("boxes fixture opens");
+        app.open_bytes("boxes.pdf", None, boxes_fixture(comment)).expect("boxes fixture opens");
         // The whole page on screen (at the default fit-width it runs past the window's bottom).
         app.set_option("zoom", "150").expect("zoom");
         app
@@ -1177,4 +1187,102 @@ fn deleting_marquee_selected_paragraphs_leaves_their_neighbours() {
     assert_eq!(block_texts(&h), ["Alpha", "Bravo", "Echo"]);
     assert_eq!(image_count(&h), 1);
     assert_eq!(undo_label(&h).as_deref(), Some("Delete 2 paragraphs"));
+}
+
+#[test]
+fn delete_deletes_the_added_item_clicked_after_a_marquee_not_the_boxes() {
+    // One Delete press was handled twice: the added item clicked last was deselected but kept, and
+    // the paragraphs the earlier marquee picked were deleted instead.
+    let mut h = open_boxes();
+    let screen = boxes_screen(&h);
+    let text = printcraft_engine::AddedText { rect: [150.0, 128.0, 290.0, 142.0], text: "Hi".into(), ..Default::default() };
+    assert!(h.state_mut().apply_edit(printcraft_engine::Edit::AddText { page: 0, text }));
+    h.run_steps(3);
+    let added = |h: &Harness<'static, PrintCraftApp>| {
+        let s = h.state();
+        s.session.get(s.views[0].id).unwrap().added.len()
+    };
+    assert_eq!(added(&h), 1);
+    drag(&mut h, screen(5.0, 295.0), screen(150.0, 185.0));
+    assert_eq!(selection(&h), Some((vec![0, 1, 2], vec![])));
+    // The added box's blank right part (away from the glyphs, which are a paragraph too).
+    click_with(&mut h, screen(260.0, 135.0), Modifiers::NONE);
+    assert_eq!(h.state().views[0].content.selected, Some((0, 0)), "the added text is selected");
+    assert_eq!(selection(&h), None, "and the boxes aren't any more");
+    h.key_press(Key::Delete);
+    h.run_steps(4);
+    assert_eq!(added(&h), 0, "the added text is gone");
+    assert_eq!(block_texts(&h), ["Alpha", "Bravo", "Charlie", "Delta", "Echo"], "no paragraph was deleted");
+    assert_eq!(undo_label(&h).as_deref(), Some("Delete content"));
+}
+
+#[test]
+fn delete_deletes_the_comment_selected_after_the_boxes_not_the_boxes() {
+    let mut h = open_boxes_with(true);
+    let comments = |h: &Harness<'static, PrintCraftApp>| {
+        let s = h.state();
+        s.session.get(s.views[0].id).unwrap().info.annotations.len()
+    };
+    assert_eq!(comments(&h), 1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(2);
+    assert_eq!(selection(&h), Some((vec![0, 1, 2, 3, 4], vec![0])));
+    // The comment, picked as the Comments panel or a right-click on it does.
+    h.state_mut().set_option("comment", "1:1").expect("comment");
+    h.run_steps(2);
+    assert_eq!(h.state().views[0].comments.selected, Some((0, 0)));
+    assert_eq!(selection(&h), None, "picking the comment drops the boxes");
+    assert!(h.state().views[0].image_selection.is_none());
+    h.key_press(Key::Delete);
+    h.run_steps(4);
+    assert_eq!(comments(&h), 0, "the comment is gone");
+    assert_eq!(block_texts(&h).len(), 5, "no paragraph was deleted");
+    assert_eq!(image_count(&h), 1, "nor the image");
+    assert_eq!(undo_label(&h).as_deref(), Some("Delete comment"));
+}
+
+#[test]
+fn delete_under_the_print_dialog_leaves_the_selected_boxes() {
+    // Backspace typed in the modal Print dialog (no field focused) deleted every selected box
+    // underneath it.
+    let mut h = open_boxes();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(2);
+    assert_eq!(selection(&h), Some((vec![0, 1, 2, 3, 4], vec![0])));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::P);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, Some(printcraft_ui_egui::Dialog::Print));
+    assert!(!h.ctx.egui_wants_keyboard_input(), "no field in the dialog has the keyboard");
+    h.key_press(Key::Backspace);
+    h.run_steps(2);
+    h.key_press(Key::Delete);
+    h.run_steps(4);
+    assert_eq!(block_texts(&h).len(), 5, "no paragraph was deleted");
+    assert_eq!(image_count(&h), 1, "nor the image");
+    assert_eq!(undo_label(&h), None);
+    // Once the dialog is closed, the page's keys are back (the selection is still there).
+    h.state_mut().dialog = None;
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, printcraft_ui_egui::QuickTool::EditText);
+    h.key_press(Key::Backspace);
+    h.run_steps(4);
+    assert!(block_texts(&h).is_empty());
+    assert_eq!(undo_label(&h).as_deref(), Some("Delete 6 items"));
+}
+
+#[test]
+fn delete_under_the_print_dialog_leaves_the_selected_comment() {
+    // The page's other Delete handlers wait for the dialog too.
+    let mut h = open_boxes_with(true);
+    h.state_mut().set_option("comment", "1:1").expect("comment");
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::P);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, Some(printcraft_ui_egui::Dialog::Print));
+    h.key_press(Key::Delete);
+    h.run_steps(4);
+    let s = h.state();
+    assert_eq!(s.session.get(s.views[0].id).unwrap().info.annotations.len(), 1, "the comment is still there");
+    assert_eq!(s.views[0].comments.selected, Some((0, 0)), "and still selected");
+    assert_eq!(undo_label(&h), None);
 }

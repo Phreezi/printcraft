@@ -90,6 +90,17 @@ pub(crate) fn set_selection(view: &mut DocView, s: BoxSelection) {
     view.comments.selected = None;
 }
 
+/// The other direction of [`set_selection`]: an added item or a comment selected while boxes
+/// are (a click on an added box, the Comments panel, a right-click on a comment) was picked
+/// after them, so the boxes are deselected and Delete deletes only what was picked last.
+/// Returns whether boxes were deselected.
+pub(crate) fn yield_selection(view: &mut DocView) -> bool {
+    if view.content.selected.is_none() && view.comments.selected.is_none() {
+        return false;
+    }
+    view.edit_selection.take().is_some() | view.image_selection.take().is_some()
+}
+
 /// The paragraphs' boxes on screen.
 fn block_boxes(xf: &PageXform, info: &DocInfo, page: usize, lines: &[printcraft_engine::TextBlock]) -> Vec<Rect> {
     lines.iter().map(|l| xf.user_rect(info, page, l.rect.map(|v| v as f32)).expand(2.0)).collect()
@@ -186,12 +197,16 @@ pub(crate) fn marquee_input(
 
 /// Delete or Backspace (no text field focused, nothing else selected): delete the selected
 /// boxes as one step. A finished gesture whose release was missed (the page scrolled away)
-/// is dropped here too.
-pub(crate) fn keys(ctx: &egui::Context, view: &mut DocView) {
+/// is dropped here too. `blocked`: a dialog, the command palette or a menu is open, and the
+/// keys are its own (egui's modal blocks the pointer, not the keyboard).
+pub(crate) fn keys(ctx: &egui::Context, view: &mut DocView, blocked: bool) {
     if view.edit_marquee.is_some() && !ctx.input(|i| i.pointer.primary_down()) {
         view.edit_marquee = None;
     }
-    if view.line_editor.is_some()
+    // A queued edit means another key handler already acted on this press: one press, one edit.
+    if blocked
+        || view.pending_edit.is_some()
+        || view.line_editor.is_some()
         || view.edit_marquee.is_some()
         || view.content.selected.is_some()
         || view.comments.selected.is_some()

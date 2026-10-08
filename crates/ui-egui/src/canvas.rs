@@ -1660,20 +1660,32 @@ pub fn document_area(app: &mut PrintCraftApp, index: usize, ui: &mut egui::Ui) {
     // One crop, then back to selecting (as Acrobat does).
     let cropped = view.pending_edit.as_ref().is_some_and(|e| matches!(e, printcraft_engine::Edit::SetPageBox { .. }));
     let mut tool = app.quick_tool;
-    comments::keys(ui.ctx(), view, &mut tool, allowed);
-    if preparing {
-        crate::prepare::keys(ui.ctx(), view);
+    // One selection at a time: an added item or a comment picked this frame (here or in the
+    // Comments panel) drops the boxes, before any key acts on them.
+    if crate::edit_text_ui::yield_selection(view) {
+        ui.ctx().request_repaint();
     }
-    if editing_content {
-        crate::content_ui::keys(ui.ctx(), view);
+    // The page keeps running under a dialog (the Print preview draws from it), but its keys
+    // wait while a dialog, the command palette or a menu is open: egui's modal blocks the
+    // pointer, not the keyboard, and a field in it lets go of the keyboard on Enter. Same
+    // conditions as `edit_text_keys`.
+    let keys_blocked = app.dialog.is_some() || app.palette_open || egui::Popup::is_any_open(ui.ctx());
+    if !keys_blocked {
+        comments::keys(ui.ctx(), view, &mut tool, allowed);
+        if preparing {
+            crate::prepare::keys(ui.ctx(), view);
+        }
+        if editing_content {
+            crate::content_ui::keys(ui.ctx(), view);
+        }
     }
-    if tool == QuickTool::Link {
-        crate::link_ui::keys(ui.ctx(), view);
-    } else {
+    if tool != QuickTool::Link {
         view.links.selected = None;
+    } else if !keys_blocked {
+        crate::link_ui::keys(ui.ctx(), view);
     }
     if tool == QuickTool::EditText && can_modify {
-        crate::edit_text_ui::keys(ui.ctx(), view);
+        crate::edit_text_ui::keys(ui.ctx(), view, keys_blocked);
     } else {
         view.edit_selection = None;
         view.edit_marquee = None;
