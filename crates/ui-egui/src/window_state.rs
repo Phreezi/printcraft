@@ -344,11 +344,14 @@ impl PrintCraftApp {
         if r.maximize && !r.maximized_seen {
             if info.maximized == Some(true) {
                 r.maximized_seen = true;
-                // Created at least as big as the area it now fills (every start but the first, as
-                // the module docs explain): Windows would un-maximize it to that size. Created
-                // smaller (the first start, or at the normal size), Windows knows where it goes.
+                // A normal size is remembered, or the window was created at least as big as the
+                // area it now fills (every start but the first, as the module docs explain):
+                // Windows would un-maximize it to the created size. The maximized area can also
+                // grow between sessions (taskbar auto-hide, a bigger monitor), so a remembered
+                // size arms the fix-up on its own. A snapped window is left alone (`as_created`).
                 let filled = info.inner_rect.filter(|i| i.is_finite()).map(|i| i.size());
-                r.fixup = r.created_size.zip(filled).is_some_and(|(c, f)| c.x >= f.x - BORDER_SLACK && c.y >= f.y - BORDER_SLACK);
+                r.fixup = self.window_state.size.is_some()
+                    || r.created_size.zip(filled).is_some_and(|(c, f)| c.x >= f.x - BORDER_SLACK && c.y >= f.y - BORDER_SLACK);
             } else if r.frame < MAXIMIZE_WAIT {
                 // Not maximized yet: don't take the full-screen area for the normal geometry.
                 self.window_restore = Some(r);
@@ -458,6 +461,34 @@ mod tests {
         assert!(frame(&mut app, &ctx, maximized).is_empty());
         assert!(frame(&mut app, &ctx, normal).is_empty());
         assert!(app.window_restore.is_none());
+    }
+
+    /// The maximized area grew since last session (taskbar auto-hide, a bigger monitor): the
+    /// window, created at last session's smaller area, still gets its remembered normal size
+    /// back when un-maximized, and that size isn't overwritten with the old maximized area.
+    #[test]
+    fn a_grown_maximized_area_still_gives_back_the_normal_size() {
+        let mut app = PrintCraftApp::new();
+        app.window_state = WindowState {
+            size: Some([1100.0, 700.0]),
+            pos: Some([100.0, 80.0]),
+            maximized: true,
+            max_pos: Some([-8.0, -8.0]),
+            max_size: Some([1920.0, 1009.0]),
+        };
+        app.restore_window();
+        let ctx = egui::Context::default();
+        let created = info(false, [-8.0, -8.0], [1920.0, 1009.0]);
+        assert_eq!(frame(&mut app, &ctx, created.clone()), [ViewportCommand::Maximized(true)]);
+        // Maximized over a taller area than it was created at.
+        let maximized = info(true, [-8.0, -8.0], [1920.0, 1040.0]);
+        assert!(frame(&mut app, &ctx, maximized).is_empty());
+        // Windows un-maximizes it to the rect it was created at; the app restores the normal size.
+        assert_eq!(
+            frame(&mut app, &ctx, created),
+            [ViewportCommand::InnerSize(vec2(1100.0, 700.0)), ViewportCommand::OuterPosition(pos2(100.0, 80.0))]
+        );
+        assert_eq!(app.window_state.size, Some([1100.0, 700.0]));
     }
 
     #[test]

@@ -154,6 +154,21 @@ struct Ts {
     rise: f64,
     /// The text rendering mode is 3 or 7 (no fill, no stroke).
     invisible: bool,
+    /// The font writes vertically (Identity-V or a CMap with /WMode 1). Glyph advances are
+    /// worked out as if horizontal, so no skip is written for its runs (see `TextLine::skips`).
+    vertical: bool,
+}
+
+/// Whether font `name` in `fonts_res` writes vertically: an /Identity-V encoding or an embedded
+/// CMap whose /WMode is 1.
+fn writes_vertically(doc: &Document, fonts_res: &Dict, name: &[u8]) -> bool {
+    let Some(font) = fonts_res.get(name).and_then(|f| doc.resolve(f).as_dict().cloned()) else { return false };
+    let Some(encoding) = font.get(b"Encoding").map(|e| doc.resolve(e)) else { return false };
+    match encoding.as_ref() {
+        Object::Name(n) => n.as_slice() == b"Identity-V",
+        Object::Stream(s) => s.dict.int(b"WMode") == Some(1),
+        _ => false,
+    }
 }
 
 fn content_streams(doc: &Document, page: &Dict) -> Vec<(Object, Vec<u8>)> {
@@ -242,6 +257,7 @@ fn interpret(doc: &Document, ops: &[Op], fonts_res: &Dict, cache: &mut HashMap<V
         leading: 0.0,
         rise: 0.0,
         invisible: false,
+        vertical: false,
     };
     let mut at_bt = (0usize, ts.clone());
     let mut stack: Vec<Ts> = Vec::new();
@@ -284,6 +300,7 @@ fn interpret(doc: &Document, ops: &[Op], fonts_res: &Dict, cache: &mut HashMap<V
                         )
                     });
                     ts.font = Some((name.to_vec(), m.clone()));
+                    ts.vertical = writes_vertically(doc, fonts_res, name);
                 }
             }
             b"Tc" => ts.char_spacing = op.num(0).unwrap_or(0.0),
@@ -370,7 +387,7 @@ fn interpret(doc: &Document, ops: &[Op], fonts_res: &Dict, cache: &mut HashMap<V
                 let size_user = (trm0.0[2].powi(2) + trm0.0[3].powi(2)).sqrt() * ts.size;
                 // A TJ number n moves by -n / 1000 × Tfs × Th in text space.
                 let skip = -x_text * 1000.0 / (ts.size * ts.scale);
-                let skip = (x_text != 0.0 && skip.is_finite()).then_some(skip);
+                let skip = (x_text != 0.0 && skip.is_finite() && !ts.vertical).then_some(skip);
                 out.push(Shown {
                     op: i,
                     tm: Matrix([tm.0[0], tm.0[1], tm.0[2], tm.0[3], tm.0[4] - x_text * tm.0[0], tm.0[5] - x_text * tm.0[1]]),

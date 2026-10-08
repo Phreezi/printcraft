@@ -876,6 +876,60 @@ fn deleting_a_box_takes_its_copies_and_the_invisible_text_over_it() {
     assert_eq!(line_texts(&reopen(&d)), ["Other"]);
 }
 
+/// A page whose fonts /V1 and /V2 are composite (Type0) fonts with encoding `cmap`
+/// (`Identity-H` or `Identity-V`), each code mapped to the letter of the same number.
+fn composite_text_page(cmap: &str, content: &str) -> Document {
+    let to_unicode = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /T def /CMapType 2 def \
+                      1 begincodespacerange <0000> <FFFF> endcodespacerange \
+                      3 beginbfchar <0041> <0041> <0042> <0042> <0043> <0043> endbfchar \
+                      endcmap CMapName currentdict /CMap defineresource pop end end";
+    let stream = |c: &str| format!("<< /Length {} >>\nstream\n{c}\nendstream", c.len());
+    let font =
+        |cid: usize| format!("<< /Type /Font /Subtype /Type0 /BaseFont /TestCID /Encoding /{cmap} /DescendantFonts [{cid} 0 R] /ToUnicode 8 0 R >>");
+    let cid = "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /TestCID /CIDSystemInfo << /Registry (Test) /Ordering (Identity) /Supplement 0 >> /DW 1000 >>";
+    let objs: Vec<String> = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 4 0 R /Resources << /Font << /V1 5 0 R /V2 6 0 R >> >> >>".into(),
+        stream(content),
+        font(7),
+        font(9),
+        cid.into(),
+        stream(to_unicode),
+        cid.into(),
+    ];
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offs = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offs.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let x = out.len();
+    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for o in offs {
+        out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{x}\n%%EOF\n", objs.len() + 1).as_bytes());
+    Document::open(Arc::new(out)).unwrap()
+}
+
+#[test]
+fn deleting_a_run_in_vertical_writing_writes_no_horizontal_skip() {
+    // Advances are worked out as if every font wrote horizontally. In vertical writing (Identity-V)
+    // that number would move the next run the wrong way, onto the text before it, so no skip is
+    // written there: the run just goes, as before skips existed.
+    let content = "BT /V1 12 Tf 300 700 Td <0041> Tj /V2 12 Tf <0042> Tj /V1 12 Tf <0043> Tj ET";
+    for (cmap, skip) in [("Identity-H", true), ("Identity-V", false)] {
+        let mut doc = composite_text_page(cmap, content);
+        let i = block_of(&doc, "B");
+        assert_eq!(text::delete_blocks(&mut doc, 0, &[i]), Ok(1), "{cmap}");
+        let written = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+        assert_eq!(written.contains("TJ"), skip, "{cmap}: {written}");
+        let texts = line_texts(&reopen(&doc));
+        assert!(!texts.iter().any(|t| t.contains('B')) && texts.iter().any(|t| t.contains('C')), "{cmap}: {texts:?}");
+    }
+}
+
 #[test]
 fn deleting_a_run_keeps_the_next_run_on_its_line_in_place() {
     // A run in another font (a bold label, a coloured word) followed by more text in the same
