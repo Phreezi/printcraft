@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::PrintCraftApp;
+use crate::PdfCraftApp;
 
 /// How often unsaved changes are written to the recovery folder.
 pub const AUTOSAVE_SECS: f64 = 60.0;
@@ -114,7 +114,7 @@ fn now_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-impl PrintCraftApp {
+impl PdfCraftApp {
     /// Turn on autosave into `store`, and look for documents a previous session left behind.
     pub fn enable_recovery(&mut self, store: RecoveryStore) {
         self.recoverable = store.list();
@@ -137,7 +137,7 @@ impl PrintCraftApp {
     }
 
     /// Drop a document's recovery entry (it was saved, discarded or closed).
-    pub(crate) fn forget_recovery(&mut self, doc: printcraft_engine::DocId) {
+    pub(crate) fn forget_recovery(&mut self, doc: pdfcraft_engine::DocId) {
         if let (Some(store), Some(key)) = (&self.recovery, self.recovery_keys.remove(&doc)) {
             store.remove(&key);
         }

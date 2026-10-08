@@ -1,20 +1,20 @@
 //! Home tab: recommended tools, open card, recent files (local only, never another app's list).
 
 use egui::{Align2, CornerRadius, Rect, Sense, Stroke, vec2};
-use printcraft_engine::catalog;
+use pdfcraft_engine::catalog;
 
 use crate::theme::{self, Tokens};
-use crate::{LeftPanel, PrintCraftApp, icons, panels::human_size, widgets};
+use crate::{LeftPanel, PdfCraftApp, icons, panels::human_size, widgets};
 
 const RECOMMENDED: [&str; 5] = ["organize", "comment", "form", "edit", "protect"];
 
-pub fn show(app: &mut PrintCraftApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 36, right: 36, top: 28, bottom: 28 }).show(ui, |ui| {
             ui.horizontal(|ui| {
                 widgets::app_icon(ui, 30.0);
-                ui.label(egui::RichText::new(format!("Welcome to {}", printcraft_engine::links::APP_NAME)).font(theme::semibold(24.0)));
+                ui.label(egui::RichText::new(format!("Welcome to {}", pdfcraft_engine::links::APP_NAME)).font(theme::semibold(24.0)));
             });
             ui.label(
                 egui::RichText::new("An open-source PDF workbench — local, private, and scriptable.").color(t.text_muted).font(theme::regular(14.0)),
@@ -32,7 +32,7 @@ pub fn show(app: &mut PrintCraftApp, ui: &mut egui::Ui) {
                         ui.vertical(|ui| {
                             ui.label(egui::RichText::new("Help and feedback").font(theme::semibold(15.0)));
                             ui.label(
-                                egui::RichText::new("Report a problem or suggest a change on GitHub. PeDeeFe is based on PrintCraft.")
+                                egui::RichText::new("Report a problem or suggest a change on GitHub. PeDeeFe is based on PdfCraft.")
                                     .color(t.text_muted),
                             );
                         });

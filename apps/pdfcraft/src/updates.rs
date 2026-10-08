@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use printcraft_ui_egui::updates::{APP_VERSION, RELEASES_PAGE, Release};
+use pdfcraft_ui_egui::updates::{APP_VERSION, RELEASES_PAGE, Release};
 
 const LATEST: &str = "https://api.github.com/repos/Phreezi/printcraft/releases/latest";
 
@@ -54,7 +54,7 @@ mod tests {
     fn answers_are_read_and_only_our_release_pages_are_offered() {
         let r = parse(r#"{"tag_name":"v0.2.0","html_url":"https://github.com/Phreezi/printcraft/releases/tag/v0.2.0"}"#).unwrap();
         assert_eq!(r, Release { version: "v0.2.0".into(), url: "https://github.com/Phreezi/printcraft/releases/tag/v0.2.0".into() });
-        for elsewhere in ["https://example.com/printcraft.exe", "https://github.com/Phreezi/printcraft/releases.evil/x", "javascript:alert(1)"] {
+        for elsewhere in ["https://example.com/pdfcraft.exe", "https://github.com/Phreezi/printcraft/releases.evil/x", "javascript:alert(1)"] {
             let r = parse(&format!(r#"{{"tag_name":"v9.9.9","html_url":"{elsewhere}"}}"#)).unwrap();
             assert_eq!(r.url, RELEASES_PAGE, "{elsewhere}");
         }
@@ -62,12 +62,12 @@ mod tests {
         assert!(parse("<html>").is_err());
     }
 
-    /// Live: asks GitHub over TLS with the OS's roots (`cargo test -p printcraft -- --ignored`).
+    /// Live: asks GitHub over TLS with the OS's roots (`cargo test -p pdfcraft -- --ignored`).
     #[test]
     #[ignore = "needs network access"]
     fn github_answers_with_the_latest_release() {
         let r = latest_release().unwrap();
-        assert!(printcraft_ui_egui::updates::is_newer(&r.version, "0.0.0"), "{r:?}");
+        assert!(pdfcraft_ui_egui::updates::is_newer(&r.version, "0.0.0"), "{r:?}");
         assert!(r.url.starts_with(RELEASES_PAGE), "{r:?}");
     }
 }

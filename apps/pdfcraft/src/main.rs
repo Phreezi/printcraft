@@ -1,6 +1,6 @@
-//! PrintCraft desktop app.
+//! PdfCraft desktop app.
 //!
-//! Usage: `printcraft [options] [files…]`
+//! Usage: `pdfcraft [options] [files…]`
 //!
 //! View options (applied after the files open; also the seed of the UI control channel):
 //! `--page N  --zoom 150  --layout continuous|two-up|single  --panel comments|bookmarks|pages|fields|layers|attachments|none
@@ -9,7 +9,7 @@
 //!
 //! `--control <file>` enables the UI control channel (off by default): the app listens on a random
 //! loopback port and writes `{"port", "token", "pid"}` to `<file>` (owner-only permissions).
-//! Agents then drive it with `printcraft-cli ui --control <file> <method> …`.
+//! Agents then drive it with `pdfcraft-cli ui --control <file> <method> …`.
 
 // Release builds on Windows are GUI-subsystem programs, so launching the app doesn't open a console
 // window next to it (#57). `--version` and diagnostics then go nowhere when started from a terminal
@@ -17,28 +17,31 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use printcraft_ui_egui::window_state::{Startup, WindowState};
-use printcraft_ui_egui::{APP_NAME, PrintCraftApp};
+use pdfcraft_ui_egui::window_state::{Startup, WindowState};
+use pdfcraft_ui_egui::{APP_NAME, PdfCraftApp};
 
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod updates;
 
 /// Freedesktop app id: the `.desktop` file name and the hicolor icon name.
-const APP_ID: &str = "ai.storyteller.printcraft";
+const APP_ID: &str = "ai.storyteller.pdfcraft";
 
 /// The app icon (assets/app-icon/README.md). macOS gets the version on Apple's icon grid, with a
 /// transparent margin; Windows and Linux get the full-bleed tile.
 #[cfg(target_os = "macos")]
-const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/printcraft-1024.png");
+const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/pdfcraft-1024.png");
 #[cfg(not(target_os = "macos"))]
-const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.printcraft.png");
+const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png");
+
+/// The app was called PrintCraft before; settings saved then are under this key.
+const LEGACY_STORAGE_KEY: &str = "printcraft";
 
 fn main() -> eframe::Result {
     // Last-resort guard (AGENTS.md §4): commands, edits, opens and saves catch panics and report
     // them; this hook logs every panic, caught or not, with a backtrace when RUST_BACKTRACE is set.
     std::panic::set_hook(Box::new(|info| {
-        eprintln!("printcraft: internal error: {info}");
+        eprintln!("pdfcraft: internal error: {info}");
         let trace = std::backtrace::Backtrace::capture();
         if trace.status() == std::backtrace::BacktraceStatus::Captured {
             eprintln!("{trace}");
@@ -51,7 +54,7 @@ fn main() -> eframe::Result {
     while let Some(a) = args.next() {
         match a.as_str() {
             "--version" => {
-                println!("pedeefe {}", printcraft_ui_egui::updates::APP_VERSION);
+                println!("pedeefe {}", pdfcraft_ui_egui::updates::APP_VERSION);
                 return Ok(());
             }
             "--control" => control_file = args.next(),
@@ -64,7 +67,7 @@ fn main() -> eframe::Result {
     }
     let integrated = cfg!(target_os = "macos");
     // eframe would otherwise derive the settings folder from the app id: keep it under the app's
-    // name, apart from an installed PrintCraft's.
+    // name, apart from an installed PdfCraft's.
     let persistence_path = eframe::storage_dir(APP_NAME).map(|d| d.join("app.ron"));
     // How the window was left, read before it exists so that it opens once, in place
     // (window_state.rs explains the steps).
@@ -74,12 +77,12 @@ fn main() -> eframe::Result {
         .with_title(APP_NAME)
         .with_min_inner_size([820.0, 520.0])
         .with_drag_and_drop(true)
-        // Wayland app id: matches packaging/linux/ai.storyteller.printcraft.desktop.
+        // Wayland app id: matches packaging/linux/ai.storyteller.pdfcraft.desktop.
         .with_app_id(APP_ID);
     // Dock, taskbar, Alt-Tab and launcher icon when running unbundled.
     match eframe::icon_data::from_png_bytes(APP_ICON_PNG) {
         Ok(icon) => viewport = viewport.with_icon(icon),
-        Err(e) => eprintln!("printcraft: app icon: {e}"),
+        Err(e) => eprintln!("pdfcraft: app icon: {e}"),
     }
     if integrated {
         viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
@@ -97,8 +100,8 @@ fn main() -> eframe::Result {
         APP_NAME,
         native,
         Box::new(move |cc| {
-            let mut app = PrintCraftApp::new();
-            if let Some(json) = cc.storage.and_then(|s| s.get_string("printcraft")) {
+            let mut app = PdfCraftApp::new();
+            if let Some(json) = cc.storage.and_then(|s| s.get_string("pdfcraft").or_else(|| s.get_string(LEGACY_STORAGE_KEY))) {
                 app.restore(&json);
             }
             // Maximized last time (or the first start): maximized once its first frame is shown.
@@ -112,21 +115,21 @@ fn main() -> eframe::Result {
             }
             if let Some(file) = &control_file {
                 let client = app.attach_control(&cc.egui_ctx);
-                match printcraft_ui_egui::control::serve(client).and_then(|ep| write_control_file(file, ep.port, &ep.token).map(|()| ep.port)) {
-                    Ok(port) => eprintln!("printcraft: UI control channel on 127.0.0.1:{port} (connection details in {file})"),
-                    Err(e) => eprintln!("printcraft: --control {file}: {e}"),
+                match pdfcraft_ui_egui::control::serve(client).and_then(|ep| write_control_file(file, ep.port, &ep.token).map(|()| ep.port)) {
+                    Ok(port) => eprintln!("pdfcraft: UI control channel on 127.0.0.1:{port} (connection details in {file})"),
+                    Err(e) => eprintln!("pdfcraft: --control {file}: {e}"),
                 }
             }
             // Autosave unsaved changes; offer to recover documents a crashed session left behind.
-            if let Some(dir) = printcraft_ui_egui::RecoveryStore::default_dir() {
-                app.enable_recovery(printcraft_ui_egui::RecoveryStore::new(dir));
+            if let Some(dir) = pdfcraft_ui_egui::RecoveryStore::default_dir() {
+                app.enable_recovery(pdfcraft_ui_egui::RecoveryStore::new(dir));
             }
             for f in files {
                 app.open_path(&f);
             }
             for (k, v) in options {
                 if let Err(e) = app.set_option(&k, &v) {
-                    eprintln!("printcraft: --{k} {v}: {e}");
+                    eprintln!("pdfcraft: --{k} {v}: {e}");
                 }
             }
             // Fonts and theme now, so the first frame (the one the window appears with) is the
@@ -175,7 +178,7 @@ fn configure_window(native: &mut eframe::NativeOptions, startup: Startup) {
 ///   It also saves battery. Machines with one GPU are unaffected.
 /// - On Windows, use Direct3D 12, falling back to OpenGL, and never load Vulkan drivers unless
 ///   `WGPU_BACKEND` asks for them. Creating a Vulkan instance loads every installed Vulkan driver
-///   into the process, and a faulty one (an Intel driver in issue #37) crashed PrintCraft before
+///   into the process, and a faulty one (an Intel driver in issue #37) crashed PdfCraft before
 ///   its window appeared. D3D12 is the native, best-supported backend there.
 fn configure_gpu(native: &mut eframe::NativeOptions) {
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else { return };
@@ -189,7 +192,7 @@ fn configure_gpu(native: &mut eframe::NativeOptions) {
 
 #[cfg(test)]
 mod tests {
-    use printcraft_ui_egui::window_state::WindowState;
+    use pdfcraft_ui_egui::window_state::WindowState;
 
     #[test]
     fn the_window_is_never_created_maximized_and_only_the_first_start_is_centred() {

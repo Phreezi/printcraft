@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use printcraft_render::{PageRenderer, RenderConfig, RenderRequest, RequestKind};
+use pdfcraft_render::{PageRenderer, RenderConfig, RenderRequest, RequestKind};
 
 use crate::PrintError;
 
@@ -36,8 +36,8 @@ pub fn file_name(index: usize, landscape: bool) -> String {
 /// (or, with `gray`, grayscale) PNG. Returns the sheets in print order.
 pub fn write_sheets(pdf: &[u8], dpi: u32, gray: bool, dir: &Path) -> Result<Vec<SheetImage>, PrintError> {
     let bytes = Arc::new(pdf.to_vec());
-    let cos = printcraft_cos::Document::open(bytes.clone())?;
-    let sizes: Vec<(f64, f64)> = printcraft_model::pages(&cos).iter().map(|p| p.display_size(&cos)).collect();
+    let cos = pdfcraft_cos::Document::open(bytes.clone())?;
+    let sizes: Vec<(f64, f64)> = pdfcraft_model::pages(&cos).iter().map(|p| p.display_size(&cos)).collect();
     if sizes.is_empty() {
         return Err(PrintError::NoPages);
     }

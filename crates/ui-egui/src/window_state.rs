@@ -15,7 +15,7 @@
 //!   where un-maximizing does nothing (seen on Windows with eframe's own restore). So the hook in
 //!   [`Startup::adjust`] creates the window *not* maximized, at the exact place and size the
 //!   maximized window had last time, and the app maximizes it right after the first painted frame
-//!   is shown ([`PrintCraftApp::restore_window`]). The window already covers that area, so
+//!   is shown ([`PdfCraftApp::restore_window`]). The window already covers that area, so
 //!   maximizing changes nothing visible.
 //! - **Un-maximizing still returns to the normal size.** Windows un-maximizes to where the window
 //!   was before maximizing, which is now that full-screen area. The first time the window is
@@ -30,7 +30,7 @@
 //!   eframe kept (on Windows eframe keeps its geometry on a connected monitor): a window that was
 //!   maximized is still created over its maximized area.
 //! - **The first frame is the real interface.** The desktop app installs fonts and the theme before
-//!   the first frame (`PrintCraftApp::prepare`), so the frame the window is shown with is the
+//!   the first frame (`PdfCraftApp::prepare`), so the frame the window is shown with is the
 //!   interface, not an empty near-black one.
 //!
 //! The very first start (nothing saved) opens centred at a default size and maximizes once shown:
@@ -40,7 +40,7 @@ use std::path::Path;
 
 use egui::{Pos2, ViewportBuilder, ViewportCommand, pos2, vec2};
 
-use crate::PrintCraftApp;
+use crate::PdfCraftApp;
 
 /// The window as last seen.
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -95,11 +95,11 @@ impl WindowState {
     }
 
     /// The window state inside the app's settings as eframe stores them (`app.ron`: a RON map
-    /// whose `"printcraft"` entry is the app's JSON, see `PrintCraftApp::persist`). `None` when any
+    /// whose `"pdfcraft"` entry is the app's JSON, see `PdfCraftApp::persist`). `None` when any
     /// layer is missing or damaged.
     pub fn from_settings(ron_text: &str) -> Option<Self> {
         let map: std::collections::HashMap<String, String> = ron::from_str(ron_text).ok()?;
-        let app: serde_json::Value = serde_json::from_str(map.get("printcraft")?).ok()?;
+        let app: serde_json::Value = serde_json::from_str(map.get("pdfcraft")?).ok()?;
         Self::from_json(app.get("window")?)
     }
 
@@ -316,7 +316,7 @@ pub(crate) struct Restore {
     fixup: bool,
 }
 
-impl PrintCraftApp {
+impl PdfCraftApp {
     /// Put the window back as the last session left it (the desktop app calls this at start, with
     /// the window created by [`Startup`]): maximize it once its first frame is on screen if it was
     /// maximized (or on the first start).
@@ -399,7 +399,7 @@ mod tests {
 
     /// One app frame as eframe runs it, with the window described by `viewport`: the commands
     /// that move, resize or maximize the window.
-    fn frame(app: &mut PrintCraftApp, ctx: &egui::Context, viewport: egui::ViewportInfo) -> Vec<ViewportCommand> {
+    fn frame(app: &mut PdfCraftApp, ctx: &egui::Context, viewport: egui::ViewportInfo) -> Vec<ViewportCommand> {
         let mut input = egui::RawInput::default();
         input.viewports.insert(egui::ViewportId::ROOT, viewport);
         let mut out = ctx.run_ui(input, |ui| app.window_tick(ui.ctx()));
@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn a_window_that_opens_maximized_is_maximized_after_the_first_frame_and_nothing_else() {
-        let mut app = PrintCraftApp::new();
+        let mut app = PdfCraftApp::new();
         app.window_state =
             WindowState { size: Some([1100.0, 700.0]), pos: Some([100.0, 80.0]), maximized: true, max_pos: Some([-8.0, -8.0]), max_size: None };
         app.restore_window();
@@ -468,7 +468,7 @@ mod tests {
     /// back when un-maximized, and that size isn't overwritten with the old maximized area.
     #[test]
     fn a_grown_maximized_area_still_gives_back_the_normal_size() {
-        let mut app = PrintCraftApp::new();
+        let mut app = PdfCraftApp::new();
         app.window_state = WindowState {
             size: Some([1100.0, 700.0]),
             pos: Some([100.0, 80.0]),
@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn a_normal_window_is_followed_from_the_first_frame_without_commands() {
-        let mut app = PrintCraftApp::new();
+        let mut app = PdfCraftApp::new();
         app.window_state = WindowState { size: Some([1100.0, 700.0]), pos: Some([100.0, 80.0]), ..WindowState::default() };
         app.restore_window();
         let ctx = egui::Context::default();
@@ -512,7 +512,7 @@ mod tests {
     #[test]
     fn a_window_kept_maximized_un_maximizes_to_the_default_size_on_its_screen() {
         // The first start: centred at the default size, maximized once shown.
-        let mut app = PrintCraftApp::new();
+        let mut app = PdfCraftApp::new();
         app.restore_window();
         let ctx = egui::Context::default();
         let centred = info(false, [240.0, 80.0], [1440.0, 920.0]);
@@ -526,7 +526,7 @@ mod tests {
 
         // The next start, after quitting maximized: created over the maximized area, maximized once
         // shown, and un-maximized to the default size centred on that screen.
-        let mut app = PrintCraftApp::new();
+        let mut app = PdfCraftApp::new();
         app.window_state = s;
         app.restore_window();
         let ctx = egui::Context::default();
@@ -544,7 +544,7 @@ mod tests {
         assert!(app.window_restore.is_none());
 
         // A screen smaller than the default size still gets a smaller window.
-        let mut app = PrintCraftApp::new();
+        let mut app = PdfCraftApp::new();
         app.window_state = s;
         app.restore_window();
         let ctx = egui::Context::default();
@@ -569,7 +569,7 @@ mod tests {
         let created = info(false, [-8.0, -8.0], [1920.0, 1009.0]);
         let maximized = info(true, [-8.0, -8.0], [1920.0, 1009.0]);
         let start = |ctx: &egui::Context| {
-            let mut app = PrintCraftApp::new();
+            let mut app = PdfCraftApp::new();
             app.window_state = saved;
             app.restore_window();
             assert_eq!(frame(&mut app, ctx, created.clone()), [ViewportCommand::Maximized(true)]);
@@ -598,7 +598,7 @@ mod tests {
 
     #[test]
     fn a_window_manager_that_never_maximizes_is_followed_after_a_while() {
-        let mut app = PrintCraftApp::new();
+        let mut app = PdfCraftApp::new();
         app.restore_window();
         let ctx = egui::Context::default();
         let shown = info(false, [200.0, 100.0], [1440.0, 920.0]);
@@ -613,7 +613,7 @@ mod tests {
     #[test]
     fn prepared_apps_draw_the_interface_in_their_first_frame() {
         let ctx = egui::Context::default();
-        let mut app = PrintCraftApp::new();
+        let mut app = PdfCraftApp::new();
         app.prepare(&ctx);
         let mut f = eframe::Frame::_new_kittest();
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {

@@ -19,10 +19,10 @@
 //! the window options are remembered between sessions. "Save as PDF" writes the print-ready PDF.
 
 use egui::{Color32, Pos2, Rect, Stroke, pos2, vec2};
-use printcraft_engine::print::{self, A3, A4, Binding, BookletSubset, Content, Layout, MARGIN, Orientation, PageOrder, SizeMode, Subset, spool};
+use pdfcraft_engine::print::{self, A3, A4, Binding, BookletSubset, Content, Layout, MARGIN, Orientation, PageOrder, SizeMode, Subset, spool};
 
 use crate::theme::{self, Tokens};
-use crate::{PrintCraftApp, widgets};
+use crate::{PdfCraftApp, widgets};
 
 /// The papers the dialog offers (PeDeeFe prints on A4 or A3), A4 first and by default.
 pub const PAPER_CHOICES: [(&str, (f64, f64)); 2] = [("A4", A4), ("A3", A3)];
@@ -480,7 +480,7 @@ pub(crate) struct PrintJobs {
     running: Vec<(String, std::sync::mpsc::Receiver<Result<String, String>>)>,
 }
 
-impl PrintCraftApp {
+impl PdfCraftApp {
     pub fn open_print(&mut self) {
         let Some((i, _)) = self.active_ids() else { return };
         let current = self.views[i].current;

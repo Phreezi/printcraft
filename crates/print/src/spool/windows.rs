@@ -36,26 +36,26 @@ try {
 }
 "#;
 
-/// Prints the `sheet-*.png` files of `PRINTCRAFT_JOB_DIR` in name order. Reports `note <base64>`
+/// Prints the `sheet-*.png` files of `PDFCRAFT_JOB_DIR` in name order. Reports `note <base64>`
 /// lines (worth showing the user), `done <sheets>`, or `error <base64>` with exit code 1.
 pub const PRINT_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
 function Enc([string] $s) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s)) }
 try {
   Add-Type -AssemblyName System.Drawing
-  $files = @(Get-ChildItem -LiteralPath $env:PRINTCRAFT_JOB_DIR -Filter 'sheet-*.png' | Sort-Object Name | ForEach-Object { $_.FullName })
+  $files = @(Get-ChildItem -LiteralPath $env:PDFCRAFT_JOB_DIR -Filter 'sheet-*.png' | Sort-Object Name | ForEach-Object { $_.FullName })
   if ($files.Count -eq 0) { throw 'There are no sheets to print.' }
   $doc = New-Object System.Drawing.Printing.PrintDocument
   $doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
-  $doc.DocumentName = $env:PRINTCRAFT_TITLE
+  $doc.DocumentName = $env:PDFCRAFT_TITLE
   $ps = $doc.PrinterSettings
-  if ($env:PRINTCRAFT_PRINTER) { $ps.PrinterName = $env:PRINTCRAFT_PRINTER }
+  if ($env:PDFCRAFT_PRINTER) { $ps.PrinterName = $env:PDFCRAFT_PRINTER }
   if (-not $ps.IsValid) { throw ('The printer "' + $ps.PrinterName + '" is not available.') }
-  if ($env:PRINTCRAFT_OUTPUT) { $ps.PrintToFile = $true; $ps.PrintFileName = $env:PRINTCRAFT_OUTPUT }
-  $ps.Copies = [int16]$env:PRINTCRAFT_COPIES
-  $ps.Collate = ($env:PRINTCRAFT_COLLATE -eq '1')
-  if ($env:PRINTCRAFT_DUPLEX -ne 'off') {
+  if ($env:PDFCRAFT_OUTPUT) { $ps.PrintToFile = $true; $ps.PrintFileName = $env:PDFCRAFT_OUTPUT }
+  $ps.Copies = [int16]$env:PDFCRAFT_COPIES
+  $ps.Collate = ($env:PDFCRAFT_COLLATE -eq '1')
+  if ($env:PDFCRAFT_DUPLEX -ne 'off') {
     if ($ps.CanDuplex) {
-      if ($env:PRINTCRAFT_DUPLEX -eq 'short') { $ps.Duplex = [System.Drawing.Printing.Duplex]::Horizontal } else { $ps.Duplex = [System.Drawing.Printing.Duplex]::Vertical }
+      if ($env:PDFCRAFT_DUPLEX -eq 'short') { $ps.Duplex = [System.Drawing.Printing.Duplex]::Horizontal } else { $ps.Duplex = [System.Drawing.Printing.Duplex]::Vertical }
     } else {
       Write-Output ('note ' + (Enc ($ps.PrinterName + ' cannot print on both sides; the sheets print one-sided.')))
       $ps.Duplex = [System.Drawing.Printing.Duplex]::Simplex
@@ -64,19 +64,19 @@ try {
     $ps.Duplex = [System.Drawing.Printing.Duplex]::Simplex
   }
   # Paper: the printer's own size closest to the sheet (hundredths of an inch, portrait).
-  $w = [int]$env:PRINTCRAFT_PAPER_W
-  $h = [int]$env:PRINTCRAFT_PAPER_H
+  $w = [int]$env:PDFCRAFT_PAPER_W
+  $h = [int]$env:PDFCRAFT_PAPER_H
   $paper = $null
   foreach ($p in $ps.PaperSizes) {
     $pw = [Math]::Min($p.Width, $p.Height); $ph = [Math]::Max($p.Width, $p.Height)
     if ([Math]::Abs($pw - $w) -le 6 -and [Math]::Abs($ph - $h) -le 6) { $paper = $p; break }
   }
   if ($null -eq $paper) {
-    Write-Output ('note ' + (Enc ($ps.PrinterName + ' does not list ' + $env:PRINTCRAFT_PAPER_NAME + ' paper; check the printout.')))
-    $paper = New-Object System.Drawing.Printing.PaperSize($env:PRINTCRAFT_PAPER_NAME, $w, $h)
+    Write-Output ('note ' + (Enc ($ps.PrinterName + ' does not list ' + $env:PDFCRAFT_PAPER_NAME + ' paper; check the printout.')))
+    $paper = New-Object System.Drawing.Printing.PaperSize($env:PDFCRAFT_PAPER_NAME, $w, $h)
   }
   $doc.DefaultPageSettings.PaperSize = $paper
-  $doc.DefaultPageSettings.Color = ($env:PRINTCRAFT_COLOR -eq '1')
+  $doc.DefaultPageSettings.Color = ($env:PDFCRAFT_COLOR -eq '1')
   $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
   $state = @{ i = 0 }
   $doc.add_QueryPageSettings({
@@ -200,13 +200,13 @@ pub fn paper_name(paper: (f64, f64)) -> String {
 pub fn job_env(job: &Job, dir: &Path, paper: (f64, f64)) -> Vec<(&'static str, String)> {
     let (w, h) = (paper.0.min(paper.1), paper.0.max(paper.1));
     let mut env = vec![
-        ("PRINTCRAFT_JOB_DIR", dir.to_string_lossy().into_owned()),
-        ("PRINTCRAFT_PRINTER", job.printer.clone().unwrap_or_default()),
-        ("PRINTCRAFT_TITLE", job.title.chars().filter(|c| !c.is_control()).take(200).collect()),
-        ("PRINTCRAFT_COPIES", job.copies.clamp(1, 999).to_string()),
-        ("PRINTCRAFT_COLLATE", if job.collate { "1" } else { "0" }.into()),
+        ("PDFCRAFT_JOB_DIR", dir.to_string_lossy().into_owned()),
+        ("PDFCRAFT_PRINTER", job.printer.clone().unwrap_or_default()),
+        ("PDFCRAFT_TITLE", job.title.chars().filter(|c| !c.is_control()).take(200).collect()),
+        ("PDFCRAFT_COPIES", job.copies.clamp(1, 999).to_string()),
+        ("PDFCRAFT_COLLATE", if job.collate { "1" } else { "0" }.into()),
         (
-            "PRINTCRAFT_DUPLEX",
+            "PDFCRAFT_DUPLEX",
             match job.duplex {
                 Duplex::Off => "off",
                 Duplex::LongEdge => "long",
@@ -214,11 +214,11 @@ pub fn job_env(job: &Job, dir: &Path, paper: (f64, f64)) -> Vec<(&'static str, S
             }
             .into(),
         ),
-        ("PRINTCRAFT_COLOR", if job.grayscale { "0" } else { "1" }.into()),
-        ("PRINTCRAFT_PAPER_W", hundredths(w).to_string()),
-        ("PRINTCRAFT_PAPER_H", hundredths(h).to_string()),
-        ("PRINTCRAFT_PAPER_NAME", paper_name((w, h))),
-        ("PRINTCRAFT_OUTPUT", job.print_to_file.clone().unwrap_or_default()),
+        ("PDFCRAFT_COLOR", if job.grayscale { "0" } else { "1" }.into()),
+        ("PDFCRAFT_PAPER_W", hundredths(w).to_string()),
+        ("PDFCRAFT_PAPER_H", hundredths(h).to_string()),
+        ("PDFCRAFT_PAPER_NAME", paper_name((w, h))),
+        ("PDFCRAFT_OUTPUT", job.print_to_file.clone().unwrap_or_default()),
     ];
     env.retain(|(_, v)| !v.contains('\0'));
     env

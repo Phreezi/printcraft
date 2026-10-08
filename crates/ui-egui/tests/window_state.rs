@@ -3,8 +3,8 @@
 //! maximized, and the app doesn't move or resize it at start.
 
 use egui::{ViewportBuilder, ViewportCommand, pos2, vec2};
-use printcraft_ui_egui::PrintCraftApp;
-use printcraft_ui_egui::window_state::{DEFAULT_SIZE, Startup, WindowState};
+use pdfcraft_ui_egui::PdfCraftApp;
+use pdfcraft_ui_egui::window_state::{DEFAULT_SIZE, Startup, WindowState};
 
 fn info(maximized: bool, inner: [f32; 4], outer: [f32; 2]) -> egui::ViewportInfo {
     egui::ViewportInfo {
@@ -179,7 +179,7 @@ fn a_maximized_window_quit_minimized_or_in_full_screen_still_opens_over_its_area
 
 #[test]
 fn window_state_is_saved_with_the_settings_and_checked_on_the_way_back() {
-    let mut app = PrintCraftApp::new();
+    let mut app = PdfCraftApp::new();
     app.window_state = WindowState {
         size: Some([1200.0, 800.0]),
         pos: Some([40.0, 30.0]),
@@ -188,21 +188,21 @@ fn window_state_is_saved_with_the_settings_and_checked_on_the_way_back() {
         max_size: Some([1902.0, 1000.0]),
     };
     let saved = app.persist();
-    let mut again = PrintCraftApp::new();
+    let mut again = PdfCraftApp::new();
     again.restore(&saved);
     assert_eq!(again.window_state, app.window_state);
     // Untrusted settings: impossible sizes and positions are dropped.
-    let mut odd = PrintCraftApp::new();
+    let mut odd = PdfCraftApp::new();
     odd.restore(r#"{"window": {"size": [1e9, 5], "pos": [null, 3], "maximized": true, "max_pos": [1e30, 0], "max_size": [5, 1e9]}}"#);
     assert_eq!(odd.window_state, WindowState { maximized: true, ..WindowState::default() });
     odd.restore(r#"{"window": "nonsense"}"#);
     assert!(odd.window_state.maximized, "unreadable: unchanged");
 }
 
-/// eframe's settings file: a RON map whose "printcraft" entry is the app's JSON.
+/// eframe's settings file: a RON map whose "pdfcraft" entry is the app's JSON.
 fn settings_file(app_json: &str) -> String {
     let map: std::collections::BTreeMap<&str, &str> =
-        [("printcraft", app_json), ("window", "(maximized:true)"), ("egui", "()")].into_iter().collect();
+        [("pdfcraft", app_json), ("window", "(maximized:true)"), ("egui", "()")].into_iter().collect();
     ron::ser::to_string_pretty(&map, ron::ser::PrettyConfig::default()).expect("serializes")
 }
 
@@ -211,7 +211,7 @@ fn the_window_state_is_read_from_the_settings_file_before_the_window_exists() {
     let dir = std::env::temp_dir().join(format!("pedeefe-window-state-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
     let path = dir.join("app.ron");
-    let mut app = PrintCraftApp::new();
+    let mut app = PdfCraftApp::new();
     app.window_state = SAVED;
     std::fs::write(&path, settings_file(&app.persist())).expect("write");
     assert_eq!(WindowState::read_saved(&path), Some(SAVED));
@@ -220,7 +220,7 @@ fn the_window_state_is_read_from_the_settings_file_before_the_window_exists() {
     let damaged = [
         String::new(),
         "not ron at all {{{".to_string(),
-        r#"{"printcraft": 5}"#.to_string(),
+        r#"{"pdfcraft": 5}"#.to_string(),
         settings_file("not json"),
         settings_file(r#"{"recent": []}"#),
         settings_file(r#"{"window": [1, 2]}"#),

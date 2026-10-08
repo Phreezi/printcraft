@@ -13,11 +13,11 @@
 use std::collections::BTreeSet;
 
 use egui::{Color32, CornerRadius, FontFamily, FontId, Pos2, Rect, Stroke};
-use printcraft_engine::Edit;
-use printcraft_render::DocInfo;
+use pdfcraft_engine::Edit;
+use pdfcraft_render::DocInfo;
 
 use crate::canvas::{DocView, PageXform};
-use crate::{PrintCraftApp, QuickTool};
+use crate::{PdfCraftApp, QuickTool};
 
 const ACCENT: Color32 = Color32::from_rgb(0x14, 0x73, 0xE6);
 
@@ -102,12 +102,12 @@ pub(crate) fn yield_selection(view: &mut DocView) -> bool {
 }
 
 /// The paragraphs' boxes on screen.
-fn block_boxes(xf: &PageXform, info: &DocInfo, page: usize, lines: &[printcraft_engine::TextBlock]) -> Vec<Rect> {
+fn block_boxes(xf: &PageXform, info: &DocInfo, page: usize, lines: &[pdfcraft_engine::TextBlock]) -> Vec<Rect> {
     lines.iter().map(|l| xf.user_rect(info, page, l.rect.map(|v| v as f32)).expand(2.0)).collect()
 }
 
 /// The images' boxes on screen.
-fn image_boxes(xf: &PageXform, info: &DocInfo, page: usize, images: &[printcraft_engine::PageImage]) -> Vec<Rect> {
+fn image_boxes(xf: &PageXform, info: &DocInfo, page: usize, images: &[pdfcraft_engine::PageImage]) -> Vec<Rect> {
     images.iter().map(|im| xf.user_rect(info, page, im.rect.map(|v| v as f32))).collect()
 }
 
@@ -145,8 +145,8 @@ pub(crate) fn marquee_input(
     xf: &PageXform,
     page: usize,
     info: &DocInfo,
-    lines: &[printcraft_engine::TextBlock],
-    images: &[printcraft_engine::PageImage],
+    lines: &[pdfcraft_engine::TextBlock],
+    images: &[pdfcraft_engine::PageImage],
     view: &mut DocView,
 ) -> bool {
     let blocks = block_boxes(xf, info, page, lines);
@@ -255,8 +255,8 @@ pub struct LineEditor {
     size: f32,
     focus: bool,
     /// The Format text panel's values, and what the paragraph had (to send only changes).
-    pub look: printcraft_engine::AddedText,
-    look0: printcraft_engine::AddedText,
+    pub look: pdfcraft_engine::AddedText,
+    look0: pdfcraft_engine::AddedText,
     /// Underline, line spacing (× size; 0 = the paragraph's own), character spacing (pt) and
     /// horizontal scale (%), and what they were.
     pub extras: Extras,
@@ -311,9 +311,9 @@ impl LineEditor {
     }
 
     /// The formatting the panel changed.
-    pub fn style(&self) -> printcraft_engine::BlockStyle {
+    pub fn style(&self) -> pdfcraft_engine::BlockStyle {
         let (l, o) = (&self.look, &self.look0);
-        printcraft_engine::BlockStyle {
+        pdfcraft_engine::BlockStyle {
             family: (l.family != o.family || l.bold != o.bold || l.italic != o.italic).then_some((l.family, l.bold, l.italic)),
             size: (l.size != o.size).then_some(l.size),
             color: (l.color != o.color).then_some(l.color),
@@ -336,15 +336,15 @@ impl LineEditor {
     }
 
     /// Adopt the rewritten paragraph's current geometry before the next overlay frame.
-    pub(crate) fn refresh_source(&mut self, block: &printcraft_engine::TextBlock) {
+    pub(crate) fn refresh_source(&mut self, block: &pdfcraft_engine::TextBlock) {
         self.source_rect = block.rect.map(|v| v as f32);
         self.multiline = block.lines.len() > 1;
     }
 }
 
 /// The look shown for a paragraph: the family and weight guessed from its PDF font name.
-fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool, detected_italic: bool) -> printcraft_engine::AddedText {
-    use printcraft_engine::FontFamily as F;
+fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool, detected_italic: bool) -> pdfcraft_engine::AddedText {
+    use pdfcraft_engine::FontFamily as F;
     let name = base_font.to_ascii_lowercase();
     let family = if ["courier", "mono", "consolas", "menlo", "monaco", "lucida console"].iter().any(|s| name.contains(s)) {
         F::Courier
@@ -353,7 +353,7 @@ fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool,
     } else {
         F::Helvetica
     };
-    printcraft_engine::AddedText {
+    pdfcraft_engine::AddedText {
         family,
         bold: detected_bold || ["bold", "black", "heavy", "semibold", "demi"].iter().any(|s| name.contains(s)),
         italic: detected_italic || ["italic", "oblique", "slanted"].iter().any(|s| name.contains(s)),
@@ -363,13 +363,13 @@ fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool,
     }
 }
 
-fn look_of(b: &printcraft_engine::TextBlock) -> printcraft_engine::AddedText {
+fn look_of(b: &pdfcraft_engine::TextBlock) -> pdfcraft_engine::AddedText {
     source_look(&b.base_font, b.size, b.color, b.bold, b.italic)
 }
 
-fn editor_font(look: &printcraft_engine::AddedText, size: f32) -> FontId {
+fn editor_font(look: &pdfcraft_engine::AddedText, size: f32) -> FontId {
     let family = match (look.family, look.bold) {
-        (printcraft_engine::FontFamily::Courier, _) => FontFamily::Monospace,
+        (pdfcraft_engine::FontFamily::Courier, _) => FontFamily::Monospace,
         (_, true) => FontFamily::Name("semibold".into()),
         (_, false) => FontFamily::Proportional,
     };
@@ -432,7 +432,7 @@ pub(crate) fn image_input(
     xf: &PageXform,
     page: usize,
     info: &DocInfo,
-    images: &[printcraft_engine::PageImage],
+    images: &[pdfcraft_engine::PageImage],
     view: &mut DocView,
     action: &mut Option<ImageAction>,
     interact: bool,
@@ -502,7 +502,7 @@ pub(crate) fn image_input(
                 }
                 if preview != b {
                     view.pending_edit =
-                        Some(Edit::EditPageImage { page, index: i, change: printcraft_engine::ImageEdit::Move(user_box(xf, info, page, preview)) });
+                        Some(Edit::EditPageImage { page, index: i, change: pdfcraft_engine::ImageEdit::Move(user_box(xf, info, page, preview)) });
                 }
             }
             return true;
@@ -533,7 +533,7 @@ pub(crate) fn image_input(
     }
     if selected == Some(hit) || in_group {
         resp.context_menu(|ui| {
-            use printcraft_engine::ImageEdit as E;
+            use pdfcraft_engine::ImageEdit as E;
             if in_group {
                 let n = view.edit_selection.as_ref().map_or(0, BoxSelection::len);
                 if ui.button(format!("Delete {n} Selected Items")).clicked() {
@@ -584,7 +584,7 @@ pub(crate) fn page_input(
     xf: &PageXform,
     page: usize,
     info: &DocInfo,
-    lines: &[printcraft_engine::TextBlock],
+    lines: &[pdfcraft_engine::TextBlock],
     view: &mut DocView,
     interact: bool,
 ) -> bool {
@@ -627,9 +627,9 @@ pub(crate) fn page_input(
             let style = if d.resize {
                 // The new width in user space: the box's change, added to the paragraph's own.
                 let width = (l.rect[2] - l.rect[0]) + (to[2] - to[0]) - (from[2] - from[0]);
-                printcraft_engine::BlockStyle { width: Some(width), ..Default::default() }
+                pdfcraft_engine::BlockStyle { width: Some(width), ..Default::default() }
             } else {
-                printcraft_engine::BlockStyle { offset: Some([to[0] - from[0], to[1] - from[1]]), ..Default::default() }
+                pdfcraft_engine::BlockStyle { offset: Some([to[0] - from[0], to[1] - from[1]]), ..Default::default() }
             };
             if preview != b {
                 view.pending_edit = Some(Edit::EditTextBlock { page, block: d.block, text: l.text.clone(), style });
@@ -759,7 +759,7 @@ pub(crate) fn overlay(ctx: &egui::Context, view: &mut DocView, info: &DocInfo) -
 /// The edit a closed editor makes: its text and formatting, if either changed.
 fn finish(ed: LineEditor) -> Option<Edit> {
     let style = ed.style();
-    (ed.text != ed.original || style != printcraft_engine::BlockStyle::default()).then_some(Edit::EditTextBlock {
+    (ed.text != ed.original || style != pdfcraft_engine::BlockStyle::default()).then_some(Edit::EditTextBlock {
         page: ed.page,
         block: ed.block,
         text: ed.text,
@@ -767,7 +767,7 @@ fn finish(ed: LineEditor) -> Option<Edit> {
     })
 }
 
-impl PrintCraftApp {
+impl PdfCraftApp {
     /// Edit text & images keys, read before the canvas (and before ⌘A becomes "select all
     /// text"): ⌘A / Ctrl+A selects every box on the current page; Esc cancels a drag in
     /// progress, or else leaves the tool. Esc is not consumed: the paragraph editor sees it in

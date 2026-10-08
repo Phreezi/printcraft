@@ -3,7 +3,7 @@
 use egui::{Align2, Color32, CornerRadius, Rect, Response, Sense, Stroke, vec2};
 
 use crate::theme::{self, Tokens};
-use crate::{PrintCraftApp, icons};
+use crate::{PdfCraftApp, icons};
 
 /// A mode-bar tab: text with an underline when active.
 pub fn mode_tab(ui: &mut egui::Ui, label: &str, active: bool) -> Response {
@@ -171,7 +171,7 @@ pub fn segmented(ui: &mut egui::Ui, id_salt: &str, labels: &[&str], selected: us
 }
 
 /// Transient message at the bottom centre.
-pub fn toast(app: &mut PrintCraftApp, ctx: &egui::Context) {
+pub fn toast(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let Some((msg, start)) = app.toast.clone() else { return };
     let now = ctx.input(|i| i.time);
     let start = if start == 0.0 { now } else { start };
@@ -207,13 +207,13 @@ pub fn app_icon(ui: &mut egui::Ui, size: f32) -> Response {
     )
 }
 
-/// Buttons for every project link (`printcraft_engine::links`), the first one prominent.
+/// Buttons for every project link (`pdfcraft_engine::links`), the first one prominent.
 /// Returns the registry command of the one clicked.
 pub fn community_links(ui: &mut egui::Ui) -> Option<&'static str> {
     let mut clicked = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-        for (i, l) in printcraft_engine::links::LINKS.iter().enumerate() {
+        for (i, l) in pdfcraft_engine::links::LINKS.iter().enumerate() {
             let resp = icon_pill(ui, l.icon, l.label, i == 0);
             if resp.on_hover_text(l.url).clicked() {
                 clicked = Some(l.command);

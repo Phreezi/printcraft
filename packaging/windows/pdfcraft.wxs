@@ -2,10 +2,10 @@
 <!--
   PeDeeFe MSI (WiX Toolset v5: `dotnet tool install -g wix`). Built by package.ps1:
 
-    wix build printcraft.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -d DocIconPath=... -o out.msi
+    wix build pdfcraft.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -d DocIconPath=... -o out.msi
 
-  PeDeeFe is a fork of PrintCraft with its own identity (name, manufacturer, UpgradeCode, component
-  GUIDs, executable name, ProgID and registry keys), so it installs next to an official PrintCraft
+  PeDeeFe is a fork of PdfCraft with its own identity (name, manufacturer, UpgradeCode, component
+  GUIDs, executable name, ProgID and registry keys), so it installs next to an official PdfCraft
   instead of replacing it, and carries none of the ArtCraft marks or links.
 
   Per-machine install into Program Files, a Start Menu shortcut, an App Paths entry, and PeDeeFe
@@ -21,7 +21,7 @@
       Scope="perMachine"
       Compressed="yes"
       Language="1033">
-    <SummaryInformation Description="PeDeeFe PDF workbench (based on PrintCraft)" Manufacturer="Phreezi" />
+    <SummaryInformation Description="PeDeeFe PDF workbench (based on PdfCraft)" Manufacturer="Phreezi" />
     <!-- Same-version upgrades let successive pre-releases of one X.Y.Z replace each other
          (MSI versions are numeric, so 1.2.3-rc.1 and 1.2.3-rc.2 are both 1.2.3). -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
@@ -30,8 +30,8 @@
 
     <!-- Windows Installer requires an Icon id ending in .ico or .exe, or advertised shortcuts and
          Add/Remove Programs show a blank icon (#57). -->
-    <Icon Id="PrintcraftIcon.ico" SourceFile="$(var.IconPath)" />
-    <Property Id="ARPPRODUCTICON" Value="PrintcraftIcon.ico" />
+    <Icon Id="PdfcraftIcon.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="PdfcraftIcon.ico" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/Phreezi/printcraft" />
     <Property Id="ARPURLUPDATEINFO" Value="https://github.com/Phreezi/printcraft/releases" />
     <Property Id="ARPHELPLINK" Value="https://github.com/Phreezi/printcraft/issues" />
@@ -42,22 +42,22 @@
     <StandardDirectory Id="ProgramMenuFolder" />
 
     <Feature Id="Main" Title="PeDeeFe" Level="1">
-      <ComponentGroupRef Id="PrintcraftFiles" />
+      <ComponentGroupRef Id="PdfcraftFiles" />
     </Feature>
   </Package>
 
   <Fragment>
-    <ComponentGroup Id="PrintcraftFiles" Directory="INSTALLFOLDER">
-      <Component Id="PrintcraftApp" Guid="9B2E4A71-3C6D-4F08-8A5E-71D2C4B9E063">
-        <File Id="PrintcraftExe" Source="$(var.BinDir)\printcraft.exe" Name="pedeefe.exe" KeyPath="yes">
+    <ComponentGroup Id="PdfcraftFiles" Directory="INSTALLFOLDER">
+      <Component Id="PdfcraftApp" Guid="9B2E4A71-3C6D-4F08-8A5E-71D2C4B9E063">
+        <File Id="PdfcraftExe" Source="$(var.BinDir)\pdfcraft.exe" Name="pedeefe.exe" KeyPath="yes">
           <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="PeDeeFe"
               Description="PeDeeFe PDF workbench" WorkingDirectory="INSTALLFOLDER" Advertise="yes"
-              Icon="PrintcraftIcon.ico" IconIndex="0" />
+              Icon="PdfcraftIcon.ico" IconIndex="0" />
         </File>
 
-        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\pedeefe.exe" Value="[#PrintcraftExe]" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\pedeefe.exe" Value="[#PdfcraftExe]" Type="string" />
 
-        <!-- PDF files (#107): PrintCraft is offered under "Open with" and in Settings ▸ Default
+        <!-- PDF files (#107): PdfCraft is offered under "Open with" and in Settings ▸ Default
              apps, through Windows' Default Programs registration (a ProgID, OpenWithProgids,
              Capabilities and RegisteredApplications). It never takes over an existing default:
              .pdf's own default value is left alone, and the user chooses. Without this, the only
@@ -67,20 +67,20 @@
         <!-- PDF files opened with PeDeeFe show its document icon (assets/brand/pedeefe/document). -->
         <File Id="PedeefeDocIcon" Source="$(var.DocIconPath)" Name="pedeefe-document.ico" />
         <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\DefaultIcon" Value="[#PedeefeDocIcon]" Type="string" />
-        <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\shell\open\command" Value="&quot;[#PrintcraftExe]&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\shell\open\command" Value="&quot;[#PdfcraftExe]&quot; &quot;%1&quot;" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\.pdf\OpenWithProgids" Name="PeDeeFe.Document" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe" Name="FriendlyAppName" Value="PeDeeFe" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\SupportedTypes" Name=".pdf" Value="" Type="string" />
-        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\shell\open\command" Value="&quot;[#PrintcraftExe]&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\shell\open\command" Value="&quot;[#PdfcraftExe]&quot; &quot;%1&quot;" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationName" Value="PeDeeFe" Type="string" />
-        <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationDescription" Value="Open-source PDF workbench, based on PrintCraft" Type="string" />
-        <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationIcon" Value="[#PrintcraftExe],0" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationDescription" Value="Open-source PDF workbench, based on PdfCraft" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationIcon" Value="[#PdfcraftExe],0" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities\FileAssociations" Name=".pdf" Value="PeDeeFe.Document" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\RegisteredApplications" Name="PeDeeFe" Value="Software\PeDeeFe\Capabilities" Type="string" />
       </Component>
 
-      <Component Id="PrintcraftCli">
-        <File Id="PrintcraftCliExe" Source="$(var.BinDir)\printcraft-cli.exe" KeyPath="yes" />
+      <Component Id="PdfcraftCli">
+        <File Id="PdfcraftCliExe" Source="$(var.BinDir)\pdfcraft-cli.exe" KeyPath="yes" />
       </Component>
     </ComponentGroup>
   </Fragment>

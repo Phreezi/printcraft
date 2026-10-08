@@ -2,11 +2,11 @@
 //! the JavaScript console (⌘J), Document JavaScripts, and Preferences ▸ JavaScript.
 
 use egui::{Align, Layout};
-use printcraft_engine::js::{JsOutput, Request};
-use printcraft_engine::{DocId, Edit};
+use pdfcraft_engine::js::{JsOutput, Request};
+use pdfcraft_engine::{DocId, Edit};
 
 use crate::theme::{self, Tokens};
-use crate::{PrintCraftApp, widgets};
+use crate::{PdfCraftApp, widgets};
 
 /// The JavaScript console: the input and the output so far.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -22,7 +22,7 @@ pub struct DocJsDraft {
     pub script: String,
 }
 
-impl PrintCraftApp {
+impl PdfCraftApp {
     /// Act on what scripts produced in document `id`: alerts are shown, console output goes to
     /// the console, and print / page / link requests are carried out (form submissions are
     /// reported, never sent).
@@ -134,7 +134,7 @@ fn buttons(ui: &mut egui::Ui, primary: &str, others: &[&str]) -> Option<String> 
 }
 
 /// The JavaScript console. Returns `true` to close.
-pub(crate) fn console_body(ui: &mut egui::Ui, app: &mut PrintCraftApp, t: &Tokens) -> bool {
+pub(crate) fn console_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> bool {
     ui.label(egui::RichText::new("JavaScript Console").font(theme::semibold(18.0)));
     ui.add_space(6.0);
     if !app.session.javascript() {
@@ -175,7 +175,7 @@ pub(crate) fn console_body(ui: &mut egui::Ui, app: &mut PrintCraftApp, t: &Token
 }
 
 /// Document JavaScripts: list, edit, add and delete. Returns `true` to close.
-pub(crate) fn document_js_body(ui: &mut egui::Ui, app: &mut PrintCraftApp, t: &Tokens) -> bool {
+pub(crate) fn document_js_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> bool {
     ui.label(egui::RichText::new("Document JavaScripts").font(theme::semibold(18.0)));
     ui.add_space(6.0);
     let scripts = app.active_ids().and_then(|(_, id)| app.session.get(id)).map(|d| d.document_scripts()).unwrap_or_default();
@@ -223,7 +223,7 @@ pub(crate) fn document_js_body(ui: &mut egui::Ui, app: &mut PrintCraftApp, t: &T
 }
 
 /// Preferences: interface language, identity and JavaScript. Returns `true` to close.
-pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PrintCraftApp, t: &Tokens) -> bool {
+pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> bool {
     ui.label(egui::RichText::new(app.language.tr("Preferences")).font(theme::semibold(18.0)));
     ui.horizontal(|ui| {
         ui.label(app.language.tr("Interface language"));

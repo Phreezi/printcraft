@@ -1,15 +1,15 @@
 //! Project links: the Help menu, About dialog and home screen open this fork's pages, and say in
-//! plain text what PeDeeFe is based on. No ArtCraft marks or community links (PrintCraft's brand
+//! plain text what PeDeeFe is based on. No ArtCraft marks or community links (PdfCraft's brand
 //! licence asks forks to remove them).
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use printcraft_engine::links;
-use printcraft_ui_egui::{Dialog, PrintCraftApp};
+use pdfcraft_engine::links;
+use pdfcraft_ui_egui::{Dialog, PdfCraftApp};
 
-fn harness(setup: impl FnOnce(&mut PrintCraftApp) + 'static) -> Harness<'static, PrintCraftApp> {
+fn harness(setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, PdfCraftApp> {
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
-        let mut app = PrintCraftApp::new();
+        let mut app = PdfCraftApp::new();
         setup(&mut app);
         app
     });
@@ -22,7 +22,7 @@ fn home_screen_links() {
     for (label, url) in [
         ("Report a problem", "https://github.com/Phreezi/printcraft/issues"),
         ("PeDeeFe on GitHub", "https://github.com/Phreezi/printcraft"),
-        ("Based on PrintCraft", "https://github.com/storytold/printcraft"),
+        ("Based on PdfCraft", "https://github.com/storytold/pdfcraft"),
     ] {
         let mut h = harness(|_| {});
         h.get_by_label("Help and feedback");
@@ -37,7 +37,7 @@ fn no_artcraft_marks_or_community_links() {
     let h = harness(|_| {});
     assert_eq!(h.query_all_by_label("ArtCraft").count(), 0, "no ArtCraft mark (alt text)");
     assert!(h.query_by_label("Discord").is_none(), "no Discord button");
-    for c in printcraft_engine::commands::COMMANDS {
+    for c in pdfcraft_engine::commands::COMMANDS {
         assert!(!c.label.contains("ArtCraft") && !c.label.contains("Discord"), "{}", c.label);
     }
 }
@@ -52,7 +52,7 @@ fn about_dialog_names_the_app_and_its_origin() {
     });
     h.get_by_label("PeDeeFe");
     h.get_by_label("PeDeeFe icon");
-    h.get_by_label_contains("Based on PrintCraft by the ArtCraft team");
+    h.get_by_label_contains("Based on PdfCraft by the ArtCraft team");
     assert_eq!(h.query_all_by_label("ArtCraft").count(), 0, "no ArtCraft mark (alt text)");
     h.get_by_label("Report a problem").click();
     h.run_steps(2);
@@ -65,6 +65,6 @@ fn help_commands_open_each_link() {
         let mut h = harness(|_| {});
         assert!(h.state_mut().execute(l.command), "{}", l.command);
         assert_eq!(h.state().last_opened_url.as_deref(), Some(l.url));
-        assert_eq!(printcraft_engine::commands::command(l.command).unwrap().menu, Some("Help"));
+        assert_eq!(pdfcraft_engine::commands::command(l.command).unwrap().menu, Some("Help"));
     }
 }

@@ -3,16 +3,16 @@
 use egui::{Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use printcraft_engine::print::{self, A4, Orientation, SizeMode};
-use printcraft_ui_egui::print_ui::{
+use pdfcraft_engine::print::{self, A4, Orientation, SizeMode};
+use pdfcraft_ui_egui::print_ui::{
     PAPER_CHOICES, PickDrag, area_label, decimal_comma, drag_window, move_window, poster_preview, poster_run, printable_aspect, scale_label,
     sheet_label, window_fit_percent, window_landscape,
 };
-use printcraft_ui_egui::{Dialog, PrintCraftApp, PrintDraft, PrintHandling, PrintWindowOutput};
+use pdfcraft_ui_egui::{Dialog, PdfCraftApp, PrintDraft, PrintHandling, PrintWindowOutput};
 
-fn harness() -> Harness<'static, PrintCraftApp> {
+fn harness() -> Harness<'static, PdfCraftApp> {
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
-        let mut app = PrintCraftApp::new();
+        let mut app = PdfCraftApp::new();
         app.open_bytes("form.pdf", None, include_bytes!("data/form.pdf").to_vec()).unwrap();
         app
     });
@@ -36,7 +36,7 @@ fn print_dialog_lays_out_sheets_and_saves_a_pdf() {
     h.run_steps(2);
     h.get_by_label("Sheet 1 of 1");
     // No printer on a test machine: Save as PDF.
-    let out = std::env::temp_dir().join(format!("printcraft-print-test-{}.pdf", std::process::id()));
+    let out = std::env::temp_dir().join(format!("pdfcraft-print-test-{}.pdf", std::process::id()));
     h.state_mut().save_override = Some(out.to_string_lossy().into_owned());
     h.state_mut().print_draft.printer = None;
     // Chosen, so a printer list arriving late doesn't pick a real printer instead.
@@ -46,8 +46,8 @@ fn print_dialog_lays_out_sheets_and_saves_a_pdf() {
     h.run_steps(3);
     assert_eq!(h.state().dialog, None);
     let bytes = std::fs::read(&out).expect("saved");
-    let doc = printcraft_cos::Document::open(std::sync::Arc::new(bytes)).unwrap();
-    assert_eq!(printcraft_model::pages(&doc).len(), 1);
+    let doc = pdfcraft_cos::Document::open(std::sync::Arc::new(bytes)).unwrap();
+    assert_eq!(pdfcraft_model::pages(&doc).len(), 1);
     let _ = std::fs::remove_file(out);
 }
 
@@ -56,7 +56,7 @@ fn invalid_ranges_are_explained_in_the_preview() {
     let mut h = harness();
     h.state_mut().execute("print.dialog");
     h.run_steps(2);
-    h.state_mut().print_draft.which = printcraft_ui_egui::PrintWhich::Range;
+    h.state_mut().print_draft.which = pdfcraft_ui_egui::PrintWhich::Range;
     h.state_mut().print_draft.range = "7".into();
     h.run_steps(2);
     h.get_by_label_contains("out of range");
@@ -72,10 +72,10 @@ fn paper_is_a4_or_a3_and_a4_by_default() {
     h.get_by_label("A3");
     assert!(h.query_by_label("US Letter").is_none(), "no other papers");
     let s = h.state().print_draft.settings(1, &[]).unwrap();
-    assert_eq!(s.paper, printcraft_engine::print::A4);
+    assert_eq!(s.paper, pdfcraft_engine::print::A4);
     h.get_by_label("A3").click();
     h.run_steps(2);
-    assert_eq!(h.state().print_draft.settings(1, &[]).unwrap().paper, printcraft_engine::print::A3);
+    assert_eq!(h.state().print_draft.settings(1, &[]).unwrap().paper, pdfcraft_engine::print::A3);
 }
 
 #[test]
@@ -97,13 +97,13 @@ fn window_tab_prints_the_selected_area() {
     h.get_by_label_contains("hold Shift while drawing");
     let s = h.state().print_draft.settings(1, &[]).unwrap();
     assert_eq!(s.region, Some([0.0, 0.0, 200.0, 141.0]));
-    assert!(matches!(s.layout, printcraft_engine::print::Layout::Size(printcraft_engine::print::SizeMode::Fit)));
+    assert!(matches!(s.layout, pdfcraft_engine::print::Layout::Size(pdfcraft_engine::print::SizeMode::Fit)));
     h.get_by_label_contains("Prints at");
     // As a poster instead: tiles.
     h.get_by_label("As a poster").click();
     h.run_steps(2);
     assert_eq!(h.state().print_draft.window_output, PrintWindowOutput::Poster);
-    assert!(matches!(h.state().print_draft.settings(1, &[]).unwrap().layout, printcraft_engine::print::Layout::Poster { .. }));
+    assert!(matches!(h.state().print_draft.settings(1, &[]).unwrap().layout, pdfcraft_engine::print::Layout::Poster { .. }));
     // Other tabs print whole pages.
     h.get_by_label("Size").click();
     h.run_steps(2);
@@ -160,7 +160,7 @@ fn window_picker_draws_and_moves_the_area() {
 }
 
 /// Drag in the harness from `from` to `to` (screen points), with the given modifiers held.
-fn drag(h: &mut Harness<'static, PrintCraftApp>, from: Pos2, to: Pos2, modifiers: egui::Modifiers) {
+fn drag(h: &mut Harness<'static, PdfCraftApp>, from: Pos2, to: Pos2, modifiers: egui::Modifiers) {
     h.hover_at(from);
     h.run_steps(1);
     h.event(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers });
@@ -218,7 +218,7 @@ fn window_picker_shift_drag_keeps_the_sheet_shape() {
 
 #[test]
 fn window_geometry() {
-    let a4 = printcraft_engine::print::A4;
+    let a4 = pdfcraft_engine::print::A4;
     let r = printable_aspect(a4, false);
     assert!((r - (595.28 - 36.0) / (841.89 - 36.0)).abs() < 1e-9);
     assert!((printable_aspect(a4, true) - 1.0 / r).abs() < 1e-9);
@@ -240,20 +240,20 @@ fn window_geometry() {
     let full = [0.0, 0.0, 595.28 - 36.0, 841.89 - 36.0];
     assert!((window_fit_percent(full, a4, Orientation::Auto) - 100.0).abs() < 1e-6);
     let a3 = 100.0 * ((841.89 - 36.0) / (595.28_f64 - 36.0)).min((1190.55 - 36.0) / (841.89 - 36.0));
-    assert!((window_fit_percent(full, printcraft_engine::print::A3, Orientation::Auto) - a3).abs() < 1e-6, "about 143% on A3");
+    assert!((window_fit_percent(full, pdfcraft_engine::print::A3, Orientation::Auto) - a3).abs() < 1e-6, "about 143% on A3");
     assert_eq!(area_label([0.0, 0.0, 841.89, 595.28]), "297 × 210 mm");
 }
 
 #[test]
 fn print_settings_are_remembered() {
-    let mut app = PrintCraftApp::new();
+    let mut app = PdfCraftApp::new();
     app.print_draft.printer = Some("Office".into());
     app.print_draft.printer_chosen = true;
     app.print_draft.paper = 1;
     app.print_draft.grayscale = true;
-    app.print_draft.duplex = printcraft_engine::print::spool::Duplex::LongEdge;
+    app.print_draft.duplex = pdfcraft_engine::print::spool::Duplex::LongEdge;
     let saved = app.persist();
-    let mut again = PrintCraftApp::new();
+    let mut again = PdfCraftApp::new();
     again.restore(&saved);
     let d = &again.print_draft;
     assert_eq!(d.printer.as_deref(), Some("Office"));
@@ -261,14 +261,14 @@ fn print_settings_are_remembered() {
     // The proportions check box is gone (Shift while dragging): not saved any more, and a file
     // from before, which has it, still loads.
     assert!(app.print_draft.prefs().get("lock_aspect").is_none());
-    let mut old = PrintCraftApp::new();
+    let mut old = PdfCraftApp::new();
     old.restore(r#"{"print": {"paper": "A3", "lock_aspect": false, "window_poster": true}}"#);
     assert_eq!(old.print_draft.paper, 1);
     assert_eq!(old.print_draft.window_output, PrintWindowOutput::Poster);
     assert_eq!(d.paper, 1);
-    assert_eq!(d.duplex, printcraft_engine::print::spool::Duplex::LongEdge);
+    assert_eq!(d.duplex, pdfcraft_engine::print::spool::Duplex::LongEdge);
     // Untrusted settings: nonsense keeps the defaults.
-    let mut odd = PrintCraftApp::new();
+    let mut odd = PdfCraftApp::new();
     odd.restore(r#"{"print": {"paper": "Letter", "dpi": 7, "printer": 12, "duplex": "sideways"}}"#);
     assert_eq!(odd.print_draft.paper, 0);
     assert_eq!(odd.print_draft.dpi, 300);
@@ -277,19 +277,19 @@ fn print_settings_are_remembered() {
 
 #[test]
 fn a_printer_list_arriving_keeps_the_users_choice() {
-    use printcraft_engine::print::spool::Printer;
+    use pdfcraft_engine::print::spool::Printer;
     let list = || vec![Printer { name: "A".into(), default: false }, Printer { name: "B".into(), default: true }];
-    let mut d = printcraft_ui_egui::PrintDraft { listing: true, ..Default::default() };
+    let mut d = pdfcraft_ui_egui::PrintDraft { listing: true, ..Default::default() };
     d.printers_arrived(list());
     assert_eq!(d.printer.as_deref(), Some("B"), "nothing chosen: the default");
     assert!(!d.listing);
-    let mut d = printcraft_ui_egui::PrintDraft { printer: Some("A".into()), printer_chosen: true, ..Default::default() };
+    let mut d = pdfcraft_ui_egui::PrintDraft { printer: Some("A".into()), printer_chosen: true, ..Default::default() };
     d.printers_arrived(list());
     assert_eq!(d.printer.as_deref(), Some("A"), "the chosen printer stays");
-    let mut d = printcraft_ui_egui::PrintDraft { printer: Some("Gone".into()), printer_chosen: true, ..Default::default() };
+    let mut d = pdfcraft_ui_egui::PrintDraft { printer: Some("Gone".into()), printer_chosen: true, ..Default::default() };
     d.printers_arrived(list());
     assert_eq!(d.printer.as_deref(), Some("B"), "a printer that is gone falls back to the default");
-    let mut d = printcraft_ui_egui::PrintDraft { printer: None, printer_chosen: true, ..Default::default() };
+    let mut d = pdfcraft_ui_egui::PrintDraft { printer: None, printer_chosen: true, ..Default::default() };
     d.printers_arrived(list());
     assert_eq!(d.printer, None, "Save as PDF, chosen, stays");
 }
@@ -308,7 +308,7 @@ fn preview_labels_format_like_acrobat() {
 }
 
 /// The dialog open on form.pdf (one 300 × 400 page), with `set` applied to the draft.
-fn dialog_with(set: impl FnOnce(&mut PrintDraft)) -> Harness<'static, PrintCraftApp> {
+fn dialog_with(set: impl FnOnce(&mut PrintDraft)) -> Harness<'static, PdfCraftApp> {
     let mut h = harness();
     assert!(h.state_mut().execute("print.dialog"));
     h.run_steps(2);
@@ -460,7 +460,7 @@ fn close(a: Rect, b: Rect) -> bool {
 
 #[test]
 fn control_verbs_set_the_window_output_and_poster_scale() {
-    let mut app = PrintCraftApp::new();
+    let mut app = PdfCraftApp::new();
     app.set_option("print-window-output", "poster").unwrap();
     assert_eq!(app.print_draft.window_output, PrintWindowOutput::Poster);
     app.set_option("print-window-output", "fit").unwrap();

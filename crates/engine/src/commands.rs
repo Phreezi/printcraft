@@ -299,7 +299,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("help.shortcuts", "Keyboard shortcuts", HELP, None, Nothing, "circle-help"),
     c("help.issues", "Report a problem", HELP, None, Nothing, "message-square-text"),
     c("help.github", "PeDeeFe on GitHub", HELP, None, Nothing, "code-xml"),
-    c("help.upstream", "Based on PrintCraft", HELP, None, Nothing, "book-open"),
+    c("help.upstream", "Based on PdfCraft", HELP, None, Nothing, "book-open"),
     c("help.check_updates", "Check for updates…", HELP, None, Nothing, "cloud"),
     c("help.about", "About PeDeeFe", HELP, None, Nothing, "info"),
 ];

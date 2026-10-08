@@ -2,27 +2,27 @@
 //! PeDeeFe asks its own repository ([`RELEASES_PAGE`]), where every pushed change publishes a
 //! Windows test build (`.github/workflows/test-build.yml`).
 //!
-//! The desktop app supplies how to ask ([`PrintCraftApp::update_source`]), so this crate has no
+//! The desktop app supplies how to ask ([`PdfCraftApp::update_source`]), so this crate has no
 //! network code; without a source (the web build, tests) the command opens the releases page.
-//! PrintCraft never downloads or installs anything itself: the user downloads the new version.
+//! PdfCraft never downloads or installs anything itself: the user downloads the new version.
 //! It asks only when the user does: there is no check at start (the owner's decision).
 
 use std::sync::Arc;
 
 use egui::{Align, Layout};
 
-use crate::{PrintCraftApp, theme, widgets};
+use crate::{PdfCraftApp, theme, widgets};
 
-/// The version people see and updates compare with. Test builds set `PRINTCRAFT_VERSION` when
+/// The version people see and updates compare with. Test builds set `PDFCRAFT_VERSION` when
 /// they compile (`0.2.1-test.12`, see `.github/workflows/test-build.yml`): the workspace version
 /// itself stays plain, because Cargo won't match a pre-release against the crates' `^0.2.0`.
-pub const APP_VERSION: &str = match option_env!("PRINTCRAFT_VERSION") {
+pub const APP_VERSION: &str = match option_env!("PDFCRAFT_VERSION") {
     Some(v) if !v.is_empty() => v,
     _ => env!("CARGO_PKG_VERSION"),
 };
 
-/// Where every PeDeeFe build is listed (this fork's releases, not PrintCraft's).
-pub const RELEASES_PAGE: &str = printcraft_engine::links::RELEASES;
+/// Where every PeDeeFe build is listed (this fork's releases, not PdfCraft's).
+pub const RELEASES_PAGE: &str = pdfcraft_engine::links::RELEASES;
 
 /// The latest published release.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,7 +117,7 @@ pub(crate) struct Updates {
     pub(crate) open: bool,
 }
 
-impl PrintCraftApp {
+impl PdfCraftApp {
     /// Help ▸ Check for updates: ask for the latest release and show the outcome.
     pub fn check_for_updates(&mut self) {
         let Some(source) = self.update_source.clone() else {
@@ -163,7 +163,7 @@ impl PrintCraftApp {
 }
 
 /// The Updates dialog.
-pub(crate) fn dialog(app: &mut PrintCraftApp, ctx: &egui::Context) {
+pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
     if !app.updates.open {
         return;
     }

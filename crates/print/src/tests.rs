@@ -182,7 +182,7 @@ fn imposed_pdf_has_the_sheets_and_honours_comments_and_forms() {
     let doc = fixture(3);
     let out = impose(&doc, &settings(vec![0, 1, 2], Layout::multiple(2))).unwrap();
     let printed = Document::open(Arc::new(out.clone())).unwrap();
-    let pages = printcraft_model::pages(&printed);
+    let pages = pdfcraft_model::pages(&printed);
     assert_eq!(pages.len(), 2);
     assert_eq!(pages[0].crop(&printed), [0.0, 0.0, 792.0, 612.0]);
     // The source pages are form XObjects holding their content.
@@ -269,7 +269,7 @@ fn a_window_prints_only_that_area() {
     let doc = fixture(1);
     let bytes = impose(&doc, &Settings { region, ..settings(vec![0], Layout::Size(SizeMode::Fit)) }).unwrap();
     let out = Document::open(Arc::new(bytes)).unwrap();
-    let sheet = &printcraft_model::pages(&out)[0];
+    let sheet = &pdfcraft_model::pages(&out)[0];
     let content = String::from_utf8_lossy(&decoded_contents(&out, &sheet.dict)).into_owned();
     assert!(content.contains("100 150 100 150 re W n"), "{content}");
 }
@@ -279,7 +279,7 @@ fn sheets_are_drawn_as_images() {
     let doc = fixture(3);
     // Pages 1 and 3 (landscape): two sheets, the second turned.
     let pdf = impose(&doc, &settings(vec![0, 2], Layout::Size(SizeMode::Fit))).unwrap();
-    let dir = std::env::temp_dir().join(format!("printcraft-raster-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("pdfcraft-raster-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let sheets = crate::raster::write_sheets(&pdf, 72, false, &dir).unwrap();
     assert_eq!(sheets.len(), 2);
@@ -343,13 +343,13 @@ fn windows_spooler_scripts_and_answers() {
     let job =
         Job { printer: Some("Office".into()), copies: 2, duplex: Duplex::ShortEdge, grayscale: true, title: "plan\n.pdf".into(), ..Job::default() };
     let env: std::collections::HashMap<_, _> = job_env(&job, std::path::Path::new("C:/t"), (842.0, 595.0)).into_iter().collect();
-    assert_eq!(env["PRINTCRAFT_PRINTER"], "Office");
-    assert_eq!(env["PRINTCRAFT_COPIES"], "2");
-    assert_eq!(env["PRINTCRAFT_DUPLEX"], "short");
-    assert_eq!(env["PRINTCRAFT_COLOR"], "0");
-    assert_eq!(env["PRINTCRAFT_TITLE"], "plan.pdf", "no control characters");
-    assert_eq!((env["PRINTCRAFT_PAPER_W"].as_str(), env["PRINTCRAFT_PAPER_H"].as_str()), ("826", "1169"), "A4 portrait in 1/100 in");
-    assert_eq!(env["PRINTCRAFT_PAPER_NAME"], "A4");
+    assert_eq!(env["PDFCRAFT_PRINTER"], "Office");
+    assert_eq!(env["PDFCRAFT_COPIES"], "2");
+    assert_eq!(env["PDFCRAFT_DUPLEX"], "short");
+    assert_eq!(env["PDFCRAFT_COLOR"], "0");
+    assert_eq!(env["PDFCRAFT_TITLE"], "plan.pdf", "no control characters");
+    assert_eq!((env["PDFCRAFT_PAPER_W"].as_str(), env["PDFCRAFT_PAPER_H"].as_str()), ("826", "1169"), "A4 portrait in 1/100 in");
+    assert_eq!(env["PDFCRAFT_PAPER_NAME"], "A4");
     assert_eq!(paper_name(crate::A3), "A3");
     assert_eq!(paper_name((300.0, 400.0)), "106 × 141 mm");
     // The scripts never interpolate job values: they only read the environment.
@@ -389,6 +389,6 @@ fn windows_prints_through_microsoft_print_to_pdf() {
     let bytes = std::fs::read(&out).expect("Microsoft Print to PDF wrote the file");
     assert!(bytes.starts_with(b"%PDF"), "a PDF");
     let printed = Document::open(Arc::new(bytes)).unwrap();
-    assert_eq!(printcraft_model::pages(&printed).len(), 2, "both sheets printed");
+    assert_eq!(pdfcraft_model::pages(&printed).len(), 2, "both sheets printed");
     let _ = std::fs::remove_file(&out);
 }

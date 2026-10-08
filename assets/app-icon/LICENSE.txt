@@ -1,5 +1,5 @@
-PeDeeFe app icon (printcraft.svg and every file derived from it in this directory:
-printcraft-1024.png, printcraft.icns, printcraft.ico, hicolor/). The files keep the names the
+PeDeeFe app icon (pdfcraft.svg and every file derived from it in this directory:
+pdfcraft-1024.png, pdfcraft.icns, pdfcraft.ico, hicolor/). The files keep the names the
 packaging scripts expect; their artwork is the PeDeeFe icon from assets/brand/pedeefe/.
 
 Original artwork made for PeDeeFe (no third-party artwork). Licensed like the rest of the project,

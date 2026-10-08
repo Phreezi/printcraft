@@ -3,13 +3,13 @@
 use egui::{Align, Layout};
 
 use crate::theme::{self, Tokens};
-use printcraft_engine::Edit;
+use pdfcraft_engine::Edit;
 
-use crate::{CloseRequest, Dialog, PrintCraftApp, PropsTab, panels::human_size, widgets};
+use crate::{CloseRequest, Dialog, PdfCraftApp, PropsTab, panels::human_size, widgets};
 
 const INFO_KEYS: [&str; 4] = ["Title", "Author", "Subject", "Keywords"];
 
-pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
+pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
     password(app, ctx);
     save_prompt(app, ctx);
     crate::updates::dialog(app, ctx);
@@ -132,7 +132,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                             row(ui, "PDF producer", i.producer.clone().unwrap_or_default());
                         }
                         PropsTab::InitialView => {
-                            use printcraft_engine::{InitialLayout as L, Magnification as M, Navigation as N};
+                            use pdfcraft_engine::{InitialLayout as L, Magnification as M, Navigation as N};
                             let editable = doc.allows_modification();
                             let pages = i.pages.len();
                             let Some((_, v)) = app.view_draft.as_mut() else { return };
@@ -412,15 +412,15 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                     ui.radio_value(&mut draft.mode, M::Selection, "Before each selected page (select pages in Organize)")
                 });
                 let plan = match draft.mode {
-                    M::Pages => crate::SplitPlan::By(printcraft_engine::SplitBy::PageCount(draft.every)),
-                    M::Selection => crate::SplitPlan::By(printcraft_engine::SplitBy::Before(selected)),
+                    M::Pages => crate::SplitPlan::By(pdfcraft_engine::SplitBy::PageCount(draft.every)),
+                    M::Selection => crate::SplitPlan::By(pdfcraft_engine::SplitBy::Before(selected)),
                     M::Size => crate::SplitPlan::Size((draft.size_mb * 1_048_576.0) as usize),
                     M::Bookmarks => crate::SplitPlan::Bookmarks,
                 };
                 let files = match &plan {
-                    crate::SplitPlan::By(by) => Some(printcraft_engine::split_ranges(n, by).len()),
+                    crate::SplitPlan::By(by) => Some(pdfcraft_engine::split_ranges(n, by).len()),
                     crate::SplitPlan::Bookmarks => {
-                        Some(printcraft_engine::split_ranges(n, &printcraft_engine::SplitBy::Before(marks.iter().map(|m| m.0).collect())).len())
+                        Some(pdfcraft_engine::split_ranges(n, &pdfcraft_engine::SplitBy::Before(marks.iter().map(|m| m.0).collect())).len())
                     }
                     crate::SplitPlan::Size(_) => None,
                 };
@@ -549,7 +549,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                 return;
             }
             Dialog::RotatePages => {
-                use printcraft_engine::{PageOrientation as O, PageParity as P};
+                use pdfcraft_engine::{PageOrientation as O, PageParity as P};
                 let n = app.active_ids().and_then(|(_, id)| app.session.get(id)).map_or(1, |d| d.info.pages.len());
                 let d = &mut app.rotate_draft;
                 ui.label(egui::RichText::new("Rotate Pages").font(theme::semibold(18.0)));
@@ -703,7 +703,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     ui.label("Sort comments by:");
                     egui::ComboBox::from_id_salt("summary-sort").selected_text(app.summary_sort.name()).show_ui(ui, |ui| {
-                        for s in printcraft_engine::SummarySort::ALL {
+                        for s in pdfcraft_engine::SummarySort::ALL {
                             ui.selectable_value(&mut app.summary_sort, s, s.name());
                         }
                     });
@@ -891,7 +891,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                 return;
             }
             Dialog::NumberPages => {
-                use printcraft_engine::LabelStyle as L;
+                use pdfcraft_engine::LabelStyle as L;
                 ui.label(egui::RichText::new("Number pages").font(theme::semibold(18.0)));
                 ui.add_space(8.0);
                 let Some((_, id)) = app.active_ids() else { return };
@@ -982,7 +982,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                 let mac = cfg!(target_os = "macos") || cfg!(target_arch = "wasm32");
                 // Registered commands first (always in sync with the real bindings), then the
                 // keys the document view handles itself.
-                let mut rows: Vec<(String, String)> = printcraft_engine::commands::COMMANDS
+                let mut rows: Vec<(String, String)> = pdfcraft_engine::commands::COMMANDS
                     .iter()
                     .filter_map(|c| c.shortcut.map(|k| (k.label(mac), c.label.trim_end_matches('…').to_string())))
                     .collect();
@@ -1023,7 +1023,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     widgets::app_icon(ui, 40.0);
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new(printcraft_engine::links::APP_NAME).font(theme::semibold(20.0)));
+                        ui.label(egui::RichText::new(pdfcraft_engine::links::APP_NAME).font(theme::semibold(20.0)));
                         ui.label(format!("Version {}", crate::updates::APP_VERSION));
                     });
                 });
@@ -1040,7 +1040,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                 // Plain-text credit only: PeDeeFe is not an ArtCraft product and uses none of its marks.
                 ui.label(
                     egui::RichText::new(
-                        "Based on PrintCraft by the ArtCraft team. Copyright (c) 2026 ArtCraft Team and the PrintCraft contributors.",
+                        "Based on PdfCraft by the ArtCraft team. Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors.",
                     )
                     .color(t.text_muted),
                 );
@@ -1141,7 +1141,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
             app.redact_search.found = Some(n);
         }
         Some(Dialog::RemoveHidden) => {
-            let which: Vec<printcraft_engine::Hidden> = app.hidden_draft.found.iter().filter(|f| f.2 && f.1 > 0).map(|f| f.0).collect();
+            let which: Vec<pdfcraft_engine::Hidden> = app.hidden_draft.found.iter().filter(|f| f.2 && f.1 > 0).map(|f| f.0).collect();
             let n: usize = app.hidden_draft.found.iter().filter(|f| f.2).map(|f| f.1).sum();
             if app.apply_edit(Edit::RemoveHidden { which }) {
                 app.notify(format!("Removed {n} hidden item{}. Save to remove them from the file.", if n == 1 { "" } else { "s" }));
@@ -1246,7 +1246,7 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
 }
 
 /// Info edits needed to make the document match the Description draft.
-fn draft_changes(app: &PrintCraftApp) -> Option<Vec<Edit>> {
+fn draft_changes(app: &PdfCraftApp) -> Option<Vec<Edit>> {
     let (id, draft) = app.props_draft.as_ref()?;
     let doc = app.session.get(*id)?;
     let mut edits: Vec<Edit> = INFO_KEYS
@@ -1283,7 +1283,7 @@ pub(crate) fn save_prompt_key(ctx: &egui::Context) -> Option<Option<bool>> {
 }
 
 /// "Save changes?" when closing a tab or quitting with unsaved edits.
-fn save_prompt(app: &mut PrintCraftApp, ctx: &egui::Context) {
+fn save_prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let Some(req) = app.close_request else { return };
     let index = match req {
         CloseRequest::Tab(i) => Some(i),
@@ -1331,7 +1331,7 @@ fn yes(b: bool) -> String {
 }
 
 /// Password prompt for encrypted documents (Acrobat: "Password" dialog on open).
-fn password(app: &mut PrintCraftApp, ctx: &egui::Context) {
+fn password(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let Some(prompt) = app.password_prompt.as_mut() else { return };
     let t = Tokens::get(ctx);
     let mut submit = false;

@@ -2,7 +2,7 @@
 <!-- AppStream metadata (software centres, Flathub). Template: package.sh and the Flatpak
      manifest substitute @VERSION@ and @DATE@ from Cargo.toml and the build date. -->
 <component type="desktop-application">
-  <id>ai.storyteller.printcraft</id>
+  <id>ai.storyteller.pdfcraft</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT OR Apache-2.0</project_license>
   <name>PeDeeFe</name>
@@ -12,12 +12,12 @@
   </developer>
   <description>
     <p>
-      PeDeeFe is an open-source PDF workbench based on PrintCraft. Read, comment on, fill in and
+      PeDeeFe is an open-source PDF workbench based on PdfCraft. Read, comment on, fill in and
       sign PDFs; organize, combine and split pages; edit, redact, protect and export documents.
     </p>
   </description>
-  <launchable type="desktop-id">ai.storyteller.printcraft.desktop</launchable>
-  <icon type="stock">ai.storyteller.printcraft</icon>
+  <launchable type="desktop-id">ai.storyteller.pdfcraft.desktop</launchable>
+  <icon type="stock">ai.storyteller.pdfcraft</icon>
   <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser. -->
   <url type="homepage">https://github.com/Phreezi/printcraft</url>
   <url type="bugtracker">https://github.com/Phreezi/printcraft/issues</url>
@@ -36,7 +36,7 @@
   <screenshots>
     <screenshot type="default">
       <caption>A PDF open with its threaded comments</caption>
-      <image>https://raw.githubusercontent.com/Phreezi/printcraft/main/docs/images/printcraft-viewer.png</image>
+      <image>https://raw.githubusercontent.com/Phreezi/printcraft/main/docs/images/pdfcraft-viewer.png</image>
     </screenshot>
   </screenshots>
   <branding>
@@ -52,7 +52,7 @@
     <control>tablet</control>
   </supports>
   <provides>
-    <binary>printcraft</binary>
+    <binary>pdfcraft</binary>
     <mediatype>application/pdf</mediatype>
   </provides>
   <content_rating type="oars-1.1"/>

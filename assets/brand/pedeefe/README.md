@@ -54,14 +54,14 @@ stretch it, or put the colour logo on busy photos. Use `pedeefe-logo-white.svg` 
 ## Incorporating
 
 Where the kit is used. The app icon lives in `assets/app-icon/` too, copied under the file names the
-packaging scripts expect (`printcraft.*`, and the app id `ai.storyteller.printcraft` in `hicolor/`), so
+packaging scripts expect (`pdfcraft.*`, and the app id `ai.storyteller.pdfcraft` in `hicolor/`), so
 every build and package already shows the PeDeeFe icon:
 
-- **Window, Dock and taskbar icon:** `apps/printcraft/src/main.rs` (`APP_ICON_PNG`), from `assets/app-icon/`.
-- **Windows .exe and installer icon:** `apps/printcraft/build.rs` and `packaging/windows/package.ps1`, from
-  `assets/app-icon/printcraft.ico`.
+- **Window, Dock and taskbar icon:** `apps/pdfcraft/src/main.rs` (`APP_ICON_PNG`), from `assets/app-icon/`.
+- **Windows .exe and installer icon:** `apps/pdfcraft/build.rs` and `packaging/windows/package.ps1`, from
+  `assets/app-icon/pdfcraft.ico`.
 - **Windows file-type icon:** the installer installs `document/pedeefe-document.ico` and shows it for
-  `.pdf` files opened with PeDeeFe (`packaging/windows/printcraft.wxs`).
+  `.pdf` files opened with PeDeeFe (`packaging/windows/pdfcraft.wxs`).
 - **About dialog and home screen:** `logo/pedeefe-icon.svg` (`crates/ui-egui/src/widgets.rs`).
 - **macOS bundle, Linux and FreeBSD packages:** the packaging scripts copy `assets/app-icon/`.
 - **README header:** `logo/pedeefe-logo.svg`, and `logo/pedeefe-logo-white.svg` in dark mode.

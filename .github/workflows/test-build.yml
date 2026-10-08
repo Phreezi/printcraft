@@ -5,7 +5,7 @@
 #
 # Builds are versioned <version from Cargo.toml>-test.<run number>. Cargo.toml itself is left alone
 # (Cargo won't match a pre-release against the crates' `^0.2.0` requirements): the version reaches
-# the build as PRINTCRAFT_VERSION, which names the files and is what the app shows and compares
+# the build as PDFCRAFT_VERSION, which names the files and is what the app shows and compares
 # (crates/ui-egui/src/updates.rs). The MSI keeps the numeric part, and same-version upgrades are
 # allowed, so each build replaces the previous one. Builds are unsigned (Windows SmartScreen asks
 # once per download). The newest 10 test releases are kept.
@@ -27,20 +27,20 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  PRINTCRAFT_BUILD_SHA: ${{ github.sha }}
+  PDFCRAFT_BUILD_SHA: ${{ github.sha }}
 
 jobs:
   windows:
     name: Windows x64 installer
-    # The PeDeeFe fork only: PrintCraft itself has its own release pipeline (release.yml).
-    if: github.repository != 'storytold/printcraft'
+    # The PeDeeFe fork only: PdfCraft itself has its own release pipeline (release.yml).
+    if: github.repository != 'storytold/pdfcraft'
     runs-on: windows-latest
     timeout-minutes: 120
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      # The craft-fonts build input (Japanese fonts), as in every PrintCraft release.
+      # The craft-fonts build input (Japanese fonts), as in every PdfCraft release.
       - name: Check out craft-fonts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -69,7 +69,7 @@ jobs:
       - name: Build and package (unsigned)
         shell: pwsh
         env:
-          PRINTCRAFT_VERSION: ${{ steps.v.outputs.version }}
+          PDFCRAFT_VERSION: ${{ steps.v.outputs.version }}
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
           CRAFT_FONTS_REQUIRED: "1"
         run: ./packaging/windows/package.ps1 -Arch x64
@@ -102,7 +102,7 @@ jobs:
           tag="v$VERSION"
           notes="Test build of \`$GITHUB_REF_NAME\` at $GITHUB_SHA.
 
-          Download \`pedeefe-$VERSION-windows-x64.msi\` and run it: it installs PeDeeFe (or replaces an earlier test build) next to any official PrintCraft. The build is unsigned, so Windows SmartScreen may ask: choose *More info ▸ Run anyway*. The portable zip needs no installation."
+          Download \`pedeefe-$VERSION-windows-x64.msi\` and run it: it installs PeDeeFe (or replaces an earlier test build) next to any official PdfCraft. The build is unsigned, so Windows SmartScreen may ask: choose *More info ▸ Run anyway*. The portable zip needs no installation."
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" --clobber -- *
           else

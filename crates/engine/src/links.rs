@@ -1,9 +1,9 @@
 //! Where PeDeeFe lives on the web. One table, so the Help menu, the About dialog, the home
 //! screen, the CLI and the README agree.
 //!
-//! PeDeeFe is a fork of PrintCraft by the ArtCraft team. The fork doesn't use the ArtCraft name
+//! PeDeeFe is a fork of PdfCraft by the ArtCraft team. The fork doesn't use the ArtCraft name
 //! or marks and doesn't link to ArtCraft's community (docs: `NOTICE`, "Forks and modified
-//! versions" in PrintCraft's brand licence); it says, in plain text, what it is based on.
+//! versions" in PdfCraft's brand licence); it says, in plain text, what it is based on.
 
 /// The app's name, as people see it (window title, About, installer).
 pub const APP_NAME: &str = "PeDeeFe";
@@ -13,7 +13,7 @@ pub const ISSUES: &str = "https://github.com/Phreezi/printcraft/issues";
 /// Where this fork's builds are published (Help ▸ Check for updates).
 pub const RELEASES: &str = "https://github.com/Phreezi/printcraft/releases";
 /// The project PeDeeFe is based on.
-pub const UPSTREAM: &str = "https://github.com/storytold/printcraft";
+pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
 
 /// A link and the registry command that opens it.
 #[derive(Clone, Copy, Debug)]
@@ -29,7 +29,7 @@ pub struct Link {
 pub const LINKS: &[Link] = &[
     Link { command: "help.issues", label: "Report a problem", url: ISSUES, icon: "message-square-text" },
     Link { command: "help.github", label: "PeDeeFe on GitHub", url: GITHUB, icon: "code-xml" },
-    Link { command: "help.upstream", label: "Based on PrintCraft", url: UPSTREAM, icon: "book-open" },
+    Link { command: "help.upstream", label: "Based on PdfCraft", url: UPSTREAM, icon: "book-open" },
 ];
 
 pub fn for_command(id: &str) -> Option<&'static Link> {
