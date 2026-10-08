@@ -441,8 +441,8 @@ pub struct PrintCraftApp {
     pub(crate) print_jobs: print_ui::PrintJobs,
     /// The window's normal size and position and whether it is maximized (remembered).
     pub window_state: window_state::WindowState,
-    /// Frames since start while the window is being put back (`None`: following it).
-    pub(crate) window_restore: Option<u32>,
+    /// Bringing the window back at start (`None`: following it).
+    pub(crate) window_restore: Option<window_state::Restore>,
     pub link_draft: Option<LinkDraft>,
     /// The style new text gets (Edit a PDF ▸ Format text).
     pub text_style: printcraft_engine::AddedText,
@@ -922,6 +922,25 @@ impl PrintCraftApp {
         }
     }
 
+    /// Install the fonts, image loaders and theme before the first frame (the desktop app calls this
+    /// as it creates the app). Fonts installed during a frame take effect only in the next one, so
+    /// otherwise the first frame, the one the window is shown with, would be empty. Called after
+    /// frames have run, it only queues them like the first frame does.
+    pub fn prepare(&mut self, ctx: &egui::Context) {
+        if self.styled {
+            return;
+        }
+        if let Some(k) = self.pending_theme.take() {
+            self.theme = k;
+        }
+        egui_extras::install_image_loaders(ctx);
+        theme::install_fonts(ctx);
+        theme::apply(ctx, self.theme);
+        self.styled = true;
+        // Fonts set before the first pass are active in it.
+        self.fonts_ready = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT) == 0;
+    }
+
     /// `true` while any open document still waits for page renders (used by headless capture).
     pub fn render_pending(&self) -> bool {
         self.views.iter().any(|v| v.render_pending())
@@ -1219,6 +1238,12 @@ impl PrintCraftApp {
 impl eframe::App for PrintCraftApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string("printcraft", self.persist());
+    }
+
+    /// Behind anything not painted yet: the panels' colour, never eframe's near-black default (a
+    /// dark flash in the light theme).
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        visuals.panel_fill.to_normalized_gamma_f32()
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

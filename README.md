@@ -33,7 +33,8 @@ splitting, comments, forms, signatures, redaction, the CLI and the MCP server), 
   it and the sheet with the page's printed size below it (e.g. "A4 - 210 × 297 mm
   [1188,04 × 1680,13 mm]"). A poster previews the whole page with its tiles over it.
 - **A sharp print preview**, drawn at the screen's resolution instead of from thumbnails.
-- **The window remembers its size and position**, and whether it was maximized.
+- **The window remembers its size and position**, and whether it was maximized. It opens straight
+  in place, already drawn, instead of resizing itself after it appears.
 - Its own identity: its own name, logo and icons ([brand kit](assets/brand/pedeefe/README.md)); it
   installs next to an official PrintCraft instead of replacing it, keeps its own settings, and checks
   this repository for updates.

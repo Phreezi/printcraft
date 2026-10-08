@@ -17,6 +17,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+use printcraft_ui_egui::window_state::{Startup, WindowState};
 use printcraft_ui_egui::{APP_NAME, PrintCraftApp};
 
 #[cfg(target_os = "macos")]
@@ -62,9 +63,15 @@ fn main() -> eframe::Result {
         }
     }
     let integrated = cfg!(target_os = "macos");
-    let mut viewport = egui::ViewportBuilder::default()
+    // eframe would otherwise derive the settings folder from the app id: keep it under the app's
+    // name, apart from an installed PrintCraft's.
+    let persistence_path = eframe::storage_dir(APP_NAME).map(|d| d.join("app.ron"));
+    // How the window was left, read before it exists so that it opens once, in place
+    // (window_state.rs explains the steps).
+    let startup = persistence_path.as_deref().and_then(WindowState::read_saved).unwrap_or_default().startup();
+    let mut viewport = startup
+        .builder(egui::ViewportBuilder::default())
         .with_title(APP_NAME)
-        .with_inner_size([1440.0, 920.0])
         .with_min_inner_size([820.0, 520.0])
         .with_drag_and_drop(true)
         // Wayland app id: matches packaging/linux/ai.storyteller.printcraft.desktop.
@@ -77,10 +84,8 @@ fn main() -> eframe::Result {
     if integrated {
         viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
     }
-    // eframe would otherwise derive the settings folder from the app id: keep it under the app's
-    // name, apart from an installed PrintCraft's.
-    let persistence_path = eframe::storage_dir(APP_NAME).map(|d| d.join("app.ron"));
     let mut native = eframe::NativeOptions { viewport, persistence_path, ..Default::default() };
+    configure_window(&mut native, startup);
     configure_gpu(&mut native);
     // Finder, Open With and the Dock deliver files as Apple events, not arguments; catch the one
     // that launched us as well as later ones. Lives until the event loop returns.
@@ -96,7 +101,7 @@ fn main() -> eframe::Result {
             if let Some(json) = cc.storage.and_then(|s| s.get_string("printcraft")) {
                 app.restore(&json);
             }
-            // Maximized last time (or the first start): maximize once the window is up.
+            // Maximized last time (or the first start): maximized once its first frame is shown.
             app.restore_window();
             app.integrated_titlebar = integrated;
             app.update_source = Some(std::sync::Arc::new(updates::latest_release));
@@ -124,6 +129,9 @@ fn main() -> eframe::Result {
                     eprintln!("printcraft: --{k} {v}: {e}");
                 }
             }
+            // Fonts and theme now, so the first frame (the one the window appears with) is the
+            // interface rather than an empty window.
+            app.prepare(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
     )
@@ -149,6 +157,16 @@ fn write_control_file(path: &str, port: u16, token: &str) -> std::io::Result<()>
     f.write_all(json.as_bytes())
 }
 
+/// Where and how the window opens (window_state.rs explains the steps). eframe keeps the window's
+/// geometry in the settings and applies it, kept on a connected screen, while it creates the hidden
+/// window; the hook then makes sure the window is never created maximized (that flashes on Windows)
+/// and puts a maximized window's area back exactly. Only the first start is centred.
+fn configure_window(native: &mut eframe::NativeOptions, startup: Startup) {
+    native.persist_window = true;
+    native.centered = startup.centered;
+    native.window_builder = Some(Box::new(move |b| startup.adjust(b)));
+}
+
 /// How wgpu finds a GPU. Each choice yields to its wgpu environment variable.
 ///
 /// - Draw on the integrated GPU unless `WGPU_POWER_PREF` says otherwise. A PDF viewer has no use
@@ -171,6 +189,25 @@ fn configure_gpu(native: &mut eframe::NativeOptions) {
 
 #[cfg(test)]
 mod tests {
+    use printcraft_ui_egui::window_state::WindowState;
+
+    #[test]
+    fn the_window_is_never_created_maximized_and_only_the_first_start_is_centred() {
+        let saved = WindowState { size: Some([1100.0, 700.0]), pos: Some([100.0, 80.0]), maximized: true, max_pos: Some([-8.0, -8.0]) };
+        let mut native = eframe::NativeOptions::default();
+        super::configure_window(&mut native, saved.startup());
+        assert!(native.persist_window && !native.centered);
+        let hook = native.window_builder.take().expect("hook installed");
+        // What eframe hands over after applying the maximized window it saved, nudged on screen.
+        let saved_by_eframe = egui::ViewportBuilder::default().with_position([0.0, 0.0]).with_inner_size([1920.0, 1009.0]).with_maximized(true);
+        let b = hook(saved_by_eframe);
+        assert_eq!((b.maximized, b.fullscreen, b.position), (Some(false), Some(false), Some(egui::pos2(-8.0, -8.0))));
+
+        let mut first = eframe::NativeOptions::default();
+        super::configure_window(&mut first, WindowState::default().startup());
+        assert!(first.centered, "the first start opens centred, then maximized");
+    }
+
     #[test]
     fn gpu_backends_avoid_vulkan_on_windows_and_prefer_low_power() {
         let mut native = eframe::NativeOptions::default();
