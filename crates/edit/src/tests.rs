@@ -728,3 +728,49 @@ fn paragraphs_move_and_rewrap_to_a_new_width() {
     text::rewrite_block(&mut doc, 0, 0, None, &text::BlockStyle { width: Some(0.0), ..Default::default() }).unwrap();
     assert_eq!(text::text_blocks(&reopen(&doc), 0).unwrap().iter().map(|b| b.text.split_whitespace().count()).sum::<usize>(), 12);
 }
+
+#[test]
+fn deleting_paragraphs_takes_them_out_in_one_pass() {
+    // Three paragraphs: "ab" is in another font, so it stands alone; "Title" and "Body" would
+    // join into one paragraph once "ab" is gone (22 pt apart at 10 pt).
+    let src = "BT /F1 10 Tf 72 700 Td (Title) Tj ET BT /F2 10 Tf 72 689 Td (ab) Tj ET BT /F1 10 Tf 72 678 Td (Body) Tj ET";
+    let mut doc = text_page(src);
+    let before = text::text_blocks(&doc, 0).unwrap();
+    let texts: Vec<&str> = before.iter().map(|b| b.text.as_str()).collect();
+    assert_eq!(texts, ["Title", "ab", "Body"]);
+    // One pass: deleting "ab" and "Title" leaves "Body" where it was (one at a time, "Title" and
+    // "Body" would have regrouped first and both gone).
+    assert_eq!(text::delete_blocks(&mut doc, 0, &[1, 0]), Ok(2));
+    let doc = reopen(&doc);
+    let after = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(after.iter().map(|b| b.text.as_str()).collect::<Vec<_>>(), ["Body"]);
+    assert_eq!(after[0].rect, before[2].rect);
+    // Indexes out of range or nothing at all are refused; duplicates count once.
+    let mut doc = text_page(src);
+    assert!(text::delete_blocks(&mut doc, 0, &[5]).is_err());
+    assert!(text::delete_blocks(&mut doc, 0, &[]).is_err());
+    assert!(text::delete_blocks(&mut doc, 1, &[0]).is_err());
+    assert_eq!(text::text_blocks(&doc, 0).unwrap().len(), 3, "a refused delete changes nothing");
+    assert_eq!(text::delete_blocks(&mut doc, 0, &[0, 0]), Ok(1));
+    assert_eq!(text::text_blocks(&reopen(&doc), 0).unwrap().iter().map(|b| b.text.as_str()).collect::<Vec<_>>(), ["ab", "Body"]);
+}
+
+#[test]
+fn deleting_a_line_shown_with_quote_operators_keeps_the_next_line_in_place() {
+    // ' and " move to the next line before showing text: deleting the line keeps that move (and
+    // "'s word and character spacing), so "Three" stays on its baseline.
+    for src in [
+        "BT /F1 10 Tf 12 TL 72 700 Td (One) Tj /F2 10 Tf (ab) ' /F1 10 Tf 30 TL (Three) ' ET",
+        "BT /F1 10 Tf 12 TL 72 700 Td (One) Tj /F2 10 Tf 2 1 (ab) \" /F1 10 Tf (Three) ' ET",
+    ] {
+        let mut doc = text_page(src);
+        let blocks = text::text_blocks(&doc, 0).unwrap();
+        let ab = blocks.iter().position(|b| b.text == "ab").unwrap();
+        let three = text::text_lines(&doc, 0).unwrap().into_iter().find(|l| l.text == "Three").unwrap();
+        assert_eq!(text::delete_blocks(&mut doc, 0, &[ab]), Ok(1));
+        let doc = reopen(&doc);
+        let lines = text::text_lines(&doc, 0).unwrap();
+        assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["One", "Three"], "{src}");
+        assert_eq!(lines[1].rect, three.rect, "{src}");
+    }
+}

@@ -686,6 +686,26 @@ fn editing_existing_text_through_tools() {
 }
 
 #[test]
+fn deleting_paragraphs_through_tools() {
+    let dir = workdir("delete-text");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    assert_eq!(ok(&mut a, "text_paragraphs", json!({ "doc": doc, "page": 2 }))["count"], 1);
+    // Out of range, nothing given, or not numbers: refused, and nothing changes.
+    for bad in [json!({ "paragraphs": [2] }), json!({ "paragraphs": [0] }), json!({ "images": [1] }), json!({}), json!({ "paragraphs": "1" })] {
+        let mut args = json!({ "doc": doc, "page": 2 });
+        args.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+        assert!(matches!(a.call("text_delete", &args), Err(ToolError::InvalidArgs(_))), "{bad}");
+    }
+    let r = ok(&mut a, "text_delete", json!({ "doc": doc, "page": 2, "paragraphs": [1, 1] }));
+    assert_eq!(r["deleted"], json!({ "paragraphs": 1, "images": 0 }));
+    assert_eq!(ok(&mut a, "text_paragraphs", json!({ "doc": doc, "page": 2 }))["count"], 0);
+    assert_eq!(page_text(&mut a, doc)[1], "");
+    assert_eq!(ok(&mut a, "edit_undo", json!({ "doc": doc }))["undone"], "Delete paragraph");
+    assert_eq!(page_text(&mut a, doc)[1], "Page 2");
+}
+
+#[test]
 fn editing_page_images_through_tools() {
     let dir = workdir("page-images");
     let mut a = auto(&dir);

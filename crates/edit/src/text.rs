@@ -1070,3 +1070,81 @@ pub fn rewrite_block(doc: &mut Document, page: usize, block: usize, text: Option
     })?;
     Ok(LineEdit { substituted })
 }
+
+/// Delete paragraphs `blocks` (indexes into [`text_blocks`], all read before any goes) from
+/// `page`, in one pass: deleting them one at a time could let the paragraphs on either side of
+/// a deleted one regroup into one, and a later index would then take both. Returns how many
+/// paragraphs went (duplicate indexes count once).
+///
+/// Only the text-showing operators go; positioning, text state and graphics state stay, so the
+/// text after a deleted line keeps its place (`'` and `"` become `T*`, with `"`'s spacing). As
+/// when a paragraph is rewritten, text drawn in the same area as a deleted line (a fake-bold
+/// copy, an invisible text layer) goes too. Each changed content stream is written as a new
+/// object, since content streams may be shared.
+pub fn delete_blocks(doc: &mut Document, page: usize, blocks: &[usize]) -> Result<usize, EditError> {
+    let lines = text_lines(doc, page)?;
+    let all = group_blocks(&lines);
+    let mut wanted = blocks.to_vec();
+    wanted.sort_unstable();
+    wanted.dedup();
+    if wanted.is_empty() {
+        return Err(EditError::Invalid("there is no paragraph to delete".into()));
+    }
+    let mut members: Vec<&TextLine> = Vec::new();
+    for i in &wanted {
+        let b = all.get(*i).ok_or_else(|| EditError::Invalid(format!("page {} has no paragraph {}", page + 1, i + 1)))?;
+        members.extend(b.lines.iter().filter_map(|k| lines.get(*k)));
+    }
+    let mut drop: HashMap<usize, std::collections::HashSet<usize>> = HashMap::new();
+    for l in &members {
+        drop.entry(l.stream).or_default().extend(l.ops.iter().copied());
+    }
+    let member_rects: Vec<[f64; 4]> = members.iter().map(|l| l.rect).collect();
+    for (stream, ops) in coincident_ops(&lines, &member_rects) {
+        drop.entry(stream).or_default().extend(ops);
+    }
+    let p = page_dict(doc, page)?;
+    let streams = content_streams(doc, &p.dict);
+    let mut contents: Vec<Object> = streams.iter().map(|(o, _)| o.clone()).collect();
+    let mut changed: Vec<usize> = drop.keys().copied().collect();
+    changed.sort_unstable();
+    for si in changed {
+        let Some(set) = drop.get(&si) else { continue };
+        let Some((stream_obj, data)) = streams.get(si) else {
+            return Err(EditError::Invalid("the page's content changed".into()));
+        };
+        let ops = parse(data).ops;
+        let mut new_ops = Vec::with_capacity(ops.len());
+        for (i, op) in ops.into_iter().enumerate() {
+            if !set.contains(&i) {
+                new_ops.push(op);
+                continue;
+            }
+            // ' and " also move to the next line: keep the move (and "'s spacing).
+            match op.op.as_slice() {
+                b"'" => new_ops.push(Op::new("T*", vec![])),
+                b"\"" => {
+                    new_ops.push(Op::new("Tw", vec![op.operands.first().cloned().unwrap_or(Object::Int(0))]));
+                    new_ops.push(Op::new("Tc", vec![op.operands.get(1).cloned().unwrap_or(Object::Int(0))]));
+                    new_ops.push(Op::new("T*", vec![]));
+                }
+                _ => {}
+            }
+        }
+        let mut dict = match &*doc.resolve(stream_obj) {
+            Object::Stream(s) => s.dict.clone(),
+            _ => Dict::new(),
+        };
+        dict.remove(b"Length");
+        let new = doc.add(Object::Stream(Stream::flate(dict, &serialize_ops(&new_ops))));
+        if let Some(c) = contents.get_mut(si) {
+            *c = Object::Ref(new);
+        }
+    }
+    let contents = match <[Object; 1]>::try_from(contents) {
+        Ok([one]) => one,
+        Err(many) => Object::Array(many),
+    };
+    doc.update_dict(p.obj, |d| d.set(b"Contents".to_vec(), contents))?;
+    Ok(wanted.len())
+}

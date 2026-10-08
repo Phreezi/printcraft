@@ -952,6 +952,14 @@ pub fn tools() -> Vec<ToolDef> {
             .ro()
             .cmd("edit.edit_text")
             .with(schema(json!({ "doc": doc(), "page": { "type": "integer", "minimum": 1 } }), &["doc", "page"])),
+        t("text_delete", "Delete paragraphs and images", "Delete paragraphs (numbers from text_paragraphs) and images (numbers from page_images) on one page in one undoable step, as Delete does for the boxes selected in Edit text & images. Every number refers to the page as it is before the call; the text after a deleted line keeps its place.")
+            .cmd("edit.edit_text")
+            .with(schema(
+                json!({ "doc": doc(), "page": { "type": "integer", "minimum": 1 },
+                    "paragraphs": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+                    "images": { "type": "array", "items": { "type": "integer", "minimum": 1 } } }),
+                &["doc", "page"],
+            )),
         t("text_edit", "Edit text", "Replace the text of one paragraph (paragraph, from text_paragraphs: rewrapped to the paragraph's width with its line spacing) or one line (line, from text_lines) in place, keeping position, size and colour. For a paragraph, also change its formatting: font (helvetica, times, courier) with bold/italic, size (points), color (#rrggbb), align (left, center, right, justify), underline, line_spacing (× size), char_spacing (points) and scale (horizontal, percent), or move it (dx, dy in points; up is +dy) and rewrap it to a new width (points); text may then be omitted. Its own font is reused when it can show every character; otherwise the line is set in Helvetica (the result shows the font used). Text that no available font can show is refused. Undoable.")
             .cmd("edit.edit_text")
             .with(schema(

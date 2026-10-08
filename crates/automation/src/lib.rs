@@ -383,6 +383,28 @@ impl Automation {
                     .collect();
                 json!({ "page": page + 1, "count": blocks.len(), "paragraphs": blocks })
             }
+            "text_delete" => {
+                let page = self.page(&a)?;
+                let doc = self.doc(&a)?;
+                let (n, m) = (doc.text_blocks(page).len(), doc.page_images(page).len());
+                // 1-based numbers → indexes, each checked against what the page has.
+                let pick = |key: &str, what: &str, count: usize| -> Result<std::collections::BTreeSet<usize>> {
+                    a.opt_ints(key)?
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|k| match usize::try_from(k) {
+                            Ok(k) if (1..=count).contains(&k) => Ok(k - 1),
+                            _ => Err(ToolError::InvalidArgs(format!("{what} {k} is out of range: page {} has {count} {what}s", page + 1))),
+                        })
+                        .collect()
+                };
+                let (blocks, images) = (pick("paragraphs", "paragraph", n)?, pick("images", "image", m)?);
+                let edit = Edit::delete_boxes(page, &blocks, &images)
+                    .ok_or_else(|| ToolError::InvalidArgs("nothing to delete: give paragraphs and/or images".into()))?;
+                let mut out = self.apply(&a, edit)?;
+                out["deleted"] = json!({ "paragraphs": blocks.len(), "images": images.len() });
+                out
+            }
             "text_edit" if a.get("paragraph").is_some() => {
                 let page = self.page(&a)?;
                 let n = self.doc(&a)?.text_blocks(page).len();

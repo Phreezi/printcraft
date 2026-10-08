@@ -684,7 +684,13 @@ fn clicking_existing_text_selects_its_source_font_style() {
     assert_eq!(ed.look.family, printcraft_engine::FontFamily::Times);
     assert!(ed.look.bold && ed.look.italic, "source style: {:?}", ed.look);
 
+    // Esc closes the paragraph (nothing changed, so nothing is applied) and leaves the tool.
     h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, printcraft_ui_egui::QuickTool::Select);
+    assert!(h.state().views[0].line_editor.is_none());
+    assert_eq!(h.state().session.get(h.state().views[0].id).unwrap().can_undo(), None);
+    assert!(h.state_mut().execute("edit.edit_text"));
     h.run_steps(2);
     let mono = click(25.0, 128.0);
     h.hover_at(mono);
@@ -910,4 +916,265 @@ fn dragging_a_paragraph_moves_it_and_its_edge_rewraps_it() {
     assert_eq!(lines, ["Page", "1"], "rewrapped to the narrower box");
     assert!(near(doc.text_lines(0)[0].rect[0], moved.rect[0]), "it keeps its place");
     assert!(h.state().views[0].line_editor.is_none());
+}
+
+/// A 300 × 300 page with five one-line paragraphs ("Alpha" at the top … "Echo"), 40 pt apart so
+/// none joins another, and one small image at the bottom right.
+fn boxes_fixture() -> Vec<u8> {
+    let body = "q 60 0 0 30 200 30 cm /Im0 Do Q \
+                BT /F1 12 Tf 20 260 Td (Alpha) Tj ET BT /F1 12 Tf 20 220 Td (Bravo) Tj ET BT /F1 12 Tf 20 180 Td (Charlie) Tj ET \
+                BT /F1 12 Tf 20 140 Td (Delta) Tj ET BT /F1 12 Tf 20 100 Td (Echo) Tj ET";
+    let objs: Vec<String> = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 300 300] >>".into(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+        "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> /XObject << /Im0 6 0 R >> >> >>".into(),
+        format!("<< /Length {} >>\nstream\n{body}\nendstream", body.len()),
+        "<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 2 >>\nstream\nAB\nendstream".into(),
+    ];
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = out.len();
+    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for o in offsets {
+        out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+    out
+}
+
+/// The boxes fixture open in Edit text & images.
+fn open_boxes() -> Harness<'static, PrintCraftApp> {
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
+        let mut app = PrintCraftApp::new();
+        app.open_bytes("boxes.pdf", None, boxes_fixture()).expect("boxes fixture opens");
+        // The whole page on screen (at the default fit-width it runs past the window's bottom).
+        app.set_option("zoom", "150").expect("zoom");
+        app
+    });
+    h.run_steps(4);
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    h
+}
+
+/// User space on the boxes fixture's 300 × 300 page → screen.
+fn boxes_screen(h: &Harness<'static, PrintCraftApp>) -> impl Fn(f32, f32) -> egui::Pos2 + use<> {
+    let r = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let k = r.width() / 300.0;
+    move |x, y| egui::pos2(r.left() + x * k, r.top() + (300.0 - y) * k)
+}
+
+/// A click at `p` with `m` held (kittest runs one event per frame; egui keeps the modifiers
+/// from one frame to the next).
+fn click_with(h: &mut Harness<'static, PrintCraftApp>, p: egui::Pos2, m: Modifiers) {
+    h.hover_at(p);
+    h.run_steps(1);
+    h.event(egui::Event::ModifiersChanged(m));
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: m });
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: m });
+    h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(3);
+}
+
+fn block_texts(h: &Harness<'static, PrintCraftApp>) -> Vec<String> {
+    let s = h.state();
+    s.session.get(s.views[0].id).unwrap().text_blocks(0).into_iter().map(|b| b.text).collect()
+}
+
+fn image_count(h: &Harness<'static, PrintCraftApp>) -> usize {
+    let s = h.state();
+    s.session.get(s.views[0].id).unwrap().page_images(0).len()
+}
+
+fn undo_label(h: &Harness<'static, PrintCraftApp>) -> Option<String> {
+    let s = h.state();
+    s.session.get(s.views[0].id).unwrap().can_undo().map(str::to_owned)
+}
+
+fn selection(h: &Harness<'static, PrintCraftApp>) -> Option<(Vec<usize>, Vec<usize>)> {
+    h.state().views[0].edit_selection.as_ref().map(|s| (s.blocks.iter().copied().collect(), s.images.iter().copied().collect()))
+}
+
+#[test]
+fn a_marquee_selects_boxes_and_delete_removes_them_in_one_step() {
+    let mut h = open_boxes();
+    let screen = boxes_screen(&h);
+    assert_eq!(block_texts(&h), ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]);
+    // A rectangle from the top-left corner down to the middle of "Charlie": touching is enough.
+    drag(&mut h, screen(5.0, 295.0), screen(150.0, 185.0));
+    assert_eq!(selection(&h), Some((vec![0, 1, 2], vec![])));
+    assert!(h.state().views[0].line_editor.is_none(), "selecting opens nothing for typing");
+    assert_eq!(h.state().quick_tool, printcraft_ui_egui::QuickTool::EditText);
+    assert_eq!(undo_label(&h), None, "selecting changes nothing");
+    // ⇧-click adds the image; ⌘/Ctrl-click takes "Bravo" out again (and doesn't open it).
+    click_with(&mut h, screen(230.0, 45.0), Modifiers::SHIFT);
+    assert_eq!(selection(&h), Some((vec![0, 1, 2], vec![0])));
+    click_with(&mut h, screen(30.0, 224.0), Modifiers::COMMAND);
+    assert_eq!(selection(&h), Some((vec![0, 2], vec![0])));
+    assert!(h.state().views[0].line_editor.is_none());
+    // Delete: all three go, as one step.
+    h.key_press(Key::Delete);
+    h.run_steps(4);
+    assert_eq!(block_texts(&h), ["Bravo", "Delta", "Echo"]);
+    assert_eq!(image_count(&h), 0);
+    assert_eq!(undo_label(&h).as_deref(), Some("Delete 3 items"));
+    assert_eq!(selection(&h), None);
+    assert_eq!(texts_of(h.state(), 0), ["Bravo\nDelta\nEcho"], "the page shows what's left");
+    // One undo brings them all back.
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(3);
+    assert_eq!(block_texts(&h), ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]);
+    assert_eq!(image_count(&h), 1);
+    assert_eq!(undo_label(&h), None, "one step");
+}
+
+#[test]
+fn a_click_on_empty_space_clears_the_selection_and_dragging_a_box_still_moves_it() {
+    let mut h = open_boxes();
+    let screen = boxes_screen(&h);
+    drag(&mut h, screen(5.0, 295.0), screen(150.0, 185.0));
+    assert!(selection(&h).is_some());
+    // Empty page space, below "Echo" and left of the image.
+    click_with(&mut h, screen(60.0, 20.0), Modifiers::NONE);
+    assert_eq!(selection(&h), None);
+    // A drag that starts on a box moves it rather than drawing a rectangle.
+    drag(&mut h, screen(30.0, 264.0), screen(130.0, 264.0));
+    assert_eq!(selection(&h), None);
+    assert_eq!(undo_label(&h).as_deref(), Some("Edit text"));
+    let s = h.state();
+    let alpha = s.session.get(s.views[0].id).unwrap().text_blocks(0)[0].clone();
+    assert_eq!(alpha.text, "Alpha");
+    assert!((alpha.rect[0] - 120.0).abs() < 2.0, "moved 100 pt right: {:?}", alpha.rect);
+}
+
+#[test]
+fn ctrl_a_selects_every_box_and_backspace_deletes_them() {
+    let mut h = open_boxes();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(2);
+    assert_eq!(selection(&h), Some((vec![0, 1, 2, 3, 4], vec![0])));
+    assert_eq!(h.state().views[0].edit_selection.as_ref().map(|s| s.page), Some(0));
+    h.key_press(Key::Backspace);
+    h.run_steps(4);
+    assert!(block_texts(&h).is_empty());
+    assert_eq!(image_count(&h), 0);
+    assert_eq!(undo_label(&h).as_deref(), Some("Delete 6 items"));
+}
+
+#[test]
+fn delete_while_typing_edits_the_text_not_the_boxes() {
+    let mut h = open_boxes();
+    let screen = boxes_screen(&h);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(2);
+    assert!(selection(&h).is_some());
+    // A plain click on "Alpha" opens it for typing and drops the selection.
+    click_with(&mut h, screen(30.0, 264.0), Modifiers::NONE);
+    assert!(h.state().views[0].line_editor.is_some(), "Alpha opens for typing");
+    assert_eq!(selection(&h), None);
+    h.key_press(Key::Backspace);
+    h.key_press(Key::Delete);
+    h.run_steps(2);
+    let ed = h.state().views[0].line_editor.clone().expect("still typing");
+    assert_ne!(ed.text, "Alpha", "the keys edited the characters");
+    assert_eq!(block_texts(&h).len(), 5, "no box was deleted");
+    assert_eq!(undo_label(&h), None);
+}
+
+#[test]
+fn escape_applies_the_typed_text_and_leaves_edit_mode() {
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let r = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let at = egui::pos2(r.left() + 40.0 / 200.0 * r.width(), r.top() + (300.0 - 158.0) / 300.0 * r.height());
+    h.hover_at(at);
+    h.run_steps(1);
+    h.drag_at(at);
+    h.run_steps(1);
+    h.drop_at(at);
+    h.run_steps(3);
+    assert!(h.state().views[0].line_editor.is_some());
+    h.state_mut().views[0].line_editor.as_mut().unwrap().text = "Chapter One".into();
+    h.run_steps(1);
+    h.key_press(Key::Escape);
+    h.run_steps(4);
+    let s = h.state();
+    assert_eq!(s.quick_tool, printcraft_ui_egui::QuickTool::Select);
+    assert!(s.views[0].line_editor.is_none());
+    let doc = s.session.get(s.views[0].id).unwrap();
+    assert_eq!(doc.can_undo(), Some("Edit text"), "the typed text was applied, not dropped");
+    assert_eq!(doc.text_lines(0)[0].text, "Chapter One");
+}
+
+#[test]
+fn escape_leaves_edit_mode_and_clears_the_selection() {
+    let mut h = open_boxes();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(2);
+    assert!(selection(&h).is_some());
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, printcraft_ui_egui::QuickTool::Select);
+    assert_eq!(selection(&h), None);
+    assert!(h.state().views[0].image_selection.is_none());
+    assert_eq!(block_texts(&h).len(), 5, "nothing deleted");
+    assert_eq!(undo_label(&h), None);
+}
+
+#[test]
+fn escape_during_a_marquee_cancels_only_the_marquee() {
+    let mut h = open_boxes();
+    let screen = boxes_screen(&h);
+    let (from, to) = (screen(5.0, 295.0), screen(150.0, 185.0));
+    h.hover_at(from);
+    h.run_steps(1);
+    h.drag_at(from);
+    h.run_steps(1);
+    for k in 1..=3 {
+        h.hover_at(from + (to - from) * (k as f32 / 3.0));
+        h.run_steps(1);
+    }
+    assert!(h.state().views[0].edit_marquee.is_some(), "a rectangle is being dragged");
+    h.key_press(Key::Escape);
+    h.run_steps(1);
+    assert!(h.state().views[0].edit_marquee.is_none());
+    h.drop_at(to);
+    h.run_steps(3);
+    assert_eq!(h.state().quick_tool, printcraft_ui_egui::QuickTool::EditText, "still editing");
+    assert_eq!(selection(&h), None);
+}
+
+#[test]
+fn escape_in_the_find_bar_only_closes_the_find_bar() {
+    let mut h = open_boxes();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::F);
+    h.run_steps(3);
+    assert!(h.state().views[0].find.is_some());
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, printcraft_ui_egui::QuickTool::EditText, "Esc left the find field, not the tool");
+    // The next Esc leaves the tool.
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, printcraft_ui_egui::QuickTool::Select);
+}
+
+#[test]
+fn deleting_marquee_selected_paragraphs_leaves_their_neighbours() {
+    let mut h = open_boxes();
+    let screen = boxes_screen(&h);
+    // From the left margin across "Charlie" and "Delta" only.
+    drag(&mut h, screen(5.0, 190.0), screen(60.0, 135.0));
+    assert_eq!(selection(&h), Some((vec![2, 3], vec![])));
+    h.key_press(Key::Delete);
+    h.run_steps(4);
+    assert_eq!(block_texts(&h), ["Alpha", "Bravo", "Echo"]);
+    assert_eq!(image_count(&h), 1);
+    assert_eq!(undo_label(&h).as_deref(), Some("Delete 2 paragraphs"));
 }

@@ -185,6 +185,45 @@ fn batch_is_one_undo_step_and_all_or_nothing() {
 }
 
 #[test]
+fn deleting_paragraphs_is_one_undoable_edit() {
+    let (mut s, id) = session_with(1);
+    assert_eq!(page_texts(&s, id), ["Page 1"]);
+    // An index that isn't there is refused and changes nothing.
+    assert!(s.apply(id, Edit::DeleteTextBlocks { page: 0, blocks: vec![3] }).is_err());
+    assert_eq!(s.get(id).unwrap().can_undo(), None);
+    s.apply(id, Edit::DeleteTextBlocks { page: 0, blocks: vec![0] }).unwrap();
+    assert_eq!(page_texts(&s, id), [""]);
+    assert!(s.get(id).unwrap().text_blocks(0).is_empty());
+    assert_eq!(s.get(id).unwrap().can_undo(), Some("Delete paragraph"));
+    assert_eq!(s.undo(id).unwrap(), "Delete paragraph");
+    assert_eq!(page_texts(&s, id), ["Page 1"]);
+    assert_eq!(s.get(id).unwrap().can_undo(), None, "one step");
+    assert_eq!(Edit::DeleteTextBlocks { page: 0, blocks: vec![0, 1, 2] }.label(), "Delete 3 paragraphs");
+}
+
+#[test]
+fn deleting_boxes_takes_paragraphs_in_one_pass_then_images_from_the_last() {
+    use std::collections::BTreeSet;
+    let set = |v: &[usize]| v.iter().copied().collect::<BTreeSet<usize>>();
+    assert_eq!(Edit::delete_boxes(0, &set(&[]), &set(&[])), None);
+    assert_eq!(Edit::delete_boxes(2, &set(&[3, 1]), &set(&[])), Some(Edit::DeleteTextBlocks { page: 2, blocks: vec![1, 3] }));
+    let one = Edit::delete_boxes(1, &set(&[]), &set(&[4])).unwrap();
+    assert_eq!(one, Edit::EditPageImage { page: 1, index: 4, change: ImageEdit::Delete });
+    assert_eq!(one.label(), "Delete image");
+    let image = |index| Edit::EditPageImage { page: 0, index, change: ImageEdit::Delete };
+    let images = Edit::delete_boxes(0, &set(&[]), &set(&[0, 2])).unwrap();
+    assert_eq!(images, Edit::Batch { label: "Delete 2 images".into(), edits: vec![image(2), image(0)] });
+    let mixed = Edit::delete_boxes(0, &set(&[0, 5]), &set(&[1, 0, 3])).unwrap();
+    assert_eq!(
+        mixed,
+        Edit::Batch {
+            label: "Delete 5 items".into(),
+            edits: vec![Edit::DeleteTextBlocks { page: 0, blocks: vec![0, 5] }, image(3), image(1), image(0)]
+        }
+    );
+}
+
+#[test]
 fn insert_blank_between_pages_keeps_both_neighbours() {
     let (mut s, id) = session_with(2);
     s.apply(id, Edit::InsertBlankPage { at: 1, width: 200.0, height: 300.0 }).unwrap();

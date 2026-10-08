@@ -251,7 +251,7 @@ impl PrintCraftApp {
                 self.quick_tool = crate::QuickTool::EditText;
                 self.left = crate::LeftPanel::Tool("edit");
                 self.left_open = true;
-                self.notify("Click text or an image to edit it");
+                self.notify("Click text or an image to edit it · drag on the page to select several · Esc to finish");
             }
             "edit.advanced_search" => {
                 if let Some(i) = self.active {

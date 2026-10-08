@@ -537,6 +537,12 @@ impl Host for crate::PrintCraftApp {
                 "pages_on_screen": v.visible_page_rects().iter().map(|(p, r)| json!({ "page": p + 1, "rect": [r.min.x, r.min.y, r.max.x, r.max.y] })).collect::<Vec<_>>(),
                 "selected_comment": v.comments.selected.map(|(p, i)| json!({ "page": p + 1, "index": i + 1 })),
                 "comment_composer_open": v.comments.composer.is_some(),
+                // Edit text & images: the boxes selected together (1-based).
+                "edit_selection": v.edit_selection.as_ref().map(|s| json!({
+                    "page": s.page + 1,
+                    "paragraphs": s.blocks.iter().map(|b| b + 1).collect::<Vec<_>>(),
+                    "images": s.images.iter().map(|i| i + 1).collect::<Vec<_>>(),
+                })),
             })),
             "quick_tool": match self.quick_tool {
                 crate::QuickTool::Select => "select".to_string(),

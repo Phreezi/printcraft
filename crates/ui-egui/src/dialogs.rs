@@ -1001,6 +1001,11 @@ pub fn show(app: &mut PrintCraftApp, ctx: &egui::Context) {
                     ("⌘← / ⌘→", "Previous / next page"),
                     ("Delete", "Delete selected pages (Organize)"),
                     ("⌘A", "Select all pages (Organize)"),
+                    ("Drag on a page", "Select text boxes and images (Edit text & images)"),
+                    ("⇧-click / ⌘-click", "Add or remove a box (Edit text & images)"),
+                    ("⌘A", "Select every box on the page (Edit text & images)"),
+                    ("Delete", "Delete the selected boxes (Edit text & images)"),
+                    ("Esc", "Leave Edit text & images, keeping typed text"),
                 ] {
                     rows.push((k.to_string(), v.to_string()));
                 }

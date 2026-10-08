@@ -225,3 +225,25 @@ fn loopback_transport_requires_the_token() {
     assert_eq!(good[1]["result"]["documents"][0]["name"], "doc.pdf");
     assert!(good[2]["error"]["message"].as_str().unwrap().contains("disabled"));
 }
+
+#[test]
+fn edit_text_selection_through_the_control_channel() {
+    let (mut h, c) = harness();
+    ok(&mut h, &c, "ui.command", json!({ "id": "edit.edit_text" }));
+    h.run_steps(2);
+    ok(&mut h, &c, "ui.set", json!({ "key": "edit-select", "value": "all" }));
+    let st = ok(&mut h, &c, "ui.state", json!({}));
+    assert_eq!(st["quick_tool"], "edit-text");
+    assert_eq!(st["active"]["edit_selection"], json!({ "page": 1, "paragraphs": [1], "images": [] }));
+    // Bad lists are refused and leave the selection alone.
+    for bad in ["p9", "x1", "p0", "pé", ""] {
+        assert!(call(&mut h, &c, "ui.set", json!({ "key": "edit-select", "value": bad })).is_err(), "{bad}");
+    }
+    assert_eq!(ok(&mut h, &c, "ui.state", json!({}))["active"]["edit_selection"]["paragraphs"], json!([1]));
+    // Esc leaves Edit text & images.
+    ok(&mut h, &c, "ui.key", json!({ "key": "Escape" }));
+    h.run_steps(2);
+    let st = ok(&mut h, &c, "ui.state", json!({}));
+    assert_eq!(st["quick_tool"], "select");
+    assert_eq!(st["active"]["edit_selection"], Value::Null);
+}

@@ -160,6 +160,14 @@ pub struct DocView {
     pub image_selection: Option<crate::edit_text_ui::ImageSelection>,
     /// A paragraph box being dragged (moved, or resized from its right edge) in Edit text.
     pub block_drag: Option<crate::edit_text_ui::BlockDrag>,
+    /// Edit text & images: the paragraphs and images selected together (a selection
+    /// rectangle, ⇧/⌘-clicks, ⌘A), on one page. Cleared by any change to the document.
+    pub edit_selection: Option<crate::edit_text_ui::BoxSelection>,
+    /// Edit text & images: the selection rectangle being dragged (page, start on screen).
+    pub edit_marquee: Option<(usize, Pos2)>,
+    /// A text field other than the paragraph editor had keyboard focus as the last frame ended
+    /// (Esc then only leaves that field, not Edit text & images).
+    pub(crate) typing_elsewhere: bool,
     /// Commenting state: selected comment, gestures, composer.
     pub comments: crate::comments::CommentView,
     /// Form filling state: the focused field.
@@ -268,6 +276,9 @@ impl DocView {
             edit_images: HashMap::new(),
             image_selection: None,
             block_drag: None,
+            edit_selection: None,
+            edit_marquee: None,
+            typing_elsewhere: false,
             pending_action: None,
             comments: Default::default(),
             forms: Default::default(),
@@ -302,6 +313,8 @@ impl DocView {
         self.goto = None;
         self.zoom_anchor = None;
         self.flash = None;
+        // Box indexes are only good for the document they were picked in.
+        self.edit_selection = None;
     }
 
     /// Pages an organize command acts on: the selection, or the current page.
@@ -1348,9 +1361,14 @@ pub fn document_area(app: &mut PrintCraftApp, index: usize, ui: &mut egui::Ui) {
                         l
                     }
                 };
-                // Images first (they can sit under text boxes' corners); then paragraphs.
-                crate::edit_text_ui::image_input(ui, &resp, &xf, i, info, &images, view, &mut image_action)
-                    || crate::edit_text_ui::page_input(ui, &resp, &xf, i, info, &lines, view)
+                // A selection rectangle on empty page space (never over an added item); then
+                // images (they can sit under text boxes' corners); then paragraphs. Each
+                // paints its boxes; only one takes the pointer.
+                let marquee = !on_content && crate::edit_text_ui::marquee_input(ui, &resp, &xf, i, info, &lines, &images, view);
+                let free = !marquee && view.block_drag.is_none();
+                let on_image = crate::edit_text_ui::image_input(ui, &resp, &xf, i, info, &images, view, &mut image_action, free);
+                let on_text = crate::edit_text_ui::page_input(ui, &resp, &xf, i, info, &lines, view, !marquee && !on_image);
+                marquee || on_image || on_text
             };
             let on_link = tool == QuickTool::Link && can_modify && crate::link_ui::page_input(ui, &resp, &xf, i, info, &doc_links, view);
             let consumed = on_edit_text || on_link || on_content || boxing || on_field || comments::page_input(ui, &resp, &pcx, view);
@@ -1654,6 +1672,14 @@ pub fn document_area(app: &mut PrintCraftApp, index: usize, ui: &mut egui::Ui) {
     } else {
         view.links.selected = None;
     }
+    if tool == QuickTool::EditText && can_modify {
+        crate::edit_text_ui::keys(ui.ctx(), view);
+    } else {
+        view.edit_selection = None;
+        view.edit_marquee = None;
+    }
+    // For Esc next frame: was the keyboard in some other text field?
+    view.typing_elsewhere = ui.ctx().memory(|m| m.focused()).is_some_and(|id| id != crate::edit_text_ui::editor_id());
     if stamp_placed {
         tool = QuickTool::Select;
     }

@@ -860,6 +860,12 @@ pub enum Edit {
         /// Formatting changes (font, size, colour, alignment); default keeps the paragraph's.
         style: printcraft_edit::BlockStyle,
     },
+    /// Edit text & images: delete paragraphs `blocks` (indexes from `Document::text_blocks`, all
+    /// read before the edit) on `page`, in one pass.
+    DeleteTextBlocks {
+        page: usize,
+        blocks: Vec<usize>,
+    },
     /// Order tabs manually: move a field one place earlier or later on its page.
     MoveInTabOrder {
         name: String,
@@ -981,6 +987,27 @@ pub enum Edit {
 }
 
 impl Edit {
+    /// Edit text & images ▸ Delete: delete paragraphs `blocks` and images `images` on `page`
+    /// (indexes from `Document::text_blocks` and `Document::page_images`, read before the edit)
+    /// as one undoable edit; `None` when both are empty. All the paragraphs go in one pass
+    /// (deleting them one at a time could regroup the neighbours of a deleted one into one
+    /// paragraph, and a later index would take both); then the images, highest index first,
+    /// since deleting an image renumbers the ones after it. Text first is safe: deleting text
+    /// never touches images.
+    pub fn delete_boxes(page: usize, blocks: &std::collections::BTreeSet<usize>, images: &std::collections::BTreeSet<usize>) -> Option<Edit> {
+        let image = |index: usize| Edit::EditPageImage { page, index, change: ImageEdit::Delete };
+        let text = (!blocks.is_empty()).then(|| Edit::DeleteTextBlocks { page, blocks: blocks.iter().copied().collect() });
+        match (text, images.len()) {
+            (None, 0) => None,
+            (Some(t), 0) => Some(t),
+            (None, 1) => images.first().map(|i| image(*i)),
+            (text, n) => {
+                let label = if blocks.is_empty() { format!("Delete {n} images") } else { format!("Delete {} items", blocks.len().saturating_add(n)) };
+                Some(Edit::Batch { label, edits: text.into_iter().chain(images.iter().rev().map(|i| image(*i))).collect() })
+            }
+        }
+    }
+
     /// Label for the Edit menu and history ("Undo Rotate pages").
     pub fn label(&self) -> String {
         match self {
@@ -1033,6 +1060,8 @@ impl Edit {
             Edit::SetDocumentScript { script: None, .. } => "Delete document JavaScript".into(),
             Edit::SetDocumentScript { .. } => "Edit document JavaScript".into(),
             Edit::EditTextLine { .. } | Edit::EditTextBlock { .. } => "Edit text".into(),
+            Edit::DeleteTextBlocks { blocks, .. } if blocks.len() == 1 => "Delete paragraph".into(),
+            Edit::DeleteTextBlocks { blocks, .. } => format!("Delete {} paragraphs", blocks.len()),
             Edit::EditPageImage { change, .. } => match change {
                 ImageEdit::Move(_) => "Move image".into(),
                 ImageEdit::Rotate(_) => "Rotate image".into(),
@@ -1205,6 +1234,7 @@ fn check_permission(edit: &Edit, p: &printcraft_cos::Permissions) -> Result<(), 
         | Edit::ConvertPdfA { .. }
         | Edit::EditTextLine { .. }
         | Edit::EditTextBlock { .. }
+        | Edit::DeleteTextBlocks { .. }
         | Edit::EditPageImage { .. }
         | Edit::Flatten { .. } => {
             if p.modify() {
@@ -1430,6 +1460,9 @@ fn run_edit(doc: &mut printcraft_cos::Document, edit: &Edit, cx: &mut EditCtx) -
         }
         Edit::EditTextBlock { page, block, text, style } => {
             printcraft_edit::rewrite_block(doc, *page, *block, Some(text), style)?;
+        }
+        Edit::DeleteTextBlocks { page, blocks } => {
+            printcraft_edit::delete_blocks(doc, *page, blocks)?;
         }
         Edit::MarkDecorative { figure } => {
             let r = printcraft_cos::ObjRef::new(*figure, doc.generation(*figure));

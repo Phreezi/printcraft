@@ -37,6 +37,7 @@ pub mod marks {
 mod content_ui;
 mod link_ui;
 pub use create_ui::Clip;
+pub use edit_text_ui::BoxSelection;
 pub use link_ui::LinkDraft;
 pub use optimize_ui::{OptimizeDraft, OptimizeTab};
 pub use sign_ui::{DigitalIdEntry, SignDraft, SignStep};
@@ -1091,6 +1092,35 @@ impl PrintCraftApp {
                 v.select_pages(&pages.map_err(|_| "select: comma-separated page numbers")?);
             }
             ("notice", Some(v)) => v.notice_dismissed = value == "off",
+            ("edit-select", Some(v)) => {
+                // `--edit-select all|none|p1,p3,i1`: select boxes in Edit text & images on the
+                // current page (paragraphs p, images i, 1-based).
+                let bad = || "edit-select: all, none, or paragraphs and images like p1,p3,i1".to_string();
+                let doc = self.session.get(v.id).ok_or("`edit-select` needs an open document")?;
+                let page = v.current;
+                let (n, m) = (doc.text_blocks(page).len(), doc.page_images(page).len());
+                let mut s = edit_text_ui::BoxSelection::new(page);
+                match value {
+                    "all" => {
+                        s.blocks = (0..n).collect();
+                        s.images = (0..m).collect();
+                    }
+                    "none" => {}
+                    list => {
+                        for item in list.split(',').map(str::trim) {
+                            let (kind, num) = item.split_at_checked(1).ok_or_else(bad)?;
+                            let k = num.parse::<usize>().ok().and_then(|k| k.checked_sub(1)).ok_or_else(bad)?;
+                            match kind {
+                                "p" if k < n => s.blocks.insert(k),
+                                "i" if k < m => s.images.insert(k),
+                                "p" | "i" => return Err(format!("edit-select: page {} has no {item}", page + 1)),
+                                _ => return Err(bad()),
+                            };
+                        }
+                    }
+                }
+                edit_text_ui::set_selection(v, s);
+            }
             ("quick", _) => {
                 // `--quick select|hand|note|freetext|highlight|underline|strikeout|ink|line|arrow|square|circle`
                 self.quick_tool = match value {
@@ -1140,7 +1170,9 @@ impl PrintCraftApp {
                 v.comments.selected = Some((p.saturating_sub(1), i.saturating_sub(1)));
                 v.comments.reveal = true;
             }
-            (k, None) if ["page", "zoom", "layout", "organize", "fields", "find", "rotate", "select", "notice", "comment"].contains(&k) => {
+            (k, None)
+                if ["page", "zoom", "layout", "organize", "fields", "find", "rotate", "select", "notice", "comment", "edit-select"].contains(&k) =>
+            {
                 return Err(format!("`{k}` needs an open document"));
             }
             (other, _) => return Err(format!("unknown option {other}")),
@@ -1160,6 +1192,8 @@ impl PrintCraftApp {
             return;
         }
         self.registry_shortcuts(ctx);
+        // Before the canvas's own keys: ⌘A there selects all text.
+        self.edit_text_keys(ctx);
         if self.full_screen && ctx.input(|i| i.key_pressed(Key::Escape)) {
             self.set_full_screen(ctx, false);
         }
