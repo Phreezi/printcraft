@@ -32,13 +32,13 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     ui.horizontal(|ui| {
                         ui.add(icons::image("message-square-text", 28.0, t.accent));
                         ui.vertical(|ui| {
-                            // PeDeeFe's own card (no ArtCraft community or Discord): English until a
-                            // catalog translates it. The credit stays as written (links::CREDIT).
-                            ui.label(egui::RichText::new(crate::i18n::t("Help and feedback")).font(theme::semibold(15.0)));
+                            // PeDeeFe's own card (no ArtCraft community or Discord). The credit stays
+                            // as written (links::CREDIT), in English in every language.
+                            ui.label(egui::RichText::new(tl!("Help and feedback")).font(theme::semibold(15.0)));
                             ui.label(
                                 egui::RichText::new(format!(
                                     "{} {}.",
-                                    crate::i18n::t("Report a problem or suggest a change on GitHub."),
+                                    tl!("Report a problem or suggest a change on GitHub."),
                                     pdfcraft_engine::links::CREDIT
                                 ))
                                 .color(t.text_muted),
@@ -63,9 +63,16 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     ui.add_space(10.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = vec2(14.0, 14.0);
+                        // Wide enough for the longest (translated) title, the same for every card.
+                        let title_width = RECOMMENDED
+                            .iter()
+                            .filter_map(|id| catalog::group(id))
+                            .map(|g| ui.fonts_mut(|f| f.layout_no_wrap(tl!(g.label).to_owned(), theme::semibold(13.5), t.text).size().x))
+                            .fold(0.0f32, f32::max);
+                        let card_width = (title_width + 58.0).clamp(190.0, 260.0);
                         for id in RECOMMENDED {
                             let Some(g) = catalog::group(id) else { continue };
-                            let (rect, resp) = ui.allocate_exact_size(vec2(190.0, 104.0), Sense::click());
+                            let (rect, resp) = ui.allocate_exact_size(vec2(card_width, 104.0), Sense::click());
                             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tl!(g.label)));
                             let fill = if resp.hovered() { t.hover } else { t.card };
                             ui.painter().rect(rect, CornerRadius::same(10), fill, Stroke::new(1.0, t.divider), egui::StrokeKind::Inside);
@@ -77,7 +84,10 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                                 .first()
                                 .map(|s| s.items.iter().take(3).map(|i| tl!(i.label)).collect::<Vec<_>>().join(" · "))
                                 .unwrap_or_default();
-                            let galley = ui.fonts_mut(|f| f.layout(blurb, theme::regular(11.5), t.text_muted, rect.width() - 28.0));
+                            // Two lines at most, so a long (translated) list never runs into "Use now".
+                            let mut job = egui::text::LayoutJob::simple(blurb, theme::regular(11.5), t.text_muted, rect.width() - 28.0);
+                            job.wrap.max_rows = 2;
+                            let galley = ui.fonts_mut(|f| f.layout_job(job));
                             ui.painter().galley(rect.min + vec2(14.0, 46.0), galley, t.text_muted);
                             ui.painter().text(
                                 rect.left_bottom() + vec2(14.0, -14.0),

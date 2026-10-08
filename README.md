@@ -94,14 +94,17 @@ settings (pages, paper, two-sided, Poster, a window of the page), open the PDF a
 
 ## Interface language
 
-The interface language is chosen in **Menu → Edit → Preferences…** (Command-comma on macOS,
-Ctrl-comma elsewhere, also with no document open; Auto follows the system language;
-see [docs/localization.md](docs/localization.md)) and saved. Japanese, Simplified and
-Traditional Chinese and Spanish cover commands, dialogs, panels and keyboard shortcuts; Czech and
-Brazilian Portuguese (used for any Portuguese system language) cover the menus so far. Command
-search accepts the translated label, the English label and the stable command id; filenames, PDF
-contents, author names, custom action names and error details from the engine or the operating
-system keep their own text.
+PeDeeFe speaks **English** and **European Portuguese** (Português de Portugal). The first time it
+starts it asks, in both languages, "Choose your language / Escolha o idioma"; the choice applies at
+once and is saved. Change it later in **Menu → Edit → Preferences… → Interface language**
+(Command-comma on macOS, Ctrl-comma elsewhere, also with no document open; see
+[docs/localization.md](docs/localization.md)). The Portuguese catalog covers the whole interface:
+menus, toolbars, panels, every tool and dialog (the Print dialog included), edit mode, notices,
+Preferences, About and the home screen. Command search accepts the translated label, the English
+label and the stable command id; filenames, PDF contents, author names, custom action names and
+error details from the engine or the operating system keep their own text. PdfCraft's other
+catalogs (Japanese, Chinese, Czech, Brazilian Portuguese, Spanish) stay in the source, so merges
+stay simple, but aren't offered.
 
 ## Build from source
 
@@ -133,16 +136,17 @@ O PeDeeFe é uma versão modificada do [PdfCraft](https://github.com/storytold/p
 PrintCraft), da equipa ArtCraft, com impressão a sério no Windows, papel A4/A3,
 impressão por janela (como no AutoCAD) e uma pré-visualização nítida. Para testar: em
 [Releases](https://github.com/Phreezi/printcraft/releases) descarrega o `.msi` mais recente e
-instala-o. Fica ao lado do PdfCraft oficial, sem o substituir. Na app, **Help ▸ Check for
-updates** avisa quando há uma versão nova.
+instala-o. Fica ao lado do PdfCraft oficial, sem o substituir. Na app, **Ajuda ▸ Procurar
+atualizações** avisa quando há uma versão nova.
 
 A **Impressão Rápida** do Outlook também funciona: com o PeDeeFe como aplicação predefinida para
 PDF (Definições ▸ Aplicações ▸ Aplicações predefinidas), clica com o botão direito num anexo PDF
 e escolhe **Impressão Rápida**. Imprime na impressora predefinida, em Ajustar, A4 (ou A3 se a
 página for maior), orientação automática e com a qualidade usada da última vez, sem abrir janela.
 
-Com o Windows em português, os menus aparecem em português (do Brasil); o idioma muda em
-**Menu ▸ Editar ▸ Preferências… ▸ Idioma da interface**.
+Na primeira vez que abre, o PeDeeFe pergunta o idioma (English ou Português de Portugal) e
+guarda a escolha. Toda a interface está em português de Portugal, incluindo a janela Imprimir.
+Para mudar mais tarde: **Menu ▸ Editar ▸ Preferências… ▸ Idioma da interface**.
 
 ## License
 

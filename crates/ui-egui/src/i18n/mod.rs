@@ -70,7 +70,7 @@ fn plural_pt(n: u64) -> usize {
 }
 
 /// The registry. English first: it is the fallback and the source language.
-pub static LANGUAGES: [LangInfo; 7] = [
+pub static LANGUAGES: [LangInfo; 8] = [
     LangInfo { code: "en", name: "English", source: "", plural: plural_one_other, catalog: OnceLock::new() },
     LangInfo { code: "ja", name: "日本語", source: include_str!("ja.tsv"), plural: plural_none, catalog: OnceLock::new() },
     // Simplified Chinese; `zh`, `zh-CN`, `zh-SG` and `zh-Hans-*` locales resolve here (see `candidates`).
@@ -83,7 +83,15 @@ pub static LANGUAGES: [LangInfo; 7] = [
     LangInfo { code: "pt-br", name: "Português (Brasil)", source: include_str!("pt-br.tsv"), plural: plural_pt, catalog: OnceLock::new() },
     // Spanish (European vocabulary); every `es-*` locale (`es-ES`, `es-MX`, `es-419` ...) resolves here.
     LangInfo { code: "es", name: "Español", source: include_str!("es.tsv"), plural: plural_one_other, catalog: OnceLock::new() },
+    // European Portuguese (PeDeeFe's own catalog). Unlike Brazilian usage, 0 takes the plural
+    // ("0 páginas"), so only 1 is singular. `pt-PT` locales resolve here.
+    LangInfo { code: "pt-pt", name: "Português (Portugal)", source: include_str!("pt-pt.tsv"), plural: plural_one_other, catalog: OnceLock::new() },
 ];
+
+/// The languages PeDeeFe offers (Preferences and the first-run prompt), in the order shown. The
+/// other catalogs stay registered, so merges from PdfCraft stay simple and `--language` still
+/// accepts their codes, but they aren't offered.
+pub const OFFERED: [&str; 2] = ["en", "pt-pt"];
 
 impl LangInfo {
     /// How many plural forms the language's `@plural` entries list.
@@ -143,6 +151,16 @@ impl Lang {
         LANGUAGES.iter().map(Lang)
     }
 
+    /// The languages offered to the user ([`OFFERED`]), in the order shown.
+    pub fn offered() -> impl Iterator<Item = Lang> {
+        OFFERED.into_iter().filter_map(Lang::from_code)
+    }
+
+    /// Is this one of the languages offered to the user?
+    pub fn is_offered(self) -> bool {
+        OFFERED.contains(&self.0.code)
+    }
+
     pub fn name(self) -> &'static str {
         self.0.name
     }
@@ -161,6 +179,12 @@ pub fn normalize_pref(pref: &str) -> Option<&'static str> {
     Lang::from_code(pref).map(Lang::code)
 }
 
+/// Is the `language` preference an explicit choice of an offered language? `false` for [`AUTO`],
+/// a missing value and languages that aren't offered: the first-run prompt then asks.
+pub fn is_offered_pref(pref: &str) -> bool {
+    Lang::from_code(pref).is_some_and(Lang::is_offered)
+}
+
 /// Candidate language codes for a locale tag, most specific first: `zh_TW.UTF-8` →
 /// `zh-tw`, `zh-hant`, `zh`.
 fn candidates(tag: &str) -> Vec<String> {
@@ -177,7 +201,8 @@ fn candidates(tag: &str) -> Vec<String> {
         out.insert(out.len().saturating_sub(1), script.to_string());
     }
     if primary == "pt" && !out.iter().any(|c| c == "pt-br") {
-        // The only Portuguese catalog is Brazilian; other regions use it rather than English.
+        // Portugal has its own catalog (an exact match above); other regions use the Brazilian
+        // one rather than English.
         out.insert(out.len().saturating_sub(1), "pt-br".to_string());
     }
     out
@@ -651,7 +676,8 @@ mod tests {
         assert_eq!(normalize_pref("pt-BR"), Some("pt-br"));
         assert_eq!(normalize_pref("pt"), None, "only exact codes are preferences");
         assert_eq!(lang_from_tag("pt_BR.UTF-8"), Some(pt));
-        assert_eq!(lang_from_tag("pt_PT"), Some(pt));
+        assert_eq!(lang_from_tag("pt_AO"), Some(pt), "regions without a catalog use the Brazilian one");
+        assert_eq!(lang_from_tag("pt_PT"), Lang::from_code("pt-pt"), "Portugal has its own catalog");
         assert_eq!(tr(pt, "File"), "Arquivo");
         assert_eq!(tr(pt, "Save as…"), "Salvar como…");
         assert_eq!(tr(pt, "Arquivo do usuário.pdf"), "Arquivo do usuário.pdf");
@@ -854,6 +880,227 @@ mod tests {
                     assert!(!lower.contains("artcraft") && !lower.contains("discord"), "{}: {text:?}", l.code);
                 }
             }
+        }
+    }
+
+    fn pt_pt() -> Lang {
+        Lang::from_code("pt-pt").expect("pt-pt registered")
+    }
+
+    /// The English templates the UI looks up by literal: `tl!("…")`, `i18n::t("…")`,
+    /// `notify_tr("…")`, `notify_fmt("…", …)` and the language prompt's `in_each("…")`, also when
+    /// the literal starts on the next line.
+    fn ui_literals() -> std::collections::BTreeSet<String> {
+        const CALLS: [&str; 5] = ["tl!(", "i18n::t(", "notify_tr(", "notify_fmt(", "in_each("];
+        let mut stack = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        let mut literals = std::collections::BTreeSet::new();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(dir).expect("UI source directory") {
+                let path = entry.expect("UI source entry").path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|name| name != "i18n") {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).expect("UI source file").replace("\r\n", "\n");
+                let code = source.split("#[cfg(test)]\nmod ").next().unwrap_or_default();
+                for call in CALLS {
+                    for (at, _) in code.match_indices(call) {
+                        // `fn notify_tr(` and friends are definitions, not calls.
+                        if code[..at].ends_with("fn ") || code[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_') {
+                            continue;
+                        }
+                        let Some(after) = code[at + call.len()..].trim_start().strip_prefix('"') else { continue };
+                        let mut escaped = false;
+                        let end = after
+                            .char_indices()
+                            .find_map(|(i, c)| {
+                                if c == '"' && !escaped {
+                                    return Some(i);
+                                }
+                                escaped = c == '\\' && !escaped;
+                                None
+                            })
+                            .expect("closed literal");
+                        let label: String = serde_json::from_str(&format!("\"{}\"", &after[..end])).expect("UI literal escapes");
+                        literals.insert(label);
+                    }
+                }
+            }
+        }
+        literals
+    }
+
+    #[test]
+    fn european_portuguese_is_registered_and_offered() {
+        let pt = pt_pt();
+        assert_eq!(pt.name(), "Português (Portugal)");
+        assert_eq!(normalize_pref("pt-PT"), Some("pt-pt"));
+        assert_eq!(lang_from_tag("pt_PT.UTF-8"), Some(pt));
+        assert_eq!(first_supported("pt-PT\r\nen-US"), Some(pt));
+        // Exactly English and European Portuguese are offered, English first.
+        assert_eq!(Lang::offered().map(Lang::code).collect::<Vec<_>>(), ["en", "pt-pt"]);
+        for (pref, offered) in
+            [("en", true), ("pt-pt", true), ("PT-PT", true), (AUTO, false), ("ja", false), ("pt-br", false), ("", false), ("xx", false)]
+        {
+            assert_eq!(is_offered_pref(pref), offered, "{pref:?}");
+        }
+        for (english, portuguese) in [
+            ("File", "Ficheiro"),
+            ("Save", "Guardar"),
+            ("Save as…", "Guardar como…"),
+            ("Undo", "Anular"),
+            ("Print…", "Imprimir…"),
+            ("Actual size", "Tamanho real"),
+            ("Shrink oversized pages", "Encolher páginas grandes"),
+            ("Poster", "Cartaz"),
+            ("Booklet", "Folheto"),
+            ("Print in grayscale", "Imprimir em escala de cinzentos"),
+            ("Two-sided:", "Frente e verso:"),
+            ("Full page", "Página inteira"),
+            ("Window", "Janela"),
+            ("Choose your language", "Escolha o idioma"),
+        ] {
+            assert_eq!(tr(pt, english), portuguese);
+        }
+        assert_eq!(tr(pt, "Relatório do utilizador.pdf"), "Relatório do utilizador.pdf");
+        // Unlike Brazil, Portugal puts 0 in the plural.
+        assert_eq!(trn(pt, 0, "{n} page", "{n} pages"), "0 páginas");
+        assert_eq!(trn(pt, 1, "{n} page", "{n} pages"), "1 página");
+        assert_eq!(trn(pt, 2, "{n} field", "{n} fields"), "2 campos");
+        set_current(pt);
+        assert_eq!(menu_label("file.save_as", "Save as…"), "Guardar como…");
+        assert_eq!(command_label("Undo Insert pages from Relatório {n}.pdf"), "Anular Inserir páginas de Relatório {n}.pdf");
+        assert_eq!(action_label("Change Title"), "Alterar Título");
+        set_current(Lang::EN);
+    }
+
+    /// Every registered command, menu title and All tools group, section and item.
+    #[test]
+    fn european_portuguese_covers_commands_and_catalogue() {
+        let pt = pt_pt();
+        for command in pdfcraft_engine::commands::COMMANDS {
+            assert!(has(pt, command.label), "missing command: {}", command.label);
+            if let Some(menu) = command.menu {
+                assert!(has(pt, menu), "missing menu: {menu}");
+            }
+        }
+        for group in pdfcraft_engine::catalog::TOOL_GROUPS {
+            assert!(has(pt, group.label), "missing group: {}", group.label);
+            for section in group.sections {
+                assert!(has(pt, section.title), "missing section: {}", section.title);
+                for item in section.items {
+                    assert!(has(pt, item.label), "missing item: {}", item.label);
+                }
+            }
+        }
+    }
+
+    /// Every string the UI looks up by literal has a European Portuguese entry, so nothing the fork
+    /// ships falls back to English.
+    #[test]
+    fn european_portuguese_covers_every_ui_literal() {
+        let pt = pt_pt();
+        let literals = ui_literals();
+        assert!(literals.len() > 1000, "source scan found only {} literals", literals.len());
+        for probe in ["Choose your language", "Help and feedback", "Printing on {printer}…", "Select area…"] {
+            assert!(literals.contains(probe), "the scan misses {probe:?}");
+        }
+        let missing: Vec<_> = literals.iter().filter(|label| !has(pt, label)).collect();
+        assert!(missing.is_empty(), "untranslated European Portuguese UI literals: {missing:#?}");
+    }
+
+    /// Labels the UI looks up through variables (enum labels, tables, engine names) aren't found
+    /// by the source scan; the most complete upstream catalog lists them, so Portuguese must have
+    /// every key it has.
+    #[test]
+    fn european_portuguese_covers_every_key_of_the_complete_catalog() {
+        let pt = pt_pt();
+        let reference = Lang::from_code("zh-hans").expect("zh-hans registered");
+        let (ours, _) = parse_entries(pt.0.source, pt.0.plural_forms());
+        let ours: std::collections::HashSet<(&str, &str)> = ours.iter().map(|e| (e.context.as_str(), e.source.as_str())).collect();
+        let (theirs, _) = parse_entries(reference.0.source, reference.0.plural_forms());
+        let missing: Vec<_> = theirs.iter().filter(|e| !ours.contains(&(e.context.as_str(), e.source.as_str()))).map(|e| &e.source).collect();
+        assert!(missing.is_empty(), "keys missing from pt-pt.tsv: {missing:#?}");
+    }
+
+    /// European, not Brazilian, Portuguese; written translations, tidy text.
+    #[test]
+    fn european_portuguese_uses_portugal_conventions() {
+        let pt = pt_pt();
+        const BRAZILIAN: &[&str] = &[
+            "arquivo",
+            "arquivos",
+            "salvar",
+            "salvo",
+            "salva",
+            "tela",
+            "baixar",
+            "usuário",
+            "usuários",
+            "configurações",
+            "deletar",
+            "desfazer",
+            "senha",
+            "senhas",
+            "exibir",
+            "exibição",
+            "contato",
+            "registro",
+            "aplicativo",
+            "planilha",
+            "você",
+            "detectar",
+            "mouse",
+            "time",
+            "ônibus",
+            "caixa de seleção",
+        ];
+        // Names, codes, units and words spelt the same in both languages.
+        const SAME: &[&str] = &[
+            "Menu",
+            "Zoom",
+            "OK",
+            "ZIP",
+            "Bytes",
+            "Total",
+            "Item:",
+            "Script:",
+            "Scripts",
+            "Visual",
+            "Horizontal",
+            "Vertical",
+            "Oval",
+            "JavaScript",
+            "Commits",
+            "Microsoft Word (.docx)",
+            "PDF/A…",
+            "PostScript / EPS",
+        ];
+        let (entries, errors) = parse_entries(pt.0.source, pt.0.plural_forms());
+        assert!(errors.is_empty(), "{errors:?}");
+        for e in &entries {
+            let lower = e.translation.to_lowercase();
+            let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).collect();
+            for word in BRAZILIAN.iter().filter(|w| !w.contains(' ')) {
+                assert!(!words.contains(word), "Brazilian {word:?} in {:?}", e.translation);
+            }
+            for phrase in BRAZILIAN.iter().filter(|w| w.contains(' ')) {
+                assert!(!lower.contains(phrase), "Brazilian {phrase:?} in {:?}", e.translation);
+            }
+            // Text outside the placeholders must be translated ("{n} {kind}" has none).
+            let words = placeholders(&e.source).iter().fold(e.source.clone(), |text, name| text.replace(&format!("{{{name}}}"), ""));
+            let has_words = words.chars().any(char::is_alphabetic);
+            assert!(e.source != e.translation || !has_words || SAME.contains(&e.source.as_str()), "{:?} is untranslated", e.source);
+            assert!(!e.translation.contains("..."), "use … rather than three dots: {:?}", e.translation);
+            assert!(!e.translation.contains("PdfCraft ") || e.translation.contains("Baseado no PdfCraft"), "the app is PeDeeFe: {:?}", e.translation);
+            // Leading and trailing spaces only where the English has them (joined fragments).
+            assert_eq!(e.translation.starts_with(' '), e.source.starts_with(' '), "{:?}", e.translation);
+            assert_eq!(e.translation.ends_with(' '), e.source.ends_with(' '), "{:?}", e.translation);
         }
     }
 

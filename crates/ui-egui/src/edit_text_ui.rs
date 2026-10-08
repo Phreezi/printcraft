@@ -537,7 +537,7 @@ pub(crate) fn image_input(
             use pdfcraft_engine::ImageEdit as E;
             if in_group {
                 let n = view.edit_selection.as_ref().map_or(0, BoxSelection::len);
-                if ui.button(format!("Delete {n} Selected Items")).clicked() {
+                if ui.button(crate::i18n::fmt(tl!("Delete {n} Selected Items"), &[("n", &n.to_string())])).clicked() {
                     view.pending_edit = delete_selected(view);
                     ui.close();
                 }

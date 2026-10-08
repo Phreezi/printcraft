@@ -388,7 +388,8 @@ fn title(ui: &mut egui::Ui, text: &str) {
 
 fn error(ui: &mut egui::Ui, err: &Option<String>) {
     if let Some(e) = err.as_ref().filter(|e| !e.is_empty()) {
-        ui.colored_label(Color32::from_rgb(0xD7, 0x37, 0x3F), e);
+        // The dialog's own messages are catalogued; engine and OS errors show as they are.
+        ui.colored_label(Color32::from_rgb(0xD7, 0x37, 0x3F), tl!(e));
         ui.add_space(4.0);
     }
 }
@@ -775,19 +776,15 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, sigs: &[SignatureInfo], expan
         let open = expanded.contains(&s.field);
         let (icon, color) = status_icon(s);
         let head = if s.signed {
-            format!(
-                "Rev. {}: {} by {}",
-                s.revision,
-                if s.certify.is_some() { "Certified" } else { "Signed" },
-                s.signer.as_deref().unwrap_or("an unknown signer")
-            )
+            let template = if s.certify.is_some() { tl!("Rev. {n}: Certified by {who}") } else { tl!("Rev. {n}: Signed by {who}") };
+            crate::i18n::fmt(template, &[("n", &s.revision.to_string()), ("who", s.signer.as_deref().unwrap_or(tl!("an unknown signer")))])
         } else {
-            format!("Unsigned signature field: {}", s.field)
+            crate::i18n::fmt(tl!("Unsigned signature field: {field}"), &[("field", &s.field)])
         };
         let resp = ui
             .horizontal(|ui| {
                 let chevron = if open { "chevron-down" } else { "chevron-right" };
-                let toggle = icons::button(ui, chevron, 20.0, false, if open { "Collapse" } else { "Expand" }).clicked();
+                let toggle = icons::button(ui, chevron, 20.0, false, tl!(if open { "Collapse" } else { "Expand" })).clicked();
                 ui.add(icons::image(icon, 16.0, color));
                 let l = ui.add(egui::Label::new(egui::RichText::new(&head).font(theme::semibold(12.5)).color(t.text)).sense(egui::Sense::click()));
                 toggle || l.clicked()
@@ -924,8 +921,8 @@ fn key_usage(bits: u16) -> String {
         "Encipher Only",
         "Decipher Only",
     ];
-    let used: Vec<&str> = NAMES.iter().enumerate().filter(|(i, _)| bits & (1 << i) != 0).map(|(_, n)| *n).collect();
-    if used.is_empty() { "None".into() } else { used.join(", ") }
+    let used: Vec<&str> = NAMES.iter().enumerate().filter(|(i, _)| bits & (1 << i) != 0).map(|(_, n)| tl!(*n)).collect();
+    if used.is_empty() { tl!("None").into() } else { used.join(", ") }
 }
 
 /// What the viewer asks for.
@@ -997,7 +994,7 @@ pub(crate) fn cert_viewer(ui: &mut egui::Ui, v: &mut CertViewer, trusted: &[Cert
                         ("Validity starts", c.not_before.to_string()),
                         ("Validity ends", c.not_after.to_string()),
                         ("Public key", c.public_key.describe()),
-                        ("Basic constraints", if c.is_ca { "Certificate authority".into() } else { "End entity".into() }),
+                        ("Basic constraints", if c.is_ca { tl!("Certificate authority").into() } else { tl!("End entity").into() }),
                         ("Key usage", c.key_usage.map(key_usage).unwrap_or_else(|| tl!("Not present").to_string())),
                         ("Self-signed", if c.is_self_signed() { tl!("Yes").to_string() } else { tl!("No").to_string() }),
                         ("SHA-1 digest", hex(&sign::keys::DigestAlg::Sha1.digest(&[&c.raw]))),

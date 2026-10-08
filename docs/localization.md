@@ -1,5 +1,21 @@
 # Interface language
 
+**PeDeeFe** offers two languages, **English** and **Português (Portugal)** (European Portuguese,
+`pt-pt`). On first start, and whenever the saved setting isn't one of the two (no setting yet,
+`auto` from an earlier version, or a language PdfCraft offers but PeDeeFe doesn't), a small modal
+asks "Choose your language / Escolha o idioma"; every line of it is shown in both languages, the
+choice applies at once and is written to the settings straight away. Escape and clicks outside
+don't dismiss it, and no shortcut runs under it. `--language <code>` (or `ui.set language`)
+answers it too; `--language-prompt show|hide` shows or hides it for screenshots and scripts, and
+`ui.state` reports `language_prompt`. Preferences ▸ Interface language lists the same two
+languages. The other catalogs below stay registered (and selectable with `--language`), so
+merges from PdfCraft stay simple. `pt-pt.tsv` covers every string the UI looks up by literal and
+every key of the Simplified Chinese catalog (the most complete one), which the tests check, and
+follows Portugal's conventions (Ficheiro, Guardar, Ecrã, Transferir, Utilizador…; see its header).
+A `pt_PT` system locale resolves to it under Auto.
+
+What follows is PdfCraft's description of the system, which PeDeeFe keeps.
+
 Choose **Menu > Edit > Preferences…** (Command-comma on macOS, Ctrl-comma elsewhere) **> Interface language** and select **Auto**, **English**, **日本語**, **简体中文**, **繁體中文**, **Čeština**, **Português (Brasil)** or **Español**. The change applies immediately and persists between launches. Command ids, document contents and file names are unchanged.
 
 **Auto** (the default) follows the system language: `LC_ALL`, `LC_MESSAGES` or `LANG`, then the preferred-languages list on macOS. Any Portuguese locale (`pt_BR`, `pt_PT`) uses the Brazilian catalog, and Chinese locales for Taiwan, Hong Kong and Macau (`zh_TW`, `zh_HK`, `zh_MO`, `zh-Hant`) the Traditional Chinese one; other Chinese locales (`zh`, `zh_CN`, `zh_SG`, `zh-Hans`) the Simplified Chinese one. A system language without a catalog, such as French, shows English. On Windows, **Auto** uses the Windows display languages, in preference order, when no supported locale is selected by those environment variables. The query asks Windows directly (`GetUserPreferredUILanguages`, through the `sys-locale` crate) without starting a process, and is cached for the process. If detection fails or the display language has no catalog, PdfCraft shows English.

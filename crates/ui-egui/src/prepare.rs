@@ -1339,7 +1339,7 @@ fn actions_tab(ui: &mut egui::Ui, d: &mut FieldDraft, t: &crate::theme::Tokens) 
         }
     }
     if let Some(e) = error {
-        ui.label(egui::RichText::new(e).small().color(t.text_muted));
+        ui.label(egui::RichText::new(tl!(&e)).small().color(t.text_muted));
     }
     ui.add_space(8.0);
     ui.label(egui::RichText::new(tl!("Actions")).font(theme::semibold(13.0)));

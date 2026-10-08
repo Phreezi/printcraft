@@ -63,8 +63,12 @@ pub fn search_box(ui: &mut egui::Ui, placeholder: &str, width: f32) -> Response 
     let fill = if resp.hovered() { t.hover } else { t.field };
     ui.painter().rect(rect, CornerRadius::same(16), fill, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     icons::paint(ui, Rect::from_min_size(rect.min + vec2(10.0, 8.0), vec2(16.0, 16.0)), "search", 15.0, t.text_muted);
-    ui.painter().text(rect.left_center() + vec2(34.0, 0.0), Align2::LEFT_CENTER, placeholder, theme::regular(13.0), t.text_faint);
-    ui.painter().text(rect.right_center() - vec2(12.0, 0.0), Align2::RIGHT_CENTER, "⌘K", theme::regular(11.5), t.text_faint);
+    let key = ui.painter().text(rect.right_center() - vec2(12.0, 0.0), Align2::RIGHT_CENTER, "⌘K", theme::regular(11.5), t.text_faint);
+    // A long (translated) placeholder ends in "…" before the shortcut rather than running under it.
+    let mut job = egui::text::LayoutJob::simple_singleline(placeholder.to_owned(), theme::regular(13.0), t.text_faint);
+    job.wrap = egui::text::TextWrapping::truncate_at_width((key.left() - rect.left() - 34.0 - 8.0).max(0.0));
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    ui.painter().galley(rect.left_center() + vec2(34.0, -galley.size().y / 2.0), galley, t.text_faint);
     resp.on_hover_cursor(egui::CursorIcon::Text)
 }
 
@@ -217,7 +221,7 @@ pub fn app_icon(ui: &mut egui::Ui, size: f32) -> Response {
     ui.add(
         egui::Image::from_bytes("bytes://pedeefe-icon.svg", include_bytes!("../../../assets/brand/pedeefe/logo/pedeefe-icon.svg"))
             .fit_to_exact_size(vec2(size, size))
-            .alt_text("PeDeeFe icon"),
+            .alt_text(tl!("PeDeeFe icon")),
     )
 }
 

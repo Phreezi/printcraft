@@ -1937,5 +1937,42 @@
 	Quick Print needs a PDF file to print.	快速打印需要一个要打印的 PDF 文件。
 	Quick Print needs the name of a printer.	快速打印需要打印机名称。
 
+# PeDeeFe strings that used to be hard-coded English (now looked up like the rest).
+	A link	链接
+	A button	按钮
+	A script	脚本
+	An open-source PDF application written in Rust. MIT OR Apache-2.0.	一款用 Rust 编写的开源 PDF 应用程序。MIT OR Apache-2.0。
+	PeDeeFe icon	PeDeeFe 图标
+	Help and feedback	帮助和反馈
+	Report a problem or suggest a change on GitHub.	在 GitHub 上报告问题或提出修改建议。
+	Rendering…	正在渲染…
+	Still rendering — this page is unusually complex…	仍在渲染 — 此页面异常复杂…
+	Untitled	无标题
+	Cut and stack needs Two-sided: Off. Print single-sided sheets.	“裁切并堆叠”需要将双面设为“关”。请单面打印。
+	drag on the page to select several · Esc to finish	在页面上拖动可选择多个 · 按 Esc 结束
+	Delete {n} Selected Items	删除 {n} 个所选项目
+	Select text boxes and images (Edit text & images)	选择文本框和图像（编辑文本和图像）
+	Add or remove a box (Edit text & images)	添加或移除一个框（编辑文本和图像）
+	Select every box on the page (Edit text & images)	选择页面上的所有框（编辑文本和图像）
+	Delete the selected boxes (Edit text & images)	删除所选的框（编辑文本和图像）
+	Leave Edit text & images, keeping typed text	退出“编辑文本和图像”，保留已输入的文本
+	Done adding text	完成添加文本
+	Discard this text (Esc)	放弃此文本 (Esc)
+	My stamps	我的图章
+	Rev. {n}: Signed by {who}	修订版 {n}：由 {who} 签名
+	Rev. {n}: Certified by {who}	修订版 {n}：由 {who} 认证
+	an unknown signer	未知签名者
+	Unsigned signature field: {field}	未签名的签名域：{field}
+	Certificate authority	证书颁发机构
+	End entity	终端实体
+	Show	显示
+	Sort	排序
+	Reverse the order	反转顺序
+	Grab bag	名单
+	Table	表格
+	{n} contributors · {c} commits	{n} 位贡献者 · {c} 次提交
+	No contributor data was built into this copy.	此副本未内置贡献者数据。
+	No model credits were built into this copy.	此副本未内置模型致谢信息。
+
 @plural	{n} page|{n} pages	{n} 页
 @plural	{n} field|{n} fields	{n} 个字段

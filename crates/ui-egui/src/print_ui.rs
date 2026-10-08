@@ -377,7 +377,7 @@ impl PrintDraft {
     /// The engine settings for this draft (page count and labels from the document).
     pub fn settings(&self, count: usize, labels: &[String]) -> Result<print::Settings, String> {
         if self.handling == Handling::Multiple && self.order == PageOrder::CutStack && self.duplex != spool::Duplex::Off {
-            return Err("Cut and stack needs Two-sided: Off. Print single-sided sheets.".into());
+            return Err(tl!("Cut and stack needs Two-sided: Off. Print single-sided sheets.").into());
         }
         let range = match self.which {
             Which::All => None,

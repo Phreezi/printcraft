@@ -10,6 +10,11 @@ use crate::{CloseRequest, Dialog, PdfCraftApp, PropsTab, panels::human_size, wid
 const INFO_KEYS: [&str; 4] = ["Title", "Author", "Subject", "Keywords"];
 
 pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
+    // First start: the language comes before anything else.
+    if app.language_prompt {
+        language_prompt(app, ctx);
+        return;
+    }
     password(app, ctx);
     save_prompt(app, ctx);
     link_prompt(app, ctx);
@@ -1036,13 +1041,12 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
                     ("← / →, ⌘← / ⌘→", tl!("Previous / next page")),
                     ("Delete", tl!("Delete selected pages (Organize)")),
                     ("⌘A", tl!("Select all pages (Organize)")),
-                    // PeDeeFe's Edit text & images keys: translated below (`tl!(v)`) once a catalog
-                    // has them, English until then.
-                    ("Drag on a page", "Select text boxes and images (Edit text & images)"),
-                    ("⇧-click / ⌘-click", "Add or remove a box (Edit text & images)"),
-                    ("⌘A", "Select every box on the page (Edit text & images)"),
-                    ("Delete", "Delete the selected boxes (Edit text & images)"),
-                    ("Esc", "Leave Edit text & images, keeping typed text"),
+                    // PeDeeFe's Edit text & images keys.
+                    ("Drag on a page", tl!("Select text boxes and images (Edit text & images)")),
+                    ("⇧-click / ⌘-click", tl!("Add or remove a box (Edit text & images)")),
+                    ("⌘A", tl!("Select every box on the page (Edit text & images)")),
+                    ("Delete", tl!("Delete the selected boxes (Edit text & images)")),
+                    ("Esc", tl!("Leave Edit text & images, keeping typed text")),
                 ] {
                     rows.push((tl!(k).to_string(), tl!(v).to_string()));
                 }
@@ -1083,12 +1087,12 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
                         });
                         ui.add_space(6.0);
                         // PeDeeFe's own wording (it doesn't claim PdfCraft's clean-room process), so
-                        // it isn't the catalogued sentence: English until a catalog translates it.
-                        ui.label(crate::i18n::t("An open-source PDF application written in Rust. MIT OR Apache-2.0."));
+                        // it isn't the catalogued sentence PdfCraft's catalogs translate.
+                        ui.label(tl!("An open-source PDF application written in Rust. MIT OR Apache-2.0."));
                         ui.label(
-                            egui::RichText::new(
-                                "Rendering: hayro (bootstrap) · UI: egui · Icons: Lucide (ISC) · Fonts: Inter, JetBrains Mono, Dancing Script (OFL)",
-                            )
+                            egui::RichText::new(tl!(
+                                "Rendering: hayro (bootstrap) · UI: egui · Icons: Lucide (ISC) · Fonts: Inter, JetBrains Mono, Dancing Script (OFL)"
+                            ))
                             .color(t.text_muted)
                             .small(),
                         );
@@ -1407,6 +1411,51 @@ fn save_prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
     }
     if let Some(c) = choice {
         app.resolve_close(ctx, c);
+    }
+}
+
+/// The first-run prompt: "Choose your language / Escolha o idioma" and one button per offered
+/// language, named in itself. Every line is shown in all the offered languages (the English text
+/// and its catalog translations), so nobody has to read a language they don't know to find
+/// theirs. It stays until a language is chosen: Escape and clicks outside don't dismiss it.
+fn language_prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
+    use crate::i18n::{self, Lang};
+    let t = Tokens::get(ctx);
+    fn in_each(text: &'static str) -> Vec<&'static str> {
+        let mut lines: Vec<&str> = Lang::offered().map(|l| i18n::tr(l, text)).collect();
+        lines.dedup();
+        lines
+    }
+    let mut chosen: Option<Lang> = None;
+    egui::Modal::new(egui::Id::new("language_prompt")).show(ctx, |ui| {
+        const WIDTH: f32 = 360.0;
+        ui.set_width(WIDTH);
+        ui.vertical_centered(|ui| {
+            widgets::app_icon(ui, 40.0);
+            ui.add_space(6.0);
+            let title = in_each("Choose your language").join(" / ");
+            ui.add(egui::Label::new(egui::RichText::new(title).font(theme::semibold(17.0))).wrap());
+            ui.add_space(2.0);
+            for line in in_each("You can change it later in Preferences.") {
+                ui.label(egui::RichText::new(line).color(t.text_muted));
+            }
+            ui.add_space(12.0);
+            // Outlined buttons on a soft fill: the modal's own fill would hide plain ones.
+            let w = &mut ui.visuals_mut().widgets;
+            w.inactive.bg_stroke = egui::Stroke::new(1.0, t.border);
+            w.inactive.weak_bg_fill = t.hover;
+            w.hovered.bg_stroke = egui::Stroke::new(1.0, t.accent);
+            for lang in Lang::offered() {
+                let button = egui::Button::new(egui::RichText::new(lang.name()).font(theme::medium(15.0))).min_size(egui::vec2(WIDTH - 40.0, 38.0));
+                if ui.add(button).clicked() {
+                    chosen = Some(lang);
+                }
+                ui.add_space(4.0);
+            }
+        });
+    });
+    if let Some(lang) = chosen {
+        app.choose_language(lang.code());
     }
 }
 

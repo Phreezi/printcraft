@@ -358,6 +358,12 @@ pub struct PdfCraftApp {
     pub theme_preference: ThemePreference,
     /// Interface language preference: `auto` (follow the system) or a code from [`i18n::LANGUAGES`].
     pub language: String,
+    /// The first-run "Choose your language / Escolha o idioma" prompt is open (see
+    /// [`Self::ask_language_if_unset`]); nothing else takes input until a language is chosen.
+    pub language_prompt: bool,
+    /// Write the settings at the end of this frame rather than at the next autosave (a language
+    /// chosen at first start survives even if the app is killed right after).
+    save_requested: bool,
     pub dialog: Option<Dialog>,
     /// How to ask for the latest release (the desktop app sets it; see `updates`).
     pub update_source: Option<updates::UpdateSource>,
@@ -544,9 +550,9 @@ pub enum LinkOrigin {
 impl LinkOrigin {
     fn noun(self) -> &'static str {
         match self {
-            Self::Link => "A link",
-            Self::Button => "A button",
-            Self::Script => "A script",
+            Self::Link => tl!("A link"),
+            Self::Button => tl!("A button"),
+            Self::Script => tl!("A script"),
         }
     }
 }
@@ -594,6 +600,8 @@ impl PdfCraftApp {
             theme: ThemeKind::Light,
             theme_preference: ThemePreference::Light,
             language: i18n::AUTO.to_string(),
+            language_prompt: false,
+            save_requested: false,
             dialog: None,
             update_source: None,
             updates: updates::Updates::default(),
@@ -1101,6 +1109,25 @@ impl PdfCraftApp {
         .to_string()
     }
 
+    /// Open the first-run language prompt unless the settings hold an explicit choice of an offered
+    /// language. The desktop and web apps call this after [`Self::restore`]; a first start (no
+    /// settings), settings from before the prompt (`auto`) and a language that is no longer
+    /// offered all ask.
+    pub fn ask_language_if_unset(&mut self) {
+        self.language_prompt = !i18n::is_offered_pref(&self.language);
+    }
+
+    /// Use the language with this code from now on (the first-run prompt, Preferences): applied
+    /// at once and saved at the end of the frame. `false` (nothing changes) for an unknown code.
+    pub fn choose_language(&mut self, code: &str) -> bool {
+        let Some(code) = i18n::normalize_pref(code) else { return false };
+        self.language = code.to_string();
+        i18n::set_current(i18n::Lang::from_pref(code));
+        self.language_prompt = false;
+        self.save_requested = true;
+        true
+    }
+
     /// Restore state written by `persist`. Unknown or malformed data is ignored.
     pub fn restore(&mut self, json: &str) {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else { return };
@@ -1203,6 +1230,15 @@ impl PdfCraftApp {
                     format!("language must be one of {}", codes.join(", "))
                 })?;
                 self.language = language.to_string();
+                // An explicit choice (`--language`, the control channel) answers the first-run prompt.
+                self.language_prompt = false;
+            }
+            ("language-prompt", _) => {
+                self.language_prompt = match value {
+                    "show" => true,
+                    "hide" => false,
+                    _ => return Err("language-prompt must be show or hide".into()),
+                };
             }
             ("theme", _) => {
                 let preference = match value {
@@ -1487,6 +1523,10 @@ impl PdfCraftApp {
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
         use egui::Key;
+        // The first-run language prompt only takes a choice.
+        if self.language_prompt {
+            return;
+        }
         // "Save changes?" is modal: its keys are its own (⌘D is Don't save there, not Document
         // properties; Escape cancels it rather than clearing a selection), and nothing may run
         // underneath it. They are read here, before the canvas can consume them.
@@ -1700,7 +1740,7 @@ impl eframe::App for PdfCraftApp {
         self.enter_window(ROOT_WINDOW);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         i18n::set_current(i18n::Lang::from_pref(&self.language));
         // Fonts registered via set_fonts only take effect next frame; named families would panic now.
@@ -1713,5 +1753,11 @@ impl eframe::App for PdfCraftApp {
         self.draw_window(ui);
         self.show_other_windows(&ctx);
         self.tidy_windows(&ctx);
+        if std::mem::take(&mut self.save_requested)
+            && let Some(storage) = frame.storage_mut()
+        {
+            eframe::App::save(self, storage);
+            storage.flush();
+        }
     }
 }

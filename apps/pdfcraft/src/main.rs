@@ -7,7 +7,7 @@
 //! `--page N  --zoom 150  --layout continuous|two-up|single  --panel comments|bookmarks|pages|fields|layers|attachments|none
 //!  --theme light|dark|system  --language auto|<code>  --mode all|read|edit|convert|sign  --tool <catalogue id>  --left open|closed
 //!  --organize on  --fields on  --dialog properties|shortcuts|about  --palette <query>  --home on
-//!  --cover on|off  --default-layout continuous|two-up|single  --default-zoom fit-width|fit-page|<percent>`
+//!  --cover on|off  --default-layout continuous|two-up|single  --default-zoom fit-width|fit-page|<percent>  --language-prompt show|hide`
 //!
 //! `--print FILE…` prints the files on the default printer and `--print-to PRINTER FILE…` on the
 //! named one, with Quick Print's default settings and no window, then exits (the shell's print
@@ -151,6 +151,9 @@ fn main() -> eframe::Result {
             if let Some(json) = cc.storage.and_then(|s| s.get_string(STORAGE_KEY).or_else(|| s.get_string(LEGACY_STORAGE_KEY))) {
                 app.restore(&json);
             }
+            // First start (or no language chosen yet): ask English or Portuguese. A
+            // `--language` option below answers it instead.
+            app.ask_language_if_unset();
             // Maximized last time (or the first start): maximized once its first frame is shown.
             app.restore_window();
             app.integrated_titlebar = integrated;

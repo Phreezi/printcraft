@@ -233,21 +233,23 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
     ui.label(egui::RichText::new(tl!("Preferences")).font(theme::semibold(18.0)));
     ui.horizontal(|ui| {
         ui.label(tl!("Interface language"));
+        // Only the offered languages (English, European Portuguese); a setting from elsewhere
+        // (`--language ja`, `auto`) still shows what it is until one is picked.
         let selected = crate::i18n::Lang::from_code(&app.language).map_or(tl!("Auto"), crate::i18n::Lang::name);
-        let before = app.language.clone();
+        let mut picked = None;
         egui::ComboBox::from_id_salt("interface-language").selected_text(selected).show_ui(ui, |ui| {
-            if ui.selectable_value(&mut app.language, crate::i18n::AUTO.to_string(), tl!("Auto")).clicked() {
-                ui.close();
-            }
-            for language in crate::i18n::Lang::all() {
-                if ui.selectable_value(&mut app.language, language.code().to_string(), language.name()).clicked() {
+            for language in crate::i18n::Lang::offered() {
+                if ui.selectable_label(app.language == language.code(), language.name()).clicked() {
+                    picked = Some(language.code());
                     ui.close();
                 }
             }
         });
-        // Relabel the rest of this dialog in the new language right away, not next frame.
-        if app.language != before {
-            crate::i18n::set_current(crate::i18n::Lang::from_pref(&app.language));
+        // Applied at once, so the rest of this dialog is relabelled in this frame, and saved.
+        if let Some(code) = picked
+            && code != app.language
+        {
+            app.choose_language(code);
         }
     });
     ui.add_space(8.0);

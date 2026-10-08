@@ -330,9 +330,15 @@ impl PdfCraftApp {
         self.all_views_mut().find(|v| v.id == doc)
     }
 
-    /// A modal (dialog, save prompt, password, palette, link prompt) is open in the focus window.
+    /// A modal (dialog, save prompt, password, palette, link prompt, the first-run language
+    /// prompt) is open in the focus window.
     pub(crate) fn modal_open(&self) -> bool {
-        self.dialog.is_some() || self.close_request.is_some() || self.password_prompt.is_some() || self.pending_link.is_some() || self.palette_open
+        self.dialog.is_some()
+            || self.close_request.is_some()
+            || self.password_prompt.is_some()
+            || self.pending_link.is_some()
+            || self.palette_open
+            || self.language_prompt
     }
 
     /// The window being drawn shows the dialogs, palette and notices (it is the focus window).

@@ -466,9 +466,11 @@ impl PdfCraftApp {
         let edit = match action {
             A::New => {
                 let n = self.session.get(id).map_or(0, |d| d.info.outline.len());
-                self.apply_edit(Edit::AddBookmark { parent: vec![], index: n, title: "Untitled".into(), page: current });
+                // The placeholder title is in the UI language, like Acrobat's.
+                let title = tl!("Untitled").to_string();
+                self.apply_edit(Edit::AddBookmark { parent: vec![], index: n, title: title.clone(), page: current });
                 // Like Acrobat: the new bookmark starts in rename mode.
-                self.bookmark_rename = Some((vec![n], "Untitled".into()));
+                self.bookmark_rename = Some((vec![n], title));
                 self.right = Some(crate::RightPanel::Bookmarks);
                 return;
             }

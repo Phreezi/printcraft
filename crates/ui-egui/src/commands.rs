@@ -275,11 +275,7 @@ impl PdfCraftApp {
                 self.left_open = true;
                 // The catalogued first half keeps its translations; the marquee and Esc hint is its
                 // own catalog key, shown in English until a catalog translates it.
-                let hint = format!(
-                    "{} · {}",
-                    tl!("Click text or an image to edit it"),
-                    crate::i18n::t("drag on the page to select several · Esc to finish")
-                );
+                let hint = format!("{} · {}", tl!("Click text or an image to edit it"), tl!("drag on the page to select several · Esc to finish"));
                 self.notify(hint);
             }
             "edit.advanced_search" => {

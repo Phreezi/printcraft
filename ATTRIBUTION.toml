@@ -19,7 +19,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Simplified Chinese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "f4aa0dc31aee19c81d72b60e3ef771066d75328e9173844c61119737d20efbe6"
+sha256 = "1efd1b1b88843114a982b07282e6d2f6f6df0f68c75f07a89cf86ddb5474ea80"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/zh-hant.tsv"
@@ -53,6 +53,17 @@ licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Brazilian Portuguese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
 sha256 = "0ee4d2f630623ef7e06413a7c34a4a0269a2600fba682f06988a1346be4d07a5"
+
+[[asset]]
+path = "crates/ui-egui/src/i18n/pt-pt.tsv"
+title = "European Portuguese interface translation catalog"
+author = "PeDeeFe contributors"
+source = "Contributor-original: clean-room translations of PdfCraft's and PeDeeFe's English UI labels, no proprietary localisation resources"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "translation"
+usage = "European Portuguese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
+sha256 = "cce5b1bb992ede0b3efda2a64b3a656f98a113a3c92fa44d5c47391e32de7d1f"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/es.tsv"
