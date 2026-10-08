@@ -56,11 +56,22 @@ Every change pushed to this repository builds a Windows installer on GitHub Acti
 
 There is also a portable `.zip` (no installation: unzip and run `pedeefe.exe`).
 
+## Interface language
+
+The interface language is chosen in **Menu → Edit → Preferences…** (Command-comma on macOS,
+Ctrl-comma elsewhere, also with no document open; Auto follows the system language;
+see [docs/localization.md](docs/localization.md)) and saved. Japanese, Simplified and
+Traditional Chinese and Spanish cover commands, dialogs, panels and keyboard shortcuts; Czech and
+Brazilian Portuguese (used for any Portuguese system language) cover the menus so far. Command
+search accepts the translated label, the English label and the stable command id; filenames, PDF
+contents, author names, custom action names and error details from the engine or the operating
+system keep their own text.
+
 ## Build from source
 
 ```sh
 git clone https://github.com/Phreezi/printcraft
-cd pdfcraft
+cd printcraft
 cargo run --release -p pdfcraft -- some.pdf     # the desktop app
 cargo test --workspace                            # the tests
 ```
@@ -69,6 +80,17 @@ On Windows you need [Rust](https://rustup.rs) with the MSVC toolchain (the Visua
 Tools). The crates keep PdfCraft's names (`pdfcraft-*`), so changes from PdfCraft merge in
 cleanly.
 
+Japanese fonts come from [craft-fonts](https://github.com/storytold/craft-fonts), an optional build
+input that every test build includes. To build with them (Japanese interface text, and Japanese text
+in edited PDFs):
+
+```sh
+git clone https://github.com/storytold/craft-fonts ../craft-fonts
+CRAFT_FONTS_DIR=../craft-fonts cargo run --release -p pdfcraft -- some.pdf
+```
+
+Logs, environment variables and other development notes are in [docs/development.md](docs/development.md).
+
 ## Em português
 
 O PeDeeFe é uma versão modificada do PdfCraft, com impressão a sério no Windows, papel A4/A3,
@@ -76,6 +98,9 @@ impressão por janela (como no AutoCAD) e uma pré-visualização nítida. Para 
 [Releases](https://github.com/Phreezi/printcraft/releases) descarrega o `.msi` mais recente e
 instala-o. Fica ao lado do PdfCraft oficial, sem o substituir. Na app, **Help ▸ Check for
 updates** avisa quando há uma versão nova.
+
+Com o Windows em português, os menus aparecem em português (do Brasil); o idioma muda em
+**Menu ▸ Editar ▸ Preferências… ▸ Idioma da interface**.
 
 ## License
 

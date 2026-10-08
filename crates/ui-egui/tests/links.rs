@@ -52,7 +52,7 @@ fn about_dialog_names_the_app_and_its_origin() {
     });
     h.get_by_label("PeDeeFe");
     h.get_by_label("PeDeeFe icon");
-    h.get_by_label_contains("Based on PdfCraft by the ArtCraft team");
+    h.get_by_label_contains("Based on PdfCraft (formerly PrintCraft) by the ArtCraft team");
     assert_eq!(h.query_all_by_label("ArtCraft").count(), 0, "no ArtCraft mark (alt text)");
     h.get_by_label("Report a problem").click();
     h.run_steps(2);
@@ -67,4 +67,22 @@ fn help_commands_open_each_link() {
         assert_eq!(h.state().last_opened_url.as_deref(), Some(l.url));
         assert_eq!(pdfcraft_engine::commands::command(l.command).unwrap().menu, Some("Help"));
     }
+}
+
+#[test]
+fn about_dialog_has_contributors_and_models_tabs() {
+    let mut h = harness(|app| app.dialog = Some(Dialog::About));
+    h.get_by_label("Contributors").click();
+    h.run_steps(2);
+    // The owner is always in the compiled-in credits (contributors/contributors.json), shown by username.
+    h.get_by_label("@echelon");
+    h.get_by_label("Table").click();
+    h.run_steps(2);
+    h.get_by_label("PRs");
+    h.get_by_label("Display name").click();
+    h.run_steps(2);
+    h.get_by_label("Brandon Thomas");
+    h.get_by_label("Models").click();
+    h.run_steps(2);
+    assert!(h.query_all_by_label("Anthropic").count() >= 1);
 }

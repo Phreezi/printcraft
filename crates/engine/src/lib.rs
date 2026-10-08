@@ -20,6 +20,7 @@ pub mod export;
 pub mod js;
 pub mod links;
 pub mod ocr;
+pub mod xfa;
 
 pub use pdfcraft_organize::{BoxSpec, PageBox, SplitBy, split_ranges};
 
@@ -28,16 +29,19 @@ pub use pdfcraft_organize::LabelStyle;
 pub use pdfcraft_organize::view::{InitialView, Layout as InitialLayout, Magnification, Navigation};
 
 pub use pdfcraft_cos::Algorithm;
+pub use pdfcraft_create::ImageResolution;
 pub use pdfcraft_edit::{
     Added, AddedImage, AddedText, Align as TextAlign, Background, Content as AddedContent, Family as FontFamily, HeaderFooter, MarkKind, Watermark,
 };
 pub use pdfcraft_forms::{
-    BorderStyle, CheckStyle, Field as FormField, FieldAction, FieldFont, FieldKind as FormFieldKind, FieldProps, FieldValue, Look as FieldLook,
-    NewField, TabOrder, Trigger as FieldTrigger, Widget as FormWidget, af as form_scripts, flags as field_flags,
+    BorderStyle, CheckStyle, Field as FormField, FieldAction, FieldChange, FieldFont, FieldKind as FormFieldKind, FieldProps, FieldValue,
+    Look as FieldLook, NewField, TabOrder, Trigger as FieldTrigger, Widget as FormWidget, af as form_scripts, flags as field_flags,
 };
 
 pub use pdfcraft_a11y as a11y;
 pub use pdfcraft_edit::{BlockStyle, PageImage, TextBlock, TextLine};
+pub use pdfcraft_measure as measure;
+pub use pdfcraft_xfa::Report as XfaLayout;
 
 /// A change to an existing page image.
 #[derive(Clone, Debug, PartialEq)]
@@ -56,27 +60,29 @@ pub enum ImageEdit {
     },
     Delete,
 }
-pub use pdfcraft_fonts::{ScriptOutline, script_outline};
+pub use pdfcraft_fonts::{MAX_SIGNATURE_CHARS, ScriptOutline, script_outline};
 
 /// Fill & Sign: `text` in the script font as a typed signature, its left edge at `at` (user
 /// space, vertically centred) and `height` points tall. `None` for text with no outlines.
 pub fn typed_signature_shape(at: [f64; 2], text: &str, height: f64) -> Option<Shape> {
     let o = script_outline(text);
-    let span = (o.ascent - o.descent).max(0.1);
+    let [left, bottom, right, top] = o.bounds();
+    let span = (top - bottom).max(0.1);
+    let width = right - left;
     if o.contours.is_empty() || o.width <= 0.0 {
         return None;
     }
     let k = height / span;
-    let rect = [at[0], at[1] - height / 2.0, at[0] + o.width * k, at[1] + height / 2.0];
-    let contours = o.contours.iter().map(|c| c.iter().map(|p| [p[0] / o.width, (p[1] - o.descent) / span]).collect()).collect();
+    let rect = [at[0], at[1] - height / 2.0, at[0] + width * k, at[1] + height / 2.0];
+    let contours = o.contours.iter().map(|c| c.iter().map(|p| [(p[0] - left) / width, (p[1] - bottom) / span]).collect()).collect();
     Some(Shape::TypedSignature { rect, contours })
 }
 /// Comment geometry helpers (text-box line breaking) for frontends.
 pub use pdfcraft_annot::appearance as annot_text;
 pub use pdfcraft_annot::links::{Highlight as LinkHighlight, LinkAction, LinkItem, LinkStyle};
 pub use pdfcraft_annot::{
-    AttachIcon, FillMark, Markup, NewAnnotation, NoteIcon, OverlayFont, OverlayLook, Props as CommentProps, ReviewState, Rgb, Shape, StampGroup,
-    StampKind, Style, rect_quad,
+    AttachIcon, FillMark, Markup, NOTE_SIZE, NewAnnotation, NoteIcon, OverlayFont, OverlayLook, Props as CommentProps, ReviewState, Rgb, Shape,
+    StampGroup, StampKind, Style, rect_quad,
 };
 pub use pdfcraft_forms::detect;
 pub use pdfcraft_optimize as optimize;
@@ -143,7 +149,8 @@ fn scope_of(edit: &Edit) -> Scope {
     match edit {
         // A file attachment also changes the Attachments list.
         Edit::AddAnnotation(a) if matches!(a.shape, Shape::Attachment { .. }) => Scope::Full,
-        Edit::AddAnnotation(_)
+        Edit::AddMeasurement(_)
+        | Edit::AddAnnotation(_)
         | Edit::AddCustomStamp { .. }
         | Edit::DeleteAnnotation { .. }
         | Edit::SetAnnotationContents { .. }
@@ -213,6 +220,14 @@ pub struct Document {
     config: RenderConfig,
     /// What field scripts printed or asked for (see [`Session::take_js_output`]).
     js_output: js::JsOutput,
+    /// Dynamic XFA forms: what laying the template out produced (pages and fields are
+    /// PdfCraft's; Adobe's viewers draw the form from the XFA packets themselves).
+    pub xfa: Option<XfaLayout>,
+    /// The parsed template of a laid-out XFA form, for its scripts.
+    xfa_template: Option<Arc<pdfcraft_xfa::model::Template>>,
+    /// XFA forms: what was approximated, rewritten or could not be written to the XFA data
+    /// (also in `info.warnings`, kept there when the document is re-read).
+    pub xfa_warnings: Vec<String>,
 }
 
 impl Document {
@@ -243,6 +258,29 @@ impl Document {
     /// Edit a PDF ▸ Edit text: the paragraphs on `page` (0-based).
     pub fn text_blocks(&self, page: usize) -> Vec<pdfcraft_edit::TextBlock> {
         self.editor.as_ref().and_then(|e| pdfcraft_edit::text_blocks(&e.cos, page).ok()).unwrap_or_default()
+    }
+
+    /// Saved measurement annotations, calculated from their geometry and PDF scales, plus
+    /// the ones that couldn't be read (unsupported formats are skipped, not fatal).
+    pub fn measurements(&self) -> Result<measure::Listing, String> {
+        let e = self.editor.as_ref().ok_or("the document can't be read")?;
+        Ok(measure::list(&e.cos))
+    }
+    pub fn measurement_scale(&self, page: usize, at: measure::Point) -> Result<measure::Scale, String> {
+        let e = self.editor.as_ref().ok_or("the document can't be read")?;
+        measure::scale_at(&e.cos, page, at).map_err(|e| e.to_string())
+    }
+    pub fn measurement_to_user(&self, page: usize, point: measure::Point) -> Result<measure::Point, String> {
+        let e = self.editor.as_ref().ok_or("the document can't be read")?;
+        measure::view_to_user(&e.cos, page, point).map_err(|e| e.to_string())
+    }
+    pub fn measurement_to_view(&self, page: usize, point: measure::Point) -> Result<measure::Point, String> {
+        let e = self.editor.as_ref().ok_or("the document can't be read")?;
+        measure::user_to_view(&e.cos, page, point).map_err(|e| e.to_string())
+    }
+    pub fn measurement_paths(&self, page: usize) -> Result<measure::snap::Geometry, String> {
+        let e = self.editor.as_ref().ok_or("the document can't be read")?;
+        measure::snap::geometry(&e.cos, page).map_err(|e| e.to_string())
     }
 
     /// A counter that changes with every edit (for caches of derived data).
@@ -667,6 +705,15 @@ pub enum Edit {
         prefix: String,
         first: u32,
     },
+    /// Add a calibrated distance, perimeter or area annotation.
+    AddMeasurement(measure::NewMeasurement),
+    /// Store a drawing scale for a rectangular viewport (PDF user space).
+    SetMeasurementScale {
+        page: usize,
+        bbox: [f64; 4],
+        name: String,
+        scale: measure::Scale,
+    },
     /// Add a comment (sticky note, highlight, shape, drawing, text box…).
     AddAnnotation(NewAnnotation),
     /// A custom stamp from a picture file (a PDF page or an image) on `page`. A zero-size
@@ -831,6 +878,12 @@ pub enum Edit {
     /// and visibility.
     ApplyScriptChanges {
         changes: Vec<pdfcraft_forms::FieldChange>,
+    },
+    /// An XFA form's scripted event (a button's `click`, say) on the object at `som`: what the
+    /// script changes (values, rows, visibility) is applied and the form laid out again.
+    XfaEvent {
+        som: String,
+        activity: String,
     },
     /// Scan & OCR ▸ Recognize text: put recognised words on `page` as invisible text over the
     /// image (from [`ocr::OcrJob::run`]).
@@ -1027,6 +1080,8 @@ impl Edit {
             Edit::MoveBookmark { .. } => "Move bookmark".into(),
             Edit::SetBookmarkPage { .. } => "Set bookmark destination".into(),
             Edit::NumberPages { .. } => "Number pages".into(),
+            Edit::AddMeasurement(m) => format!("Measure {}", m.kind.name()),
+            Edit::SetMeasurementScale { .. } => "Set measurement scale".into(),
             Edit::AddAnnotation(a) => format!("Add {}", annotation_noun(&a.shape)),
             Edit::AddCustomStamp { .. } => "Add stamp".into(),
             Edit::DeleteAnnotation { .. } => "Delete comment".into(),
@@ -1055,6 +1110,7 @@ impl Edit {
             Edit::MarkDecorative { .. } => "Mark figure as decorative".into(),
             Edit::AddOcrText { .. } => "Recognize text".into(),
             Edit::ApplyScriptChanges { .. } => "Run JavaScript".into(),
+            Edit::XfaEvent { .. } => "Run form script".into(),
             Edit::ConvertPdfA { level } => format!("Save as {}", level.label()),
             Edit::SetFieldScript { name, .. } => format!("Edit script of {name}"),
             Edit::SetDocumentScript { script: None, .. } => "Delete document JavaScript".into(),
@@ -1165,7 +1221,8 @@ fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Result<(), Ed
                 Err(EditError::NotPermitted("page changes"))
             }
         }
-        Edit::AddAnnotation(_)
+        Edit::AddMeasurement(_)
+        | Edit::AddAnnotation(_)
         | Edit::AddCustomStamp { .. }
         | Edit::DeleteAnnotation { .. }
         | Edit::SetAnnotationContents { .. }
@@ -1178,14 +1235,15 @@ fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Result<(), Ed
         | Edit::MoveAnnotation { .. }
         | Edit::ResizeAnnotation { .. }
         | Edit::StyleAnnotation { .. }
-        | Edit::SetAnnotationInfo { .. } => {
+        | Edit::SetAnnotationInfo { .. }
+        | Edit::SetMeasurementScale { .. } => {
             if p.annotate() {
                 Ok(())
             } else {
                 Err(EditError::NotPermitted("comments"))
             }
         }
-        Edit::SetFieldValue { .. } | Edit::ResetForm { .. } | Edit::SetFieldImage { .. } | Edit::ApplyScriptChanges { .. } => {
+        Edit::SetFieldValue { .. } | Edit::ResetForm { .. } | Edit::SetFieldImage { .. } | Edit::ApplyScriptChanges { .. } | Edit::XfaEvent { .. } => {
             if p.fill_forms() {
                 Ok(())
             } else {
@@ -1251,6 +1309,16 @@ fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Result<(), Ed
 struct EditCtx {
     /// Field scripts run (`None`: JavaScript is off) and what they produced.
     js: Option<js::JsRunner>,
+    /// A laid-out XFA form's template (`None`: not an XFA form, or JavaScript is off) and what
+    /// its scripts produced.
+    xfa: Option<Arc<pdfcraft_xfa::model::Template>>,
+    xfa_out: js::JsOutput,
+    /// The datasets stream this edit wrote (later writes in the edit replace it in place).
+    xfa_datasets: Option<pdfcraft_cos::ObjRef>,
+    /// A form script ran too long and was abandoned: the document's scripts go off.
+    xfa_ran_away: bool,
+    /// Pages in the document, for `xfa.layout.pageCount()`.
+    pages: usize,
     date: Option<String>,
     /// Today in local time, for date tokens.
     today: (i64, u32, u32),
@@ -1269,7 +1337,18 @@ impl EditCtx {
             // Real clock: mix in sub-second time so ids from two sessions don't collide.
             seed ^= std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos() as u64).unwrap_or(0) << 32;
         }
-        Self { js: None, date: now.map(pdfcraft_cos::pdf_date), today: (1970, 1, 1), seed, count: 0 }
+        Self {
+            js: None,
+            xfa: None,
+            xfa_out: Default::default(),
+            xfa_datasets: None,
+            xfa_ran_away: false,
+            pages: 0,
+            date: now.map(pdfcraft_cos::pdf_date),
+            today: (1970, 1, 1),
+            seed,
+            count: 0,
+        }
     }
 
     /// 32 bytes of entropy for new encryption keys and salts. `RandomState` is seeded by the
@@ -1343,6 +1422,10 @@ fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut EditCtx) -> 
         }
         Edit::SetBookmarkPage { path, page } => pdfcraft_organize::set_bookmark_page(doc, path, *page)?,
         Edit::NumberPages { from, to, style, prefix, first } => pdfcraft_organize::number_pages(doc, *from, *to, *style, prefix, *first)?,
+        Edit::AddMeasurement(m) => {
+            measure::add(doc, m, &cx.meta())?;
+        }
+        Edit::SetMeasurementScale { page, bbox, name, scale } => measure::set_scale(doc, *page, *bbox, name, scale)?,
         Edit::AddAnnotation(a) => {
             pdfcraft_annot::add_annotation(doc, a, &cx.meta())?;
         }
@@ -1395,6 +1478,14 @@ fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut EditCtx) -> 
             Some(js) => pdfcraft_forms::apply_script_changes(doc, changes, js)?,
             None => pdfcraft_forms::apply_script_changes(doc, changes, &mut pdfcraft_forms::NoScripts)?,
         },
+        Edit::XfaEvent { som, activity } => {
+            let tpl = cx.xfa.clone().ok_or_else(|| EditError::Invalid("this is not a laid-out XFA form, or JavaScript is off".into()))?;
+            let mut run = xfa::XfaRun { page_count: cx.pages, out: &mut cx.xfa_out, datasets: cx.xfa_datasets, ran_away: false };
+            let ran = xfa::on_event(doc, &tpl, som, activity, &mut run);
+            cx.xfa_datasets = run.datasets;
+            cx.xfa_ran_away |= run.ran_away;
+            ran.map_err(EditError::Invalid)?;
+        }
         Edit::SetFieldImage { name, image } => {
             let (img, _) = pdfcraft_create::image_xobject(doc, name, image)?;
             let px = match &*doc.get(img) {
@@ -1673,6 +1764,8 @@ pub enum EditError {
     Bookmark(#[from] pdfcraft_organize::OutlineError),
     #[error("{0}")]
     Comment(#[from] pdfcraft_annot::AnnotError),
+    #[error(transparent)]
+    Measure(#[from] measure::MeasureError),
     #[error("{0}")]
     Protection(String),
     #[error("{0}")]
@@ -1727,6 +1820,84 @@ pub struct Session {
     trust: Arc<TrustStore>,
     /// Preferences ▸ JavaScript ▸ Enable Acrobat JavaScript, inverted (on by default).
     js_off: bool,
+}
+
+/// Lay a dynamic XFA form out (pages and fields) and give its widgets appearances.
+fn xfa_layout(doc: &mut pdfcraft_cos::Document) -> Result<XfaLayout, String> {
+    let report = pdfcraft_xfa::render_into(doc).map_err(|e| e.to_string())?;
+    for f in pdfcraft_forms::fields(doc) {
+        pdfcraft_forms::redraw_field(doc, &f.name).map_err(|e| format!("{}: {e}", f.name))?;
+    }
+    Ok(report)
+}
+
+/// The form's fields as the XFA data layer wants them.
+fn xfa_field_data(doc: &pdfcraft_cos::Document) -> Vec<pdfcraft_xfa::FieldDatum> {
+    use pdfcraft_forms::FieldKind as K;
+    pdfcraft_forms::fields(doc)
+        .into_iter()
+        .map(|f| {
+            let data = match f.kind {
+                K::Text | K::Combo | K::List => pdfcraft_xfa::FieldData::Text(f.value.join("\n")),
+                K::CheckBox => pdfcraft_xfa::FieldData::Check(!f.value.is_empty()),
+                K::Radio => pdfcraft_xfa::FieldData::Radio(f.value.first().cloned()),
+                K::PushButton | K::Signature => pdfcraft_xfa::FieldData::None,
+            };
+            pdfcraft_xfa::FieldDatum { obj: f.obj, name: f.name, data }
+        })
+        .collect()
+}
+
+/// Keep the XFA datasets packet in step with the fields after an edit. Returns what could not
+/// be written.
+/// `datasets`: the stream this edit already wrote, replaced in place rather than added again
+/// (and set to the one written).
+fn xfa_sync_datasets(doc: &mut pdfcraft_cos::Document, datasets: &mut Option<pdfcraft_cos::ObjRef>) -> Result<Vec<String>, String> {
+    let data = xfa_field_data(doc);
+    let r = pdfcraft_xfa::write_datasets_reusing(doc, &data, *datasets).map_err(|e| e.to_string())?;
+    if r.stream.is_some() {
+        *datasets = r.stream;
+    }
+    Ok(r.warnings)
+}
+
+/// What a document whose form script ran away is told.
+const XFA_SCRIPTS_OFF: &str =
+    "A script of this form ran too long and was abandoned; the form's scripts are off for this document (reopen it to run them again)";
+
+/// Most XFA warnings kept per document.
+const MAX_XFA_WARNINGS: usize = 50;
+
+/// Add `new` to `list` (no repeats, at most [`MAX_XFA_WARNINGS`]).
+fn note_warnings(list: &mut Vec<String>, new: &[String]) {
+    for w in new {
+        if !list.contains(w) && list.len() < MAX_XFA_WARNINGS {
+            list.push(w.clone());
+        }
+    }
+}
+
+/// Give the fields the values the XFA datasets hold (a form filled in another viewer). Returns
+/// the names of the fields that changed.
+fn xfa_values_from_datasets(doc: &mut pdfcraft_cos::Document) -> Result<Vec<String>, String> {
+    let data = xfa_field_data(doc);
+    let fields = pdfcraft_forms::fields(doc);
+    let mut changed = Vec::new();
+    for (name, value) in pdfcraft_xfa::read_values(doc, &data) {
+        let Some(f) = fields.iter().find(|f| f.name == name) else { continue };
+        let new = match value {
+            pdfcraft_xfa::FieldData::Text(t) => (f.value.join("\n") != t).then_some(FieldValue::Text(t)),
+            pdfcraft_xfa::FieldData::Check(on) => (f.value.is_empty() == on).then_some(FieldValue::Check(on)),
+            pdfcraft_xfa::FieldData::Radio(sel) => (f.value.first() != sel.as_ref()).then_some(FieldValue::Radio(sel)),
+            pdfcraft_xfa::FieldData::None => None,
+        };
+        if let Some(v) = new
+            && pdfcraft_forms::set_value(doc, &name, &v).is_ok()
+        {
+            changed.push(name);
+        }
+    }
+    Ok(changed)
 }
 
 /// Validate the signature fields of `cos` (written as `bytes`).
@@ -1815,6 +1986,147 @@ impl Session {
             }
             Err(e) => return Err(e),
         };
+        // A dynamic XFA form is a shell around an XML template; lay the template out into real
+        // pages and fields so the rest of the engine works on it. The original bytes stay: the
+        // laid-out form is one appended revision.
+        let opts = SaveOptions { mod_date: self.now().map(pdfcraft_cos::pdf_date), ..SaveOptions::default() };
+        // Write `work` as one more revision and reopen it: what the document then is.
+        let rebase = |work: &pdfcraft_cos::Document| -> Result<(Arc<Vec<u8>>, DocInfo, pdfcraft_cos::Document), String> {
+            let new_bytes = write_incremental(work, &opts).map(Arc::new).map_err(|e| e.to_string())?;
+            let new_info = inspect(new_bytes.clone(), render_password.as_deref()).map_err(|e| e.to_string())?;
+            let new_cos = pdfcraft_cos::Document::open_with_password(new_bytes.clone(), password).map_err(|e| e.to_string())?;
+            Ok((new_bytes, new_info, new_cos))
+        };
+        let (bytes, info, cos, xfa) = match (info.xfa, cos) {
+            (Some(pdfcraft_render::Xfa::Dynamic), Ok(Ok(cos))) if pdfcraft_xfa::existing_layout(&cos).is_none() => {
+                let mut work = cos.clone();
+                let laid_out = guard(|| xfa_layout(&mut work))
+                    .unwrap_or_else(|m| Err(format!("laying it out failed unexpectedly ({m})")))
+                    .and_then(|report| rebase(&work).map(|(b, i, c)| (b, i, c, report)));
+                match laid_out {
+                    Ok((b, i, c, report)) => (b, i, Ok(Ok(c)), Some(report)),
+                    Err(e) => {
+                        let mut info = info;
+                        info.warnings.push(format!("This dynamic XFA form could not be laid out: {e}"));
+                        (bytes, info, Ok(Ok(cos)), None)
+                    }
+                }
+            }
+            // A static XFA form, or a dynamic one laid out earlier: its datasets may hold values
+            // filled in by another viewer since; give the fields those values.
+            (Some(_), Ok(Ok(cos))) => {
+                let report = pdfcraft_xfa::existing_layout(&cos);
+                let mut work = cos.clone();
+                let synced =
+                    guard(|| xfa_values_from_datasets(&mut work)).unwrap_or_else(|m| Err(format!("reading its data failed unexpectedly ({m})")));
+                match synced {
+                    Ok(names) if names.is_empty() => (bytes, info, Ok(Ok(cos)), report),
+                    Ok(names) => match rebase(&work) {
+                        Ok((b, mut i, c)) => {
+                            // The fields were rewritten from the XFA data: say so, and which.
+                            let shown: Vec<&str> = names.iter().take(5).map(String::as_str).collect();
+                            let more = if names.len() > shown.len() { format!(" and {} more", names.len() - shown.len()) } else { String::new() };
+                            i.warnings.push(format!(
+                                "{} form field value{} were taken from this form's XFA data (filled in by another viewer): {}{more}",
+                                names.len(),
+                                if names.len() == 1 { "" } else { "s" },
+                                shown.join(", ")
+                            ));
+                            (b, i, Ok(Ok(c)), report)
+                        }
+                        Err(e) => {
+                            let mut info = info;
+                            info.warnings.push(format!("The values in this form's XFA data could not be applied: {e}"));
+                            (bytes, info, Ok(Ok(cos)), report)
+                        }
+                    },
+                    Err(e) => {
+                        let mut info = info;
+                        info.warnings.push(format!("The values in this form's XFA data could not be applied: {e}"));
+                        (bytes, info, Ok(Ok(cos)), report)
+                    }
+                }
+            }
+            (_, cos) => (bytes, info, cos, None),
+        };
+        // A laid-out XFA form: its initialize and calculate scripts run now, as on opening in
+        // Acrobat; what they change is one more revision, still nothing to save.
+        let mut script_output = js::JsOutput::default();
+        let mut ran_away = false;
+        let xfa_template = match (&xfa, &cos) {
+            (Some(_), Ok(Ok(c))) => xfa::template(c),
+            _ => None,
+        };
+        let (bytes, info, cos) = match (&xfa, cos) {
+            (Some(_), Ok(Ok(cos))) if !self.js_off => match xfa_template.clone() {
+                Some(tpl) => {
+                    let mut work = cos.clone();
+                    let pages = info.pages.len();
+                    let ran = guard(|| {
+                        let mut run = xfa::XfaRun { page_count: pages, out: &mut script_output, datasets: None, ran_away: false };
+                        let changes = xfa::on_open(&mut work, &tpl, &mut run);
+                        if run.ran_away {
+                            ran_away = true;
+                        }
+                        changes
+                    })
+                    .unwrap_or_else(|m| Err(format!("its scripts failed unexpectedly ({m})")));
+                    match ran {
+                        Ok(changes) if work.is_modified() => match rebase(&work) {
+                            Ok((b, mut i, c)) => {
+                                // The file as saved differs from what opening shows: say so.
+                                if !changes.is_empty() {
+                                    i.warnings.push(format!(
+                                        "This form's scripts changed it on opening ({}); saving keeps those changes",
+                                        changes.describe()
+                                    ));
+                                }
+                                (b, i, Ok(Ok(c)))
+                            }
+                            Err(e) => {
+                                script_output.errors.push(format!("The form's scripts could not be applied: {e}"));
+                                (bytes, info, Ok(Ok(cos)))
+                            }
+                        },
+                        Ok(_) => (bytes, info, Ok(Ok(cos))),
+                        Err(e) => {
+                            script_output.errors.push(format!("The form's scripts could not run: {e}"));
+                            (bytes, info, Ok(Ok(cos)))
+                        }
+                    }
+                }
+                None => (bytes, info, Ok(Ok(cos))),
+            },
+            (_, cos) => (bytes, info, cos),
+        };
+        // XFA notes survive the document being re-read after edits.
+        let xfa_warnings: Vec<String> = if info.xfa.is_some() { info.warnings.clone() } else { Vec::new() };
+        let id = self.push_document(name, path, bytes, info, cos, render_password, password, xfa)?;
+        if let Some(d) = self.docs.iter_mut().find(|d| d.id == id) {
+            // A script that ran away on open turns the form's scripts off for this document.
+            d.xfa_template = if ran_away { None } else { xfa_template };
+            d.js_output.append(script_output);
+            if ran_away {
+                d.js_output.errors.push(XFA_SCRIPTS_OFF.into());
+            }
+            note_warnings(&mut d.xfa_warnings, &xfa_warnings);
+        }
+        Ok(id)
+    }
+
+    /// The last step of opening: build the document record and register it.
+    #[allow(clippy::too_many_arguments)]
+    fn push_document(
+        &mut self,
+        name: String,
+        path: Option<String>,
+        bytes: Arc<Vec<u8>>,
+        info: DocInfo,
+        cos: Result<Result<pdfcraft_cos::Document, pdfcraft_cos::CosError>, Box<dyn std::any::Any + Send>>,
+        render_password: Option<String>,
+        password: Option<&str>,
+        xfa: Option<XfaLayout>,
+    ) -> Result<DocId, OpenError> {
         let config = RenderConfig { password: render_password.as_deref().map(Arc::from), ..Default::default() };
         let renderer = RenderPool::new(bytes.clone(), render_threads(), config.clone());
         let (editor, read_only_reason) = match cos {
@@ -1825,7 +2137,10 @@ impl Session {
             Ok(Err(e)) => (None, Some(e.to_string())),
             Err(_) => (None, Some("the document structure could not be read for editing".into())),
         };
-        let form = editor.as_ref().map(|e| pdfcraft_forms::fields(&e.cos)).unwrap_or_default();
+        let mut form = editor.as_ref().map(|e| pdfcraft_forms::fields(&e.cos)).unwrap_or_default();
+        if let Some(e) = editor.as_ref() {
+            xfa::mark_script_buttons(&e.cos, &mut form);
+        }
         let marks = editor.as_ref().map(|e| pdfcraft_edit::marks_present(&e.cos)).unwrap_or_default();
         let added = editor.as_ref().map(|e| pdfcraft_edit::list_added(&e.cos)).unwrap_or_default();
         let links = editor.as_ref().map(|e| pdfcraft_annot::links::list(&e.cos)).unwrap_or_default();
@@ -1855,6 +2170,9 @@ impl Session {
             editor,
             config,
             js_output: Default::default(),
+            xfa,
+            xfa_template: None,
+            xfa_warnings: Vec::new(),
         });
         Ok(id)
     }
@@ -1870,7 +2188,12 @@ impl Session {
         let js_off = self.js_off;
         let doc = self.doc_mut(id)?;
         let name = doc.name.clone();
+        let is_xfa = doc.info.xfa.is_some();
         let mut cx = EditCtx::new(now, doc.generation ^ (id.0 << 48));
+        if !js_off {
+            cx.xfa = doc.xfa_template.clone();
+        }
+        cx.pages = doc.info.pages.len();
         cx.today = today;
         let reason = doc.read_only_reason.clone().unwrap_or_default();
         let signed = doc.is_signed();
@@ -1885,6 +2208,49 @@ impl Session {
         // `next` is a copy: if the edit fails or crashes, the document is unchanged.
         guard(|| run_edit(&mut next, &edit, &mut cx))
             .unwrap_or_else(|m| Err(EditError::Invalid(format!("{} failed unexpectedly ({m}); the document was not changed", edit.label()))))?;
+        // An XFA form's scripts answer the change: exit and validate scripts of the field, then
+        // every calculation (and a reset recalculates). They read the data, so it is brought up
+        // to date first.
+        if let Some(tpl) = cx.xfa.clone() {
+            if is_xfa && matches!(scope_of(&edit), Scope::Form | Scope::Full) {
+                let datasets = &mut cx.xfa_datasets;
+                let notes = guard(|| xfa_sync_datasets(&mut next, datasets))
+                    .unwrap_or_else(|m| Err(format!("writing the XFA data failed unexpectedly ({m})")))
+                    .map_err(EditError::Write)?;
+                cx.xfa_out.errors.extend(notes);
+            }
+            fn collect(e: &Edit, changed: &mut Vec<String>, reset: &mut bool) {
+                match e {
+                    Edit::SetFieldValue { name, .. } => changed.push(name.clone()),
+                    Edit::ResetForm { .. } => *reset = true,
+                    Edit::Batch { edits, .. } => edits.iter().for_each(|e| collect(e, changed, reset)),
+                    _ => {}
+                }
+            }
+            let mut changed: Vec<String> = Vec::new();
+            let mut reset = false;
+            collect(&edit, &mut changed, &mut reset);
+            if !changed.is_empty() || reset {
+                let mut run = xfa::XfaRun { page_count: cx.pages, out: &mut cx.xfa_out, datasets: cx.xfa_datasets, ran_away: false };
+                // Every changed field's scripts, then the calculations once (after a reset,
+                // only those).
+                let ran = guard(|| xfa::on_changes(&mut next, &tpl, &changed, &mut run))
+                    .unwrap_or_else(|m| Err(format!("the form's scripts failed unexpectedly ({m})")));
+                cx.xfa_datasets = run.datasets;
+                cx.xfa_ran_away |= run.ran_away;
+                if let Err(e) = ran {
+                    cx.xfa_out.errors.push(e);
+                }
+            }
+        }
+        // XFA forms keep their values in the datasets packet too, for Adobe's viewers.
+        let mut xfa_notes = Vec::new();
+        if is_xfa && matches!(scope_of(&edit), Scope::Form | Scope::Full) {
+            let datasets = &mut cx.xfa_datasets;
+            xfa_notes = guard(|| xfa_sync_datasets(&mut next, datasets))
+                .unwrap_or_else(|m| Err(format!("writing the XFA data failed unexpectedly ({m})")))
+                .map_err(EditError::Write)?;
+        }
         // Signed documents are only ever saved incrementally: an edit that needs a full rewrite
         // (applying redactions, changing security, sanitizing) would invalidate the signatures.
         let rewrites = |c: &pdfcraft_cos::Document| c.full_save_required() || c.encryption_changed();
@@ -1916,8 +2282,16 @@ impl Session {
         }
         doc.dirty = true;
         doc.generation += 1;
+        note_warnings(&mut doc.xfa_warnings, &xfa_notes);
+        let notes = doc.xfa_warnings.clone();
+        note_warnings(&mut doc.info.warnings, &notes);
         if let Some(js) = cx.js {
             doc.js_output.append(js.output);
+        }
+        doc.js_output.append(cx.xfa_out);
+        if cx.xfa_ran_away {
+            doc.xfa_template = None;
+            doc.js_output.errors.push(XFA_SCRIPTS_OFF.into());
         }
         Ok(())
     }
@@ -1971,7 +2345,9 @@ impl Session {
         } else {
             editor.cos.bytes().clone()
         };
-        let form = Arc::new(pdfcraft_forms::fields(&editor.cos));
+        let mut form = pdfcraft_forms::fields(&editor.cos);
+        xfa::mark_script_buttons(&editor.cos, &mut form);
+        let form = Arc::new(form);
         match scope {
             Scope::Comments => doc.info.annotations = comment_list(&editor.cos),
             Scope::Form => {
@@ -2003,6 +2379,12 @@ impl Session {
     /// Rebuild working bytes, inspection and renderer from the current edit state.
     fn refresh(doc: &mut Document) -> Result<(), EditError> {
         let Some(editor) = doc.editor.as_ref() else { return Ok(()) };
+        // A script may have laid an XFA form out again (rows added, subforms shown).
+        if doc.xfa.is_some()
+            && let Some(report) = pdfcraft_xfa::existing_layout(&editor.cos)
+        {
+            doc.xfa = Some(report);
+        }
         let bytes = if editor.cos.is_modified() {
             Arc::new(write_incremental(&editor.cos, &SaveOptions::default()).map_err(|e| EditError::Write(e.to_string()))?)
         } else {
@@ -2016,8 +2398,11 @@ impl Session {
                 l.visible = old.visible;
             }
         }
+        note_warnings(&mut info.warnings, &doc.xfa_warnings);
         doc.info = info;
-        doc.form = Arc::new(pdfcraft_forms::fields(&editor.cos));
+        let mut form = pdfcraft_forms::fields(&editor.cos);
+        xfa::mark_script_buttons(&editor.cos, &mut form);
+        doc.form = Arc::new(form);
         doc.marks = pdfcraft_edit::marks_present(&editor.cos);
         doc.added = pdfcraft_edit::list_added(&editor.cos);
         doc.links = pdfcraft_annot::links::list(&editor.cos);
@@ -2107,6 +2492,11 @@ impl Session {
     /// A new document with one page per image (PNG, JPEG).
     pub fn create_from_images(&self, images: &[(String, Vec<u8>)]) -> Result<Arc<Vec<u8>>, EditError> {
         self.write_new(&pdfcraft_create::from_images(images)?)
+    }
+
+    /// Create image pages at embedded resolution or a fixed dpi, without resampling.
+    pub fn create_from_images_with_resolution(&self, images: &[(String, Vec<u8>)], resolution: ImageResolution) -> Result<Arc<Vec<u8>>, EditError> {
+        self.write_new(&pdfcraft_create::from_images_with_resolution(images, resolution)?)
     }
 
     /// A new document from plain text (US Letter, 11 pt Helvetica).
@@ -2430,6 +2820,40 @@ impl Session {
             opts.date = self.signing_date();
         }
         Ok(Arc::new(pdfcraft_sign::sign(&editor.cos, id, &opts)?))
+    }
+
+    /// [`Session::sign`], embedding an RFC 3161 signature timestamp (PAdES B-T) produced by
+    /// `tsa`. The transport lives with the caller; the engine never opens a socket.
+    pub fn sign_with_timestamp(
+        &self,
+        doc: DocId,
+        id: &pdfcraft_sign::DigitalId,
+        mut opts: SignOptions,
+        tsa: &dyn pdfcraft_sign::TimestampAuthority,
+    ) -> Result<Arc<Vec<u8>>, EditError> {
+        let d = self.get(doc).ok_or(EditError::NoDocument)?;
+        let editor = d.editor.as_ref().ok_or_else(|| EditError::ReadOnly(d.read_only_reason.clone().unwrap_or_default()))?;
+        if opts.date.is_empty() {
+            opts.date = self.signing_date();
+        }
+        Ok(Arc::new(pdfcraft_sign::sign_with_timestamp(&editor.cos, id, &opts, tsa)?))
+    }
+
+    /// Append a standalone document timestamp (RFC 3161, `/ETSI.RFC3161`) covering the file's
+    /// current state. An empty `date` takes the session clock; the transport is the caller's.
+    pub fn timestamp_document(&self, doc: DocId, tsa: &dyn pdfcraft_sign::TimestampAuthority, date: String) -> Result<Arc<Vec<u8>>, EditError> {
+        let d = self.get(doc).ok_or(EditError::NoDocument)?;
+        let editor = d.editor.as_ref().ok_or_else(|| EditError::ReadOnly(d.read_only_reason.clone().unwrap_or_default()))?;
+        let date = if date.is_empty() { self.signing_date() } else { date };
+        Ok(Arc::new(pdfcraft_sign::timestamp_document(&editor.cos, tsa, &date)?))
+    }
+
+    /// Embed revocation evidence into the catalog's `/DSS` with `/VRI` entries per signature
+    /// (PAdES B-LT): an incremental update that never rewrites signed bytes.
+    pub fn embed_ltv(&self, doc: DocId, evidence: &pdfcraft_sign::dss::Evidence) -> Result<Arc<Vec<u8>>, EditError> {
+        let d = self.get(doc).ok_or(EditError::NoDocument)?;
+        let editor = d.editor.as_ref().ok_or_else(|| EditError::ReadOnly(d.read_only_reason.clone().unwrap_or_default()))?;
+        Ok(Arc::new(pdfcraft_sign::dss::embed(&editor.cos, evidence)?))
     }
 
     /// Record that the signed file `bytes` was saved (to `path`): like [`Session::mark_saved`],

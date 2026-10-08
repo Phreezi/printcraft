@@ -74,6 +74,15 @@ const BORDER_SLACK: f32 = 16.0;
 /// manager may refuse).
 const MAXIMIZE_WAIT: u32 = 120;
 
+/// The key of the app's JSON in eframe's settings (`app.ron`), written by `PdfCraftApp`'s
+/// `eframe::App::save`.
+pub const STORAGE_KEY: &str = "pdfcraft";
+
+/// The key the app's JSON had before the rename to PdfCraft: PrintCraft's, and PeDeeFe's own
+/// settings until its 0.3 sync. Read when [`STORAGE_KEY`] is missing, by the app and by
+/// [`WindowState::from_settings`] alike.
+pub const LEGACY_STORAGE_KEY: &str = "printcraft";
+
 /// Settings files bigger than this aren't read before the window opens (they hold signatures and
 /// stamps; the window state is a few bytes).
 const MAX_SETTINGS_BYTES: u64 = 64 << 20;
@@ -95,11 +104,13 @@ impl WindowState {
     }
 
     /// The window state inside the app's settings as eframe stores them (`app.ron`: a RON map
-    /// whose `"pdfcraft"` entry is the app's JSON, see `PdfCraftApp::persist`). `None` when any
+    /// whose [`STORAGE_KEY`] entry is the app's JSON, see `PdfCraftApp::persist`). Like the app,
+    /// it reads the [`LEGACY_STORAGE_KEY`] entry when there is no current one. `None` when any
     /// layer is missing or damaged.
     pub fn from_settings(ron_text: &str) -> Option<Self> {
         let map: std::collections::HashMap<String, String> = ron::from_str(ron_text).ok()?;
-        let app: serde_json::Value = serde_json::from_str(map.get("pdfcraft")?).ok()?;
+        let json = map.get(STORAGE_KEY).or_else(|| map.get(LEGACY_STORAGE_KEY))?;
+        let app: serde_json::Value = serde_json::from_str(json).ok()?;
         Self::from_json(app.get("window")?)
     }
 
@@ -418,6 +429,27 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// eframe's settings file: a RON map from key to the stored string.
+    fn settings(entries: &[(&str, &str)]) -> String {
+        let map: std::collections::BTreeMap<&str, &str> = entries.iter().copied().collect();
+        ron::ser::to_string(&map).unwrap_or_default()
+    }
+
+    #[test]
+    fn the_window_state_is_read_under_the_legacy_key_like_the_app_settings() {
+        let at = |x: f32| format!(r#"{{"window": {{"size": [1000, 700], "pos": [{x}, 50], "maximized": false}}}}"#);
+        let saved = |x: f32| Some(WindowState { size: Some([1000.0, 700.0]), pos: Some([x, 50.0]), ..WindowState::default() });
+        // A PeDeeFe user's app.ron from before the sync: the app's JSON is under "printcraft".
+        let legacy = settings(&[(LEGACY_STORAGE_KEY, &at(10.0)), ("window", "(maximized:false)")]);
+        assert_eq!(WindowState::from_settings(&legacy), saved(10.0));
+        // Saved since: the current key wins over a stale legacy entry left in the same file.
+        assert_eq!(WindowState::from_settings(&settings(&[(STORAGE_KEY, &at(20.0))])), saved(20.0));
+        assert_eq!(WindowState::from_settings(&settings(&[(LEGACY_STORAGE_KEY, &at(10.0)), (STORAGE_KEY, &at(20.0))])), saved(20.0));
+        // As in the app, a damaged current entry isn't replaced by the legacy one.
+        assert_eq!(WindowState::from_settings(&settings(&[(LEGACY_STORAGE_KEY, &at(10.0)), (STORAGE_KEY, "{")])), None);
+        assert_eq!(WindowState::from_settings(&settings(&[("other", &at(10.0))])), None);
     }
 
     #[test]

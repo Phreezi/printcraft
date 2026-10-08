@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! pdfcraft-cli info   <file.pdf> [--password PW]            document summary as JSON
-//! pdfcraft-cli render <file.pdf> --page N [--dpi 96] --out x.pam
+//! pdfcraft-cli render <file.pdf> --page N [--dpi 96] --out x.png   (.png, .jpg, .tif or .pam)
 //! pdfcraft-cli text   <file.pdf> [--page N]                  extracted text (pages separated by form feeds)
 //! pdfcraft-cli edit   <in.pdf> --out out.pdf [--rotate 1,3:90] [--delete 2,4] [--move 5:1]
 //!                       [--insert-blank 1] [--title T] [--author A] [--full]
@@ -20,7 +20,9 @@
 //!
 //! `run` and `mcp` drive the same tool table (`pdfcraft-automation`). In `run`, values parse as
 //! JSON when they can (`pages=[1,3]`, `degrees=90`) and are strings otherwise. A script runs its
-//! steps in one session, so `doc_open` returns id 1, the next document id 2, and so on.
+//! steps in one session, so `doc_open` returns id 1, the next document id 2, and so on. A step's
+//! `"out"` (like `--out`) saves its image there. With `--root DIR`, every path a tool or step
+//! names, `"out"` included, must be inside DIR, and relative paths resolve inside it.
 //!
 //! The MCP server never starts on its own: it runs only when this command is launched (normally
 //! by an agent configured to use it), talks only over stdio, and exits when stdin closes.
@@ -37,6 +39,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use pdfcraft_engine::export::ImageFormat;
 use pdfcraft_render::{PageRenderer, RenderConfig, RenderRequest, RequestKind, inspect};
 
 fn main() -> ExitCode {
@@ -57,23 +60,59 @@ fn main() -> ExitCode {
             Some("ui") => ui(&args[1..]),
             #[cfg(feature = "mcp")]
             Some("mcp") => mcp(&args[1..]),
-            Some("--version") => {
-                println!("pdfcraft-cli {}", env!("CARGO_PKG_VERSION"));
-                println!("{} command line, based on PdfCraft", pdfcraft_engine::links::APP_NAME);
-                println!("Issues:  {}  (help and feedback)", pdfcraft_engine::links::ISSUES);
-                println!("Source:  {}", pdfcraft_engine::links::GITHUB);
-                Ok(())
-            }
+            Some("--version") => version(),
             _ => Err("usage: pdfcraft-cli <info|render|text|edit|combine|extract|split|check|tools|run|mcp|ui> …  (see source header for options)\nhelp and feedback: https://github.com/Phreezi/printcraft/issues"
                 .into()),
         };
     match result {
         Ok(()) => ExitCode::SUCCESS,
+        Err(CliError::Stdout(e)) if e.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("pdfcraft-cli: {e}");
+            let _ = writeln!(std::io::stderr().lock(), "pdfcraft-cli: {e}");
             ExitCode::FAILURE
         }
     }
+}
+
+// Keep stdout errors typed: a closed pipe is normal, but file and command errors still fail.
+#[derive(Debug)]
+enum CliError {
+    Message(String),
+    Stdout(std::io::Error),
+}
+
+impl From<String> for CliError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl From<&str> for CliError {
+    fn from(message: &str) -> Self {
+        Self::Message(message.to_string())
+    }
+}
+
+impl std::fmt::Display for CliError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Message(message) => f.write_str(message),
+            Self::Stdout(error) => write!(f, "stdout: {error}"),
+        }
+    }
+}
+
+fn stdout_line(line: std::fmt::Arguments<'_>) -> Result<(), CliError> {
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{line}").and_then(|()| stdout.flush()).map_err(CliError::Stdout)
+}
+
+fn version() -> Result<(), CliError> {
+    stdout_line(format_args!("pdfcraft-cli {}", env!("CARGO_PKG_VERSION")))?;
+    stdout_line(format_args!("{} command line, based on PdfCraft", pdfcraft_engine::links::APP_NAME))?;
+    stdout_line(format_args!("Issues:  {}  (help and feedback)", pdfcraft_engine::links::ISSUES))?;
+    stdout_line(format_args!("Source:  {}", pdfcraft_engine::links::GITHUB))?;
+    Ok(())
 }
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -101,9 +140,20 @@ fn read(path: &str) -> Result<Arc<Vec<u8>>, String> {
     std::fs::read(path).map(Arc::new).map_err(|e| format!("{path}: {e}"))
 }
 
-fn info(args: &[String]) -> Result<(), String> {
+fn info(args: &[String]) -> Result<(), CliError> {
     let path = *positional(args).first().ok_or("info: missing file")?;
-    let info = inspect(read(path)?, flag(args, "--password")).map_err(|e| e.to_string())?;
+    let bytes = read(path)?;
+    let password = flag(args, "--password");
+    let info = inspect(bytes.clone(), password).map_err(|e| e.to_string())?;
+    // Dynamic XFA forms: say what laying the template out gives (what the app shows).
+    let xfa_layout = (info.xfa == Some(pdfcraft_render::Xfa::Dynamic))
+        .then(|| {
+            let mut s = pdfcraft_engine::Session::new();
+            let id = s.open("info.pdf", None, bytes.clone(), password).ok()?;
+            let d = s.get(id)?;
+            d.xfa.as_ref().map(|x| serde_json::json!({ "pages": x.pages, "fields": x.fields, "warnings": x.warnings }))
+        })
+        .flatten();
     let json = serde_json::json!({
         "file": path,
         "pdf_version": info.pdf_version,
@@ -113,34 +163,52 @@ fn info(args: &[String]) -> Result<(), String> {
         "title": info.title, "author": info.author, "producer": info.producer, "creator": info.creator,
         "encrypted": info.encrypted, "tagged": info.tagged, "javascript": info.has_javascript,
         "xfa": info.xfa.map(|x| match x { pdfcraft_render::Xfa::Static => "static", pdfcraft_render::Xfa::Dynamic => "dynamic" }),
+        "xfa_layout": xfa_layout,
         "bookmarks": info.outline.len(), "annotations": info.annotations.len(), "fields": info.fields.len(),
         "links": info.links.len(), "layers": info.layers.len(), "attachments": info.attachments.len(),
         "page_labels": info.pages.iter().take(8).map(|p| p.label.clone()).collect::<Vec<_>>(),
         "warnings": info.warnings,
     });
-    println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+    stdout_line(format_args!("{}", serde_json::to_string_pretty(&json).unwrap_or_default()))?;
     Ok(())
 }
 
-fn text(args: &[String]) -> Result<(), String> {
+fn text(args: &[String]) -> Result<(), CliError> {
     let path = *positional(args).first().ok_or("text: missing file")?;
-    let mut r = PageRenderer::new(read(path)?, RenderConfig { password: flag(args, "--password").map(Arc::from), ..Default::default() });
+    let password = flag(args, "--password");
+    let bytes = read(path)?;
+    let mut r = PageRenderer::new(bytes.clone(), RenderConfig { password: password.map(Arc::from), ..Default::default() });
+    // A document the renderer could not open (wrong or missing password, unparseable file) has
+    // no pages, and "extract every page" of nothing would print nothing and exit 0 (#132). Ask
+    // `inspect` why instead, so a protected file fails the same way `info` does.
+    if r.page_count() == 0 {
+        let info = inspect(bytes, password).map_err(|e| format!("text: {e}"))?;
+        if !info.pages.is_empty() {
+            return Err("text: the document could not be parsed".into());
+        }
+    }
     let pages: Vec<usize> = match flag(args, "--page") {
         Some(p) => vec![p.parse::<usize>().map_err(|_| "bad --page")?.saturating_sub(1)],
         None => (0..r.page_count()).collect(),
     };
+    let mut failed: Vec<usize> = Vec::new();
     for (n, p) in pages.iter().enumerate() {
         let out = r.render(RenderRequest { page: *p, kind: RequestKind::Text, tile: None, scale: 1.0, tag: 0 });
         if let Some(e) = out.error {
             eprintln!("page {}: {e}", p + 1);
+            failed.push(p + 1);
             continue;
         }
         if n > 0 {
-            println!("\u{c}");
+            stdout_line(format_args!("\u{c}"))?;
         }
-        println!("{}", out.text.map(|t| t.plain_text()).unwrap_or_default());
+        stdout_line(format_args!("{}", out.text.map(|t| t.plain_text()).unwrap_or_default()))?;
     }
-    Ok(())
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("text: page(s) {} could not be read", failed.iter().map(usize::to_string).collect::<Vec<_>>().join(", ")).into())
+    }
 }
 
 /// 1-based page list ("1,3,5") → 0-based indices.
@@ -148,18 +216,44 @@ fn page_list(s: &str) -> Result<Vec<usize>, String> {
     s.split(',').map(|p| p.trim().parse::<usize>().ok().filter(|n| *n > 0).map(|n| n - 1).ok_or(format!("bad page number {p:?}"))).collect()
 }
 
+/// The options `edit` understands, for its "unknown option" message.
+const EDIT_OPTIONS: &str = "--out, --password, --full, --rotate, --delete, --move, --insert-blank, --title, --author";
+
 /// Apply page and metadata edits through the engine and save (incrementally unless `--full`).
-fn edit(args: &[String]) -> Result<(), String> {
+///
+/// Every argument is parsed before the file is opened: an option this command does not know
+/// (a typo like `--rotat`) is an error, not something to skip — skipping it would write an
+/// unchanged copy and exit 0, which looks like a successful edit (#133).
+fn edit(args: &[String]) -> Result<(), CliError> {
     use pdfcraft_engine::{Edit, Session};
-    let path = *positional(args).first().ok_or("edit: missing file")?;
-    let out = flag(args, "--out").ok_or("edit: missing --out")?;
-    let mut session = Session::new();
-    let id = session.open(path, Some(path.to_string()), read(path)?, flag(args, "--password")).map_err(|e| e.to_string())?;
+    let mut path: Option<&str> = None;
+    let mut out: Option<&str> = None;
+    let mut password: Option<&str> = None;
+    let mut full = false;
     let mut edits = Vec::new();
     let mut i = 0;
-    while i < args.len() {
-        let value = args.get(i + 1).map(String::as_str).unwrap_or("");
-        match args[i].as_str() {
+    while let Some(arg) = args.get(i).map(String::as_str) {
+        // Options that take no value, and the input file.
+        match arg {
+            "--full" => {
+                full = true;
+                i += 1;
+                continue;
+            }
+            a if a.starts_with("--") => {}
+            a => {
+                if path.is_some() {
+                    return Err(format!("edit: unexpected argument {a:?} (one input file, then options)").into());
+                }
+                path = Some(a);
+                i += 1;
+                continue;
+            }
+        }
+        let value = args.get(i + 1).map(String::as_str).ok_or_else(|| format!("edit: {arg} needs a value"))?;
+        match arg {
+            "--out" => out = Some(value),
+            "--password" => password = Some(value),
             "--rotate" => {
                 let (pages, deg) = value.split_once(':').ok_or("--rotate PAGES:DEGREES")?;
                 edits.push(Edit::RotatePages { pages: page_list(pages)?, degrees: deg.parse().map_err(|_| "bad degrees")? });
@@ -176,22 +270,26 @@ fn edit(args: &[String]) -> Result<(), String> {
             }
             "--title" => edits.push(Edit::SetInfo { key: "Title".into(), value: value.into() }),
             "--author" => edits.push(Edit::SetInfo { key: "Author".into(), value: value.into() }),
-            _ => {}
+            other => return Err(format!("edit: unknown option {other:?} (expected one of: {EDIT_OPTIONS})").into()),
         }
-        i += 1;
+        i += 2;
     }
+    let path = path.ok_or("edit: missing file")?;
+    let out = out.ok_or("edit: missing --out")?;
+    let mut session = Session::new();
+    let id = session.open(path, Some(path.to_string()), read(path)?, password).map_err(|e| e.to_string())?;
     for e in edits {
         session.apply(id, e).map_err(|e| e.to_string())?;
     }
-    let bytes = if args.iter().any(|a| a == "--full") { session.save_full_bytes(id) } else { session.save_bytes(id) }.map_err(|e| e.to_string())?;
-    std::fs::write(out, bytes.as_slice()).map_err(|e| format!("{out}: {e}"))
+    let bytes = if full { session.save_full_bytes(id) } else { session.save_bytes(id) }.map_err(|e| e.to_string())?;
+    std::fs::write(out, bytes.as_slice()).map_err(|e| format!("{out}: {e}").into())
 }
 
 fn file_stem(path: &str) -> String {
     Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string())
 }
 
-fn combine(args: &[String]) -> Result<(), String> {
+fn combine(args: &[String]) -> Result<(), CliError> {
     let out = flag(args, "--out").ok_or("combine: missing --out")?;
     let inputs = positional(args);
     if inputs.len() < 2 {
@@ -199,20 +297,20 @@ fn combine(args: &[String]) -> Result<(), String> {
     }
     let sources = inputs.iter().map(|p| Ok((file_stem(p), read(p)?))).collect::<Result<Vec<_>, String>>()?;
     let bytes = pdfcraft_engine::Session::new().combine(&sources).map_err(|e| e.to_string())?;
-    std::fs::write(out, bytes.as_slice()).map_err(|e| format!("{out}: {e}"))
+    std::fs::write(out, bytes.as_slice()).map_err(|e| format!("{out}: {e}").into())
 }
 
-fn extract(args: &[String]) -> Result<(), String> {
+fn extract(args: &[String]) -> Result<(), CliError> {
     let path = *positional(args).first().ok_or("extract: missing file")?;
     let out = flag(args, "--out").ok_or("extract: missing --out")?;
     let pages = page_list(flag(args, "--pages").ok_or("extract: missing --pages")?)?;
     let mut session = pdfcraft_engine::Session::new();
     let id = session.open(path, None, read(path)?, flag(args, "--password")).map_err(|e| e.to_string())?;
     let bytes = session.extract(id, &pages).map_err(|e| e.to_string())?;
-    std::fs::write(out, bytes.as_slice()).map_err(|e| format!("{out}: {e}"))
+    std::fs::write(out, bytes.as_slice()).map_err(|e| format!("{out}: {e}").into())
 }
 
-fn split(args: &[String]) -> Result<(), String> {
+fn split(args: &[String]) -> Result<(), CliError> {
     use pdfcraft_engine::SplitBy;
     let path = *positional(args).first().ok_or("split: missing file")?;
     let by = match (flag(args, "--every"), flag(args, "--before")) {
@@ -224,34 +322,52 @@ fn split(args: &[String]) -> Result<(), String> {
     let mut session = pdfcraft_engine::Session::new();
     let id = session.open(path, None, read(path)?, flag(args, "--password")).map_err(|e| e.to_string())?;
     let stem = file_stem(path);
-    for (a, b, bytes) in session.split(id, &by).map_err(|e| e.to_string())? {
+    let parts = session.split(id, &by).map_err(|e| e.to_string())?;
+    // An output folder that does not exist yet is created (#249); one that can't be is reported
+    // as the folder's problem, not as the first part's.
+    std::fs::create_dir_all(&dir).map_err(|e| format!("split: --out-dir {}: {e}", dir.display()))?;
+    for (a, b, bytes) in parts {
         let name = dir.join(if a == b { format!("{stem}-p{a}.pdf") } else { format!("{stem}-p{a}-{b}.pdf") });
         std::fs::write(&name, bytes.as_slice()).map_err(|e| format!("{}: {e}", name.display()))?;
-        println!("{}", name.display());
+        stdout_line(format_args!("{}", name.display()))?;
     }
     Ok(())
 }
 
-fn render(args: &[String]) -> Result<(), String> {
+fn render(args: &[String]) -> Result<(), CliError> {
     let path = *positional(args).first().ok_or("render: missing file")?;
     let page: usize = flag(args, "--page").unwrap_or("1").parse().map_err(|_| "bad --page")?;
     let dpi: f32 = flag(args, "--dpi").unwrap_or("96").parse().map_err(|_| "bad --dpi")?;
-    let out = flag(args, "--out").ok_or("render: missing --out (.pam)")?;
+    let out = flag(args, "--out").ok_or("render: missing --out (.png, .jpg, .tif or .pam)")?;
+    // The file is what its name says (#248): a `.png` used to get a netpbm PAM stream.
+    let format = match Path::new(out).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        Some("png") => Some(ImageFormat::Png),
+        Some("jpg" | "jpeg") => Some(ImageFormat::Jpeg { quality: 90 }),
+        Some("tif" | "tiff") => Some(ImageFormat::Tiff),
+        Some("pam") => None,
+        _ => return Err(format!("render: --out {out}: use a .png, .jpg, .tif or .pam name").into()),
+    };
     let mut r = PageRenderer::new(read(path)?, RenderConfig { password: flag(args, "--password").map(Arc::from), ..Default::default() });
     let p = r.render(RenderRequest { page: page.saturating_sub(1), kind: RequestKind::Pixels, tile: None, scale: dpi / 72.0, tag: 0 });
     if let Some(e) = p.error {
-        return Err(e);
+        return Err(e.into());
     }
-    // PAM (netpbm RGB_ALPHA) keeps this tool dependency-free; convert with any image tool.
-    let mut f = std::fs::File::create(out).map_err(|e| e.to_string())?;
-    write!(f, "P7\nWIDTH {}\nHEIGHT {}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", p.width, p.height).map_err(|e| e.to_string())?;
-    f.write_all(&p.rgba).map_err(|e| e.to_string())?;
+    let bytes = match format {
+        Some(f) => pdfcraft_engine::export::encode_image(p.width, p.height, &p.rgba, f)?,
+        None => {
+            // PAM (netpbm RGB_ALPHA): the raw premultiplied pixels, for tools that read it.
+            let mut pam = format!("P7\nWIDTH {}\nHEIGHT {}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", p.width, p.height).into_bytes();
+            pam.extend_from_slice(&p.rgba);
+            pam
+        }
+    };
+    std::fs::write(out, bytes).map_err(|e| format!("{out}: {e}"))?;
     eprintln!("rendered page {page} at {dpi} dpi: {}×{} px in {} ms", p.width, p.height, p.millis);
     Ok(())
 }
 
 /// Child-process body for `check`: prints one JSON line.
-fn check_one(args: &[String]) -> Result<(), String> {
+fn check_one(args: &[String]) -> Result<(), CliError> {
     let path = *positional(args).first().ok_or("check-one: missing file")?;
     let dpi: f32 = flag(args, "--dpi").unwrap_or("36").parse().map_err(|_| "bad --dpi")?;
     let start = Instant::now();
@@ -281,7 +397,7 @@ fn check_one(args: &[String]) -> Result<(), String> {
     }
     let line = serde_json::json!({ "file": path, "status": status, "pages": pages, "failed_pages": failed, "warnings": warnings,
         "ms": start.elapsed().as_millis() as u64, "detail": detail.chars().take(400).collect::<String>() });
-    println!("{line}");
+    stdout_line(format_args!("{line}"))?;
     Ok(())
 }
 
@@ -331,7 +447,7 @@ fn collect(paths: &[&str]) -> Vec<PathBuf> {
     out
 }
 
-fn check(args: &[String]) -> Result<(), String> {
+fn check(args: &[String]) -> Result<(), CliError> {
     let files = collect(&positional(args));
     if files.is_empty() {
         return Err("check: no PDF files found".into());
@@ -405,36 +521,37 @@ fn automation(args: &[String]) -> Result<pdfcraft_automation::Automation, String
     }
 }
 
-fn tools() -> Result<(), String> {
+fn tools() -> Result<(), CliError> {
     let list: Vec<serde_json::Value> = pdfcraft_automation::tools()
         .iter()
         .map(|t| serde_json::json!({ "name": t.name, "description": t.description, "read_only": t.read_only, "command": t.command, "input_schema": t.input_schema }))
         .collect();
-    println!("{}", serde_json::to_string_pretty(&list).unwrap_or_default());
+    stdout_line(format_args!("{}", serde_json::to_string_pretty(&list).unwrap_or_default()))?;
     Ok(())
 }
 
-/// Print a tool's result: JSON as JSON; images go to `--out` (or are summarised).
-fn print_output(content: Vec<pdfcraft_automation::Content>, out: Option<&str>) -> Result<(), String> {
+/// Print a tool's result: JSON as JSON; images go to `--out` (or are summarised). The image is
+/// written like a tool's own output, so `--root` confines it too.
+fn print_output(auto: &pdfcraft_automation::Automation, content: Vec<pdfcraft_automation::Content>, out: Option<&str>) -> Result<(), CliError> {
     for c in content {
         match c {
-            pdfcraft_automation::Content::Json(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default()),
+            pdfcraft_automation::Content::Json(v) => stdout_line(format_args!("{}", serde_json::to_string_pretty(&v).unwrap_or_default()))?,
             pdfcraft_automation::Content::Png { data, width, height } => match out {
                 Some(path) => {
-                    std::fs::write(path, &data).map_err(|e| format!("{path}: {e}"))?;
-                    println!("{}", serde_json::json!({ "image": path, "width": width, "height": height }));
+                    let written = auto.write_output(path, &data).map_err(|e| e.to_string())?;
+                    stdout_line(format_args!("{}", serde_json::json!({ "image": written.to_string_lossy(), "width": width, "height": height })))?;
                 }
-                None => println!(
+                None => stdout_line(format_args!(
                     "{}",
                     serde_json::json!({ "image": "png", "width": width, "height": height, "bytes": data.len(), "hint": "pass --out file.png to save it" })
-                ),
+                ))?,
             },
         }
     }
     Ok(())
 }
 
-fn run(args: &[String]) -> Result<(), String> {
+fn run(args: &[String]) -> Result<(), CliError> {
     let mut auto = automation(args)?;
     if let Some(script) = flag(args, "--script") {
         let text = std::fs::read_to_string(script).map_err(|e| format!("{script}: {e}"))?;
@@ -442,7 +559,10 @@ fn run(args: &[String]) -> Result<(), String> {
         for (i, step) in steps.iter().enumerate() {
             let tool = step["tool"].as_str().ok_or(format!("step {}: missing \"tool\"", i + 1))?;
             let content = auto.call(tool, &step["args"]).map_err(|e| format!("step {} ({tool}): {e}", i + 1))?;
-            print_output(content, step["out"].as_str())?;
+            print_output(&auto, content, step["out"].as_str()).map_err(|e| match e {
+                CliError::Message(message) => CliError::Message(format!("step {} ({tool}): {message}", i + 1)),
+                stdout => stdout,
+            })?;
         }
         return Ok(());
     }
@@ -454,20 +574,20 @@ fn run(args: &[String]) -> Result<(), String> {
         obj.insert(k.to_string(), value);
     }
     let content = auto.call(tool, &serde_json::Value::Object(obj)).map_err(|e| e.to_string())?;
-    print_output(content, flag(args, "--out"))
+    print_output(&auto, content, flag(args, "--out"))
 }
 
 #[cfg(feature = "mcp")]
-fn mcp(args: &[String]) -> Result<(), String> {
+fn mcp(args: &[String]) -> Result<(), CliError> {
     let mut server = pdfcraft_automation::mcp::McpServer::new(automation(args)?);
     eprintln!("pdfcraft-cli: MCP server on stdio (protocol {}); close stdin to stop", pdfcraft_automation::mcp::PROTOCOL_VERSIONS[0]);
-    server.serve(std::io::stdin().lock(), std::io::stdout().lock()).map_err(|e| e.to_string())
+    server.serve(std::io::stdin().lock(), std::io::stdout().lock()).map_err(|e| CliError::Message(e.to_string()))
 }
 
 // ---- UI control channel client -----------------------------------------------------------------
 
 /// One request to a running app's control channel (`pdfcraft --control FILE`).
-fn ui(args: &[String]) -> Result<(), String> {
+fn ui(args: &[String]) -> Result<(), CliError> {
     use std::io::{BufRead, BufReader, Write as _};
     let file = flag(args, "--control").ok_or("ui: missing --control FILE (start the app with `pdfcraft --control FILE`)")?;
     let info: serde_json::Value =
@@ -504,6 +624,6 @@ fn ui(args: &[String]) -> Result<(), String> {
         std::fs::write(out, png).map_err(|e| format!("{out}: {e}"))?;
         result["png_base64"] = serde_json::json!(format!("written to {out}"));
     }
-    println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+    stdout_line(format_args!("{}", serde_json::to_string_pretty(&result).unwrap_or_default()))?;
     Ok(())
 }

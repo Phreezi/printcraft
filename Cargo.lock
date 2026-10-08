@@ -3447,11 +3447,12 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "eframe",
  "egui",
  "fmv-macos-events",
+ "log",
  "pdfcraft-ui-egui",
  "rustls-native-certs",
  "serde_json",
@@ -3461,7 +3462,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-a11y"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -3471,7 +3472,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-annot"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "hayro-syntax",
  "pdfcraft-cos",
@@ -3481,20 +3482,21 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-automation"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "image",
  "pdfcraft-engine",
  "pdfcraft-organize",
  "pdfcraft-render",
+ "pdfcraft-xfa",
  "png 0.18.1",
  "serde_json",
 ]
 
 [[package]]
 name = "pdfcraft-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "pdfcraft-automation",
@@ -3506,18 +3508,18 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-compare"
-version = "0.2.1"
+version = "0.3.0"
 
 [[package]]
 name = "pdfcraft-content"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "pdfcraft-cos",
 ]
 
 [[package]]
 name = "pdfcraft-cos"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "hayro-syntax",
  "pdfcraft-crypt",
@@ -3529,7 +3531,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-create"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "hayro-syntax",
  "image",
@@ -3543,7 +3545,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-crypt"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "aes",
  "md-5",
@@ -3555,7 +3557,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-edit"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "hayro-syntax",
  "pdfcraft-annot",
@@ -3568,7 +3570,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-engine"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "image",
@@ -3582,6 +3584,7 @@ dependencies = [
  "pdfcraft-fonts",
  "pdfcraft-forms",
  "pdfcraft-js",
+ "pdfcraft-measure",
  "pdfcraft-model",
  "pdfcraft-ocr",
  "pdfcraft-optimize",
@@ -3591,6 +3594,7 @@ dependencies = [
  "pdfcraft-redact",
  "pdfcraft-render",
  "pdfcraft-sign",
+ "pdfcraft-xfa",
  "pdfcraft-xfdf",
  "png 0.18.1",
  "thiserror 2.0.21",
@@ -3598,14 +3602,14 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-export"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "flate2",
 ]
 
 [[package]]
 name = "pdfcraft-filters"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "flate2",
  "proptest",
@@ -3615,7 +3619,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-fonts"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "pdfcraft-cos",
  "skrifa 0.44.0",
@@ -3623,7 +3627,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-forms"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "hayro-syntax",
  "pdfcraft-content",
@@ -3635,25 +3639,37 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-geom"
-version = "0.2.1"
+version = "0.3.0"
 
 [[package]]
 name = "pdfcraft-js"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "boa_engine",
 ]
 
 [[package]]
+name = "pdfcraft-measure"
+version = "0.3.0"
+dependencies = [
+ "pdfcraft-annot",
+ "pdfcraft-content",
+ "pdfcraft-cos",
+ "pdfcraft-model",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "pdfcraft-model"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "pdfcraft-cos",
 ]
 
 [[package]]
 name = "pdfcraft-ocr"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "ocrs",
  "pdfcraft-fonts",
@@ -3663,7 +3679,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-optimize"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "image",
  "pdfcraft-annot",
@@ -3676,16 +3692,17 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-organize"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "hayro-syntax",
+ "pdfcraft-content",
  "pdfcraft-cos",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "pdfcraft-preflight"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "pdfcraft-cos",
  "pdfcraft-model",
@@ -3693,17 +3710,19 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-print"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
  "pdfcraft-model",
+ "pdfcraft-render",
+ "png 0.18.1",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "pdfcraft-redact"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "pdfcraft-annot",
  "pdfcraft-content",
@@ -3717,7 +3736,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-render"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "getrandom 0.4.3",
  "hayro",
@@ -3730,7 +3749,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-sign"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "aes",
  "aws-lc-rs",
@@ -3754,7 +3773,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-ui-egui"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -3771,10 +3790,16 @@ dependencies = [
  "pdfcraft-fonts",
  "pdfcraft-model",
  "pdfcraft-render",
+ "pdfcraft-xfa",
  "png 0.18.1",
+ "pollster 1.0.1",
  "rfd",
+ "ron",
  "serde",
  "serde_json",
+ "skrifa 0.44.0",
+ "sys-locale",
+ "toml",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -3782,7 +3807,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-web"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "eframe",
  "egui",
@@ -3793,8 +3818,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdfcraft-xfa"
+version = "0.3.0"
+dependencies = [
+ "base64 0.22.1",
+ "pdfcraft-cos",
+ "pdfcraft-fonts",
+ "roxmltree",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "pdfcraft-xfdf"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "pdfcraft-annot",
  "pdfcraft-cos",
@@ -5250,6 +5286,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

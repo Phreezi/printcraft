@@ -68,13 +68,26 @@ jobs:
         with:
           name: pdfcraft-windows-arm64
           path: dist
-      - name: Install the MSI, check it, run it, uninstall it
+      - name: Install the MSI, check it, run it, uninstall it, reinstall without the desktop shortcut
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
           $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/l*v', 'install.log' -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 60; throw "msiexec /i exited $($p.ExitCode)" }
+          $shortcuts = @(
+            (Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'PeDeeFe.lnk'),
+            (Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'PeDeeFe.lnk')
+          )
+          # Plain shortcuts to the program (#143), not advertised ones, so TargetPath is the exe.
+          $exePath = Join-Path $env:ProgramFiles 'PeDeeFe\pedeefe.exe'
+          $wsh = New-Object -ComObject WScript.Shell
+          foreach ($shortcut in $shortcuts) {
+            if (-not (Test-Path -LiteralPath $shortcut)) { throw "installer did not create $shortcut" }
+            $target = $wsh.CreateShortcut($shortcut).TargetPath
+            if ($target -ne $exePath) { throw "$shortcut points to '$target', not $exePath" }
+            Write-Output "ok $shortcut -> $target"
+          }
           $dir = Join-Path $env:ProgramFiles 'PeDeeFe'
           foreach ($exe in 'pedeefe.exe', 'pdfcraft-cli.exe') {
             $path = Join-Path $dir $exe
@@ -100,7 +113,7 @@ jobs:
           [void]$sb.Append("trailer`n<< /Size $($objs.Count + 1) /Root 1 0 R >>`nstartxref`n$xref`n%%EOF`n")
           New-Item -ItemType Directory -Force smoke | Out-Null
           [System.IO.File]::WriteAllText("$PWD\smoke\hello.pdf", $sb.ToString(), [System.Text.Encoding]::ASCII)
-          $steps = '[{"tool":"doc_open","args":{"path":"hello.pdf"}},{"tool":"text_paragraphs","args":{"doc":1,"page":1}},{"tool":"text_edit","args":{"doc":1,"page":1,"paragraph":1,"text":"Edited on ARM64"}},{"tool":"page_render","args":{"doc":1,"page":1,"dpi":72},"out":"smoke/page.png"},{"tool":"doc_save","args":{"doc":1,"path":"out.pdf"}}]'
+          $steps = '[{"tool":"doc_open","args":{"path":"hello.pdf"}},{"tool":"text_paragraphs","args":{"doc":1,"page":1}},{"tool":"text_edit","args":{"doc":1,"page":1,"paragraph":1,"text":"Edited on ARM64"}},{"tool":"page_render","args":{"doc":1,"page":1,"dpi":72},"out":"page.png"},{"tool":"doc_save","args":{"doc":1,"path":"out.pdf"}}]'
           [System.IO.File]::WriteAllText("$PWD\smoke\steps.json", $steps)
           $out = & $cli run --script smoke\steps.json --root smoke 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0) { Write-Output $out; throw "pdfcraft-cli run exited $LASTEXITCODE" }
@@ -110,7 +123,19 @@ jobs:
           $p = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec /x exited $($p.ExitCode)" }
           if (Test-Path (Join-Path $dir 'pedeefe.exe')) { throw 'uninstall left pedeefe.exe behind' }
+          foreach ($shortcut in $shortcuts) {
+            if (Test-Path -LiteralPath $shortcut) { throw "uninstall left $shortcut behind" }
+          }
           Write-Output 'ok uninstalled'
+          # Unattended installs can opt out of the desktop shortcut (#143); the Start Menu one stays.
+          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', 'INSTALLDESKTOPSHORTCUT=0', '/l*v', 'install-nodesktop.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content install-nodesktop.log -Tail 60; throw "msiexec /i INSTALLDESKTOPSHORTCUT=0 exited $($p.ExitCode)" }
+          if (-not (Test-Path -LiteralPath $shortcuts[0])) { throw "INSTALLDESKTOPSHORTCUT=0 also skipped $($shortcuts[0])" }
+          if (Test-Path -LiteralPath $shortcuts[1]) { throw "INSTALLDESKTOPSHORTCUT=0 still created $($shortcuts[1])" }
+          $p = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x exited $($p.ExitCode)" }
+          if (Test-Path -LiteralPath $shortcuts[0]) { throw "uninstall left $($shortcuts[0]) behind" }
+          Write-Output 'ok INSTALLDESKTOPSHORTCUT=0: Start Menu shortcut only'
 
   test:
     name: test (native ARM64)

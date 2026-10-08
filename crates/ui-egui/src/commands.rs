@@ -7,11 +7,18 @@
 use pdfcraft_engine::Edit;
 use pdfcraft_engine::commands::{self, COMMANDS, CommandSpec};
 
-use crate::{Dialog, Mode, PdfCraftApp, PropsTab, RightPanel, SaveTarget, theme::ThemeKind, widgets};
+use crate::{
+    Dialog, Mode, PdfCraftApp, PropsTab, RightPanel, SaveTarget,
+    theme::{ThemeKind, ThemePreference},
+    widgets,
+};
 
 impl PdfCraftApp {
+    /// Whether a registered command can run now. The engine judges the document (security,
+    /// contents, undo history); view state it can't see is checked here.
     pub(crate) fn command_enabled(&self, spec: &CommandSpec) -> bool {
         commands::is_enabled(spec, &self.session, self.active_ids().map(|(_, id)| id))
+            && (spec.needs != commands::Needs::TwoPageView || self.active.and_then(|i| self.views.get(i)).is_some_and(crate::DocView::cover_applies))
     }
 
     /// Run a registered command by id. Returns `false` when the id is unknown or the command
@@ -23,7 +30,7 @@ impl PdfCraftApp {
         match pdfcraft_engine::guard(|| self.execute_unguarded(id)) {
             Ok(done) => done,
             Err(m) => {
-                self.notify(format!("That didn't work: an internal error stopped it ({m}). Your documents are unchanged."));
+                self.notify_fmt("That didn't work: an internal error stopped it ({m}). Your documents are unchanged.", &[("m", m.as_str())]);
                 true
             }
         }
@@ -33,33 +40,34 @@ impl PdfCraftApp {
         let Some(spec) = commands::command(id) else { return false };
         if !self.command_enabled(spec) {
             let why = match spec.needs {
-                commands::Needs::Undo => "Nothing to undo".to_string(),
-                commands::Needs::Redo => "Nothing to redo".to_string(),
-                commands::Needs::FillForms if self.active.is_some() => "This document has no form fields you can fill in".to_string(),
-                commands::Needs::HasComments if self.active.is_some() => "This document has no comments to flatten".to_string(),
-                commands::Needs::HasFields if self.active.is_some() => "This document has no form fields to flatten".to_string(),
+                commands::Needs::Undo => tl!("Nothing to undo").to_string(),
+                commands::Needs::Redo => tl!("Nothing to redo").to_string(),
+                commands::Needs::FillForms if self.active.is_some() => tl!("This document has no form fields you can fill in").to_string(),
+                commands::Needs::HasComments if self.active.is_some() => tl!("This document has no comments to flatten").to_string(),
+                commands::Needs::HasFields if self.active.is_some() => tl!("This document has no form fields to flatten").to_string(),
                 commands::Needs::HasRedactions if self.active.is_some() => {
-                    "There are no redaction marks (mark text, areas or pages first)".to_string()
+                    tl!("There are no redaction marks (mark text, areas or pages first)").to_string()
                 }
-                commands::Needs::Marks(k) if self.active.is_some() => format!(
-                    "This document has no {} to change",
-                    match k {
-                        pdfcraft_engine::MarkKind::HeaderFooter => "header or footer",
-                        pdfcraft_engine::MarkKind::Watermark => "watermark",
-                        pdfcraft_engine::MarkKind::Background => "background",
-                    }
-                ),
+                commands::Needs::Marks(k) if self.active.is_some() => {
+                    let kind = match k {
+                        pdfcraft_engine::MarkKind::HeaderFooter => tl!("header or footer"),
+                        pdfcraft_engine::MarkKind::Watermark => tl!("watermark"),
+                        pdfcraft_engine::MarkKind::Background => tl!("background"),
+                    };
+                    crate::i18n::fmt(tl!("This document has no {kind} to change"), &[("kind", kind)])
+                }
                 commands::Needs::Security | commands::Needs::ProtectedSecurity if self.active.is_some() => {
                     if self.active_ids().and_then(|(_, id)| self.session.get(id)).is_some_and(|d| d.allows_security_change()) {
-                        "This document isn't password-protected".to_string()
+                        tl!("This document isn't password-protected").to_string()
                     } else {
-                        "Only the document's owner can change its security (open it with the permissions password)".to_string()
+                        tl!("Only the document's owner can change its security (open it with the permissions password)").to_string()
                     }
                 }
                 commands::Needs::Assembly | commands::Needs::Modification | commands::Needs::Annotate if self.active.is_some() => {
-                    "The document's security settings don't allow this change".to_string()
+                    tl!("The document's security settings don't allow this change").to_string()
                 }
-                _ => "Open a document first".to_string(),
+                commands::Needs::TwoPageView if self.active.is_some() => tl!("Switch to two-page view first to show the cover page").to_string(),
+                _ => tl!("Open a document first").to_string(),
             };
             self.notify(why);
             return false;
@@ -90,7 +98,7 @@ impl PdfCraftApp {
             }
             "protect.remove" => {
                 if self.apply_edit(Edit::RemoveProtection) {
-                    self.notify("Security will be removed when you save");
+                    self.notify_tr("Security will be removed when you save");
                 }
             }
             "page.number" => {
@@ -116,6 +124,25 @@ impl PdfCraftApp {
                 }
             }
             "view.palette" => self.palette_open = !self.palette_open,
+            layout if crate::canvas::PageLayout::from_command(layout).is_some() => {
+                if let (Some(i), Some(layout)) = (active, crate::canvas::PageLayout::from_command(layout)) {
+                    self.views[i].set_layout(layout);
+                }
+            }
+            "view.layout.cover" => {
+                if let Some(i) = active {
+                    let v = &mut self.views[i];
+                    v.set_cover(!v.cover);
+                }
+            }
+            "view.fit_width_scrolling" | "view.fit_one_page" => {
+                use crate::canvas::{Fit, PageLayout};
+                let (layout, fit) = if id == "view.fit_one_page" { (PageLayout::Single, Fit::Page) } else { (PageLayout::Continuous, Fit::Width) };
+                if let Some(i) = active {
+                    self.views[i].set_layout(layout);
+                    self.views[i].set_fit(fit);
+                }
+            }
             "view.full_screen" => {
                 let on = !self.full_screen;
                 match self.ctx.clone() {
@@ -125,12 +152,13 @@ impl PdfCraftApp {
             }
             "view.read_mode" => self.mode = if self.mode == Mode::Read { Mode::AllTools } else { Mode::Read },
             "view.theme" => {
-                let next = if self.theme == ThemeKind::Light { ThemeKind::Dark } else { ThemeKind::Light };
-                match self.ctx.clone() {
-                    Some(ctx) => self.set_theme(&ctx, next),
-                    None => self.theme = next,
-                }
+                let next = if self.theme == ThemeKind::Light { ThemePreference::Dark } else { ThemePreference::Light };
+                self.set_theme_preference(next);
             }
+            command if command.starts_with("measure.") => crate::measure_ui::command(self, command),
+            "view.theme.system" => self.set_theme_preference(ThemePreference::System),
+            "view.theme.light" => self.set_theme_preference(ThemePreference::Light),
+            "view.theme.dark" => self.set_theme_preference(ThemePreference::Dark),
             "comment.list" => self.right = Some(RightPanel::Comments),
             tool if crate::comments::CommentTool::from_command(tool).is_some() => {
                 let Some(tool) = crate::comments::CommentTool::from_command(tool) else { return false };
@@ -245,7 +273,14 @@ impl PdfCraftApp {
                 self.quick_tool = crate::QuickTool::EditText;
                 self.left = crate::LeftPanel::Tool("edit");
                 self.left_open = true;
-                self.notify("Click text or an image to edit it · drag on the page to select several · Esc to finish");
+                // The catalogued first half keeps its translations; the marquee and Esc hint is its
+                // own catalog key, shown in English until a catalog translates it.
+                let hint = format!(
+                    "{} · {}",
+                    tl!("Click text or an image to edit it"),
+                    crate::i18n::t("drag on the page to select several · Esc to finish")
+                );
+                self.notify(hint);
             }
             "edit.advanced_search" => {
                 if let Some(i) = self.active {
@@ -267,7 +302,7 @@ impl PdfCraftApp {
             "edit.image" => self.add_image_dialog(),
             "edit.link" => {
                 self.quick_tool = crate::QuickTool::Link;
-                self.notify("Drag a rectangle to create a link; double-click a link to edit it");
+                self.notify_tr("Drag a rectangle to create a link; double-click a link to edit it");
             }
             "edit.links_from_urls" => self.links_from_urls(),
             "edit.remove_links" => {
@@ -304,7 +339,7 @@ impl PdfCraftApp {
             "redact.apply" => {
                 let marks = active.and_then(|i| self.session.get(self.views[i].id)).map_or(0, |d| d.redaction_marks());
                 if marks == 0 {
-                    self.notify("There are no redaction marks to apply");
+                    self.notify_tr("There are no redaction marks to apply");
                 } else {
                     self.dialog = Some(Dialog::RedactApply);
                 }
@@ -334,7 +369,7 @@ impl PdfCraftApp {
             "sign.digital" | "sign.certify" => {
                 let certify = id == "sign.certify";
                 self.quick_tool = crate::QuickTool::SignArea { certify };
-                self.notify("Drag to draw the area where the signature should appear.");
+                self.notify_tr("Drag to draw the area where the signature should appear.");
             }
             "sign.certify_invisible" => {
                 let page = active.map_or(0, |i| self.views[i].current);
@@ -351,13 +386,13 @@ impl PdfCraftApp {
                 if let Some(i) = self.active
                     && let Err(e) = self.fit_visible(i)
                 {
-                    self.notify(format!("Couldn't fit the visible content: {e}"));
+                    self.notify_fmt("Couldn't fit the visible content: {e}", &[("e", &e.to_string())]);
                 }
             }
             "view.marquee_zoom" => self.quick_tool = crate::QuickTool::MarqueeZoom,
             "edit.snapshot" => {
                 self.quick_tool = crate::QuickTool::Snapshot;
-                self.notify("Drag a rectangle around the area to copy");
+                self.notify_tr("Drag a rectangle around the area to copy");
             }
             "page.copy" => self.copy_pages(false),
             "page.cut" => self.copy_pages(true),
@@ -415,7 +450,18 @@ impl PdfCraftApp {
                 if let Some(i) = active {
                     self.views[i].forms.focus = None;
                 }
-                self.notify(format!("Click on the page to add a {}, or drag to set its size", tool.label().to_lowercase()));
+                self.notify_fmt("Click on the page to add a {tool}, or drag to set its size", &[("tool", &tl!(tool.label()).to_lowercase())]);
+            }
+            "sign.fill.signature.remove" => self.signature = None,
+            "sign.fill.initials.remove" => self.initials = None,
+            "sign.fill.signature.change" | "sign.fill.initials.change" => {
+                let initials = id == "sign.fill.initials.change";
+                let saved = if initials { self.initials.as_ref() } else { self.signature.as_ref() };
+                self.signature_draft = saved.map_or_else(
+                    || crate::fill_sign::SigDraft::new(initials, &self.comment_prefs.author),
+                    |s| crate::fill_sign::SigDraft::from_saved(initials, s),
+                );
+                self.dialog = Some(Dialog::Signature);
             }
             fill if crate::fill_sign::FillTool::from_command(fill).is_some() => {
                 let Some(tool) = crate::fill_sign::FillTool::from_command(fill) else { return false };
@@ -436,7 +482,7 @@ impl PdfCraftApp {
             }
             "page.crop" => {
                 self.quick_tool = crate::QuickTool::Crop;
-                self.notify("Drag a rectangle on a page to crop it; double-click a page for Set Page Boxes");
+                self.notify_tr("Drag a rectangle on a page to crop it; double-click a page for Set Page Boxes");
             }
             "page.boxes" => {
                 self.boxes_draft.seeded = None;
@@ -494,7 +540,7 @@ pub(crate) fn registry_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui, menu: &str
     let mac = cfg!(target_os = "macos") || cfg!(target_arch = "wasm32");
     for spec in commands::menu(menu) {
         let label = commands::current_label(spec, &app.session, app.active_ids().map(|(_, id)| id));
-        let label = app.language.tr(&label);
+        let label = crate::i18n::menu_label(spec.id, &label);
         let shortcut = spec.shortcut.map(|s| s.label(mac)).unwrap_or_default();
         let enabled = app.command_enabled(spec);
         let resp = ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(shortcut));

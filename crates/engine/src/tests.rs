@@ -1449,3 +1449,365 @@ fn guard_turns_a_panic_into_an_error() {
     let n = 3;
     assert_eq!(guard(|| -> u8 { panic!("page {n} is bad") }), Err("page 3 is bad".to_string()));
 }
+
+#[test]
+fn measurement_edits_are_transactional_and_honour_annotation_permissions() {
+    let mut session = Session::default();
+    let id = session.open("plan.pdf", None, Arc::new(fixture(1)), None).unwrap();
+    let m = measure::NewMeasurement {
+        page: 0,
+        kind: measure::Kind::Distance,
+        points: vec![[10.0, 20.0], [40.0, 60.0]],
+        scale: measure::Scale::new(0.1, "m", 2).unwrap(),
+        style: Style::default(),
+        label: "Wall".into(),
+        author: "Tester".into(),
+    };
+    session.apply(id, Edit::AddMeasurement(m.clone())).unwrap();
+    let before = session.get(id).unwrap().bytes.clone();
+    assert_eq!(session.get(id).unwrap().measurements().unwrap().measurements[0].reading.label, "5.00 m");
+    let mut invalid = m.clone();
+    invalid.points[1][0] = f64::INFINITY;
+    assert!(session.apply(id, Edit::AddMeasurement(invalid)).is_err());
+    assert_eq!(session.get(id).unwrap().bytes, before);
+    session.undo(id).unwrap();
+    assert!(session.get(id).unwrap().measurements().unwrap().measurements.is_empty());
+    session.redo(id).unwrap();
+    assert_eq!(session.get(id).unwrap().bytes, before);
+    let p = pdfcraft_cos::Permissions { bits: 0, owner: false };
+    assert_eq!(check_permission(&Edit::AddMeasurement(m), &p), Err(EditError::NotPermitted("comments")));
+    assert_eq!(
+        check_permission(
+            &Edit::SetMeasurementScale { page: 0, bbox: [0.0, 0.0, 100.0, 100.0], name: "Detail".into(), scale: measure::Scale::default() },
+            &p
+        ),
+        Err(EditError::NotPermitted("comments"))
+    );
+}
+
+#[test]
+fn dynamic_xfa_forms_are_laid_out_on_open_filled_and_saved_incrementally() {
+    let original = Arc::new(pdfcraft_xfa::fixtures::shell(&pdfcraft_xfa::fixtures::template(3)));
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("form.pdf", None, original.clone(), None).expect("opens");
+    let doc = s.get(id).unwrap();
+    let x = doc.xfa.as_ref().expect("laid out from the template");
+    assert_eq!((x.pages, x.fields), (2, 14), "{x:?}");
+    assert!(x.warnings.is_empty(), "{:?}", x.warnings);
+    assert_eq!(doc.info.pages.len(), 2, "the placeholder page is gone");
+    assert_eq!(doc.info.xfa, Some(pdfcraft_render::Xfa::Dynamic), "still an XFA form for Adobe's viewers");
+    assert!(!doc.dirty, "laying out is not an edit");
+    assert!(doc.bytes.starts_with(&original[..]), "the layout is an appended revision; the original bytes stay");
+    let names: Vec<&str> = doc.form.iter().map(|f| f.name.as_str()).collect();
+    assert!(names.contains(&"familyName") && names.contains(&"answer") && names.contains(&"what2"), "{names:?}");
+    let family = doc.form.iter().find(|f| f.name == "familyName").unwrap();
+    assert_eq!((family.tooltip.as_deref(), family.max_len), (Some("Your family name"), Some(30)));
+    let answer = doc.form.iter().find(|f| f.name == "answer").unwrap();
+    assert_eq!(answer.widgets.iter().filter_map(|w| w.on_state.clone()).collect::<Vec<_>>(), ["Y", "N"]);
+    assert!(page_texts(&s, id)[0].contains("Sample Form"), "{:?}", page_texts(&s, id));
+    // Fill it in and save: one more incremental revision on top.
+    s.apply(id, Edit::SetFieldValue { name: "familyName".into(), value: FieldValue::Text("Singh".into()) }).unwrap();
+    s.apply(id, Edit::SetFieldValue { name: "answer".into(), value: FieldValue::Radio(Some("N".into())) }).unwrap();
+    assert!(s.get(id).unwrap().dirty);
+    let saved = s.save_bytes(id).unwrap();
+    assert!(saved.starts_with(&original[..]));
+    // The datasets packet carries the values too, for Adobe's viewers.
+    let cos = pdfcraft_cos::Document::open(saved.clone()).unwrap();
+    let data = pdfcraft_xfa::parse_datasets(&pdfcraft_xfa::read_packets(&cos).unwrap().unwrap().xdp).expect("a datasets packet");
+    assert_eq!(data.text_at(&pdfcraft_xfa::som_to_path("form[0].head[0].familyName[0]")), Some("Singh"));
+    assert_eq!(data.text_at(&pdfcraft_xfa::som_to_path("form[0].head[0].answer[0]")), Some("N"));
+    let id2 = s.open("saved.pdf", None, saved, None).unwrap();
+    let d2 = s.get(id2).unwrap();
+    assert_eq!(d2.info.pages.len(), 2, "a saved form is not laid out a second time");
+    assert_eq!(d2.xfa.as_ref().map(|x| (x.pages, x.fields)), Some((2, 14)), "the layout is remembered");
+    assert_eq!(d2.form.iter().find(|f| f.name == "familyName").unwrap().value, vec!["Singh".to_string()]);
+    assert_eq!(d2.form.iter().find(|f| f.name == "answer").unwrap().value, vec!["N".to_string()]);
+}
+
+#[test]
+fn an_xfa_form_without_a_template_opens_with_its_placeholder_and_a_warning() {
+    let bytes = Arc::new(pdfcraft_xfa::fixtures::shell("<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\"></xdp:xdp>"));
+    let mut s = Session::new();
+    let id = s.open("form.pdf", None, bytes, None).expect("opens");
+    let doc = s.get(id).unwrap();
+    assert!(doc.xfa.is_none());
+    assert_eq!(doc.info.pages.len(), 1);
+    assert!(doc.info.warnings.iter().any(|w| w.contains("could not be laid out") && w.contains("no template")), "{:?}", doc.info.warnings);
+}
+
+#[test]
+fn dynamic_xfa_forms_open_with_the_values_and_rows_of_their_data() {
+    let data = "<form><head><familyName>Kaur</familyName><born>2001-02-03</born><answer>Y</answer></head><table><row><what0>a</what0></row><row><what0>b</what0></row><row><what0>c</what0></row></table></form>";
+    let bytes = Arc::new(pdfcraft_xfa::fixtures::shell(&pdfcraft_xfa::fixtures::template_with_data(1, data)));
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("form.pdf", None, bytes, None).expect("opens");
+    let doc = s.get(id).unwrap();
+    let value = |n: &str| doc.form.iter().find(|f| f.name == n).unwrap_or_else(|| panic!("no field {n}")).value.clone();
+    assert_eq!(value("familyName"), vec!["Kaur".to_string()]);
+    assert_eq!(value("born"), vec!["2001-02-03".to_string()]);
+    assert_eq!(value("answer"), vec!["Y".to_string()]);
+    assert_eq!(value("what0_3"), vec!["c".to_string()], "three rows from the data: {:?}", doc.form.iter().map(|f| &f.name).collect::<Vec<_>>());
+    assert!(!doc.dirty);
+}
+
+#[test]
+fn static_xfa_forms_take_their_values_from_the_datasets_and_write_them_back() {
+    let original = Arc::new(pdfcraft_xfa::fixtures::static_shell("<form1><page1><name>Ada</name><agree>1</agree></page1></form1>"));
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("static.pdf", None, original.clone(), None).expect("opens");
+    let doc = s.get(id).unwrap();
+    assert_eq!(doc.info.xfa, Some(pdfcraft_render::Xfa::Static));
+    assert!(doc.xfa.is_none(), "nothing was laid out");
+    assert_eq!(doc.form.iter().find(|f| f.name == "form1[0].page1[0].name[0]").unwrap().value, vec!["Ada".to_string()]);
+    assert_eq!(doc.form.iter().find(|f| f.name == "form1[0].page1[0].agree[0]").unwrap().value, vec!["1".to_string()]);
+    assert!(!doc.dirty && doc.bytes.starts_with(&original[..]), "the values are an appended revision");
+    // Rewriting the fields from the XFA data is recorded, not silent.
+    let note = doc.info.warnings.iter().find(|w| w.contains("taken from this form's XFA data")).expect("a warning");
+    assert!(note.starts_with("2 form field values") && note.contains("form1[0].page1[0].name[0]"), "{note}");
+    s.apply(id, Edit::SetFieldValue { name: "form1[0].page1[0].name[0]".into(), value: FieldValue::Text("Grace".into()) }).unwrap();
+    s.apply(id, Edit::SetFieldValue { name: "form1[0].page1[0].agree[0]".into(), value: FieldValue::Check(false) }).unwrap();
+    let saved = s.save_bytes(id).unwrap();
+    let cos = pdfcraft_cos::Document::open(saved.clone()).unwrap();
+    let data = pdfcraft_xfa::parse_datasets(&pdfcraft_xfa::read_packets(&cos).unwrap().unwrap().xdp).unwrap();
+    assert_eq!(data.text_at(&pdfcraft_xfa::som_to_path("form1[0].page1[0].name[0]")), Some("Grace"));
+    assert_eq!(data.text_at(&pdfcraft_xfa::som_to_path("form1[0].page1[0].agree[0]")), Some(""), "unchecked, with no off value");
+    // Reopening agrees with itself: nothing to apply, nothing dirty.
+    let id2 = s.open("again.pdf", None, saved, None).unwrap();
+    let d2 = s.get(id2).unwrap();
+    assert_eq!(d2.form.iter().find(|f| f.name == "form1[0].page1[0].name[0]").unwrap().value, vec!["Grace".to_string()]);
+    assert!(!d2.dirty);
+    assert!(!d2.info.warnings.iter().any(|w| w.contains("taken from this form's XFA data")), "nothing was rewritten");
+}
+
+#[test]
+fn xfa_data_no_field_binds_to_survives_an_edit_and_save() {
+    // Regression: editing a field replaced the whole data element with the fields' values.
+    let data = concat!(
+        "<form1><page1><name>Ada</name><agree>1</agree><extra xmlns:my=\"urn:my\"><my:note id=\"7\">keep</my:note></extra></page1>",
+        "<history><entry><when>2020</when></entry></history></form1><my:other xmlns:my=\"urn:my\"><my:x>unbound</my:x></my:other>"
+    );
+    let original = Arc::new(pdfcraft_xfa::fixtures::static_shell(data));
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("static.pdf", None, original, None).expect("opens");
+    s.apply(id, Edit::SetFieldValue { name: "form1[0].page1[0].name[0]".into(), value: FieldValue::Text("Grace".into()) }).unwrap();
+    let saved = s.save_bytes(id).unwrap();
+    let cos = pdfcraft_cos::Document::open(saved.clone()).unwrap();
+    let xdp = pdfcraft_xfa::read_packets(&cos).unwrap().unwrap().xdp;
+    for kept in [
+        "<extra xmlns:my=\"urn:my\"><my:note id=\"7\">keep</my:note></extra>",
+        "<history><entry><when>2020</when></entry></history>",
+        "<my:other xmlns:my=\"urn:my\"><my:x>unbound</my:x></my:other>",
+    ] {
+        assert!(xdp.contains(kept), "lost {kept:?}: {xdp}");
+    }
+    let data = pdfcraft_xfa::parse_datasets(&xdp).unwrap();
+    assert_eq!(data.text_at(&pdfcraft_xfa::som_to_path("form1[0].page1[0].name[0]")), Some("Grace"));
+    assert_eq!(data.text_at(&pdfcraft_xfa::som_to_path("form1[0].page1[0].agree[0]")), Some("1"));
+    // A value that can't be written is reported on the document.
+    let original = Arc::new(pdfcraft_xfa::fixtures::static_shell("<form1><page1><name><b>rich</b></name></page1></form1>"));
+    let id = s.open("rich.pdf", None, original, None).expect("opens");
+    s.apply(id, Edit::SetFieldValue { name: "form1[0].page1[0].name[0]".into(), value: FieldValue::Text("plain".into()) }).unwrap();
+    let doc = s.get(id).unwrap();
+    assert!(doc.info.warnings.iter().any(|w| w.contains("structured content")), "{:?}", doc.info.warnings);
+    assert!(doc.xfa_warnings.iter().any(|w| w.contains("structured content")));
+}
+
+#[test]
+fn xfa_scripts_initialize_calculate_validate_toggle_and_add_rows() {
+    let bytes = Arc::new(pdfcraft_xfa::fixtures::shell(&pdfcraft_xfa::fixtures::scripted_template()));
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("scripted.pdf", None, bytes, None).expect("opens");
+    let value = |s: &Session, n: &str| {
+        s.get(id).unwrap().form.iter().find(|f| f.name == n).map(|f| f.value.clone()).unwrap_or_else(|| panic!("no field {n}"))
+    };
+    let names = |s: &Session| s.get(id).unwrap().form.iter().map(|f| f.name.clone()).collect::<Vec<_>>();
+    // On open: the initialize script set qty, the calculations ran, nothing is dirty.
+    assert_eq!(value(&s, "qty"), vec!["2".to_string()]);
+    assert_eq!(value(&s, "total"), vec!["10".to_string()], "{:?}", s.take_js_output(id));
+    assert_eq!(value(&s, "grand"), vec!["0".to_string()]);
+    assert!(!s.get(id).unwrap().dirty);
+    assert!(!names(&s).iter().any(|n| n == "note"), "details is hidden");
+    // A change recalculates.
+    s.apply(id, Edit::SetFieldValue { name: "qty".into(), value: FieldValue::Text("3".into()) }).unwrap();
+    assert_eq!(value(&s, "total"), vec!["15".to_string()], "{:?}", s.take_js_output(id));
+    // A failing validate script shows its message; the value stays, as in Acrobat.
+    s.apply(id, Edit::SetFieldValue { name: "qty".into(), value: FieldValue::Text("500".into()) }).unwrap();
+    let out = s.take_js_output(id);
+    assert!(out.alerts.iter().any(|a| a == "Quantity must be 100 or less"), "{out:?}");
+    assert_eq!(value(&s, "total"), vec!["2500".to_string()]);
+    // A button adds a row: new fields, same page, one undo step.
+    let before = names(&s).len();
+    let o = s.run_javascript(id, "", Some("addRow")).unwrap();
+    assert_eq!(o.error, None);
+    let after = names(&s);
+    assert_eq!(after.len(), before + 2, "{after:?}");
+    assert!(after.iter().any(|n| n == "amount_2"));
+    assert_eq!(s.get(id).unwrap().can_undo(), Some("Run form script"));
+    s.apply(id, Edit::SetFieldValue { name: "amount".into(), value: FieldValue::Text("10".into()) }).unwrap();
+    s.apply(id, Edit::SetFieldValue { name: "amount_2".into(), value: FieldValue::Text("32".into()) }).unwrap();
+    assert_eq!(value(&s, "grand"), vec!["42".to_string()], "{:?}", s.take_js_output(id));
+    // Message boxes reach the viewer.
+    let o = s.run_javascript(id, "", Some("hello")).unwrap();
+    assert_eq!(o.alerts, vec!["Hello 500".to_string()]);
+    // The check box shows the hidden subform; undo hides it again.
+    s.apply(id, Edit::SetFieldValue { name: "more".into(), value: FieldValue::Check(true) }).unwrap();
+    assert!(names(&s).iter().any(|n| n == "note"), "{:?} {:?}", names(&s), s.take_js_output(id));
+    s.undo(id).unwrap();
+    assert!(!names(&s).iter().any(|n| n == "note"));
+    s.redo(id).unwrap();
+    assert!(names(&s).iter().any(|n| n == "note"));
+    // Removing the row takes its amount out of the sum.
+    s.run_javascript(id, "", Some("removeRow")).unwrap();
+    assert!(!names(&s).iter().any(|n| n == "amount_2"));
+    assert_eq!(value(&s, "grand"), vec!["10".to_string()]);
+    // FormCalc is reported, not run.
+    let o = s.run_javascript(id, "", Some("legacy")).unwrap();
+    assert!(o.error.as_deref().is_some_and(|e| e.contains("FormCalc")), "{o:?}");
+    assert!(o.alerts.is_empty());
+    // Saved and reopened: the visible subform, the values and the rows are what they were.
+    let saved = s.save_bytes(id).unwrap();
+    let id2 = s.open("again.pdf", None, saved, None).unwrap();
+    let d2 = s.get(id2).unwrap();
+    let n2: Vec<&str> = d2.form.iter().map(|f| f.name.as_str()).collect();
+    assert!(n2.contains(&"note") && !n2.contains(&"amount_2"), "{n2:?}");
+    assert_eq!(d2.form.iter().find(|f| f.name == "grand").unwrap().value, vec!["10".to_string()]);
+    assert_eq!(d2.form.iter().find(|f| f.name == "qty").unwrap().value, vec!["500".to_string()]);
+    assert!(!d2.dirty);
+}
+
+#[test]
+fn xfa_scripts_stay_off_with_javascript_off() {
+    let bytes = Arc::new(pdfcraft_xfa::fixtures::shell(&pdfcraft_xfa::fixtures::scripted_template()));
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    s.set_javascript(false);
+    let id = s.open("scripted.pdf", None, bytes, None).expect("opens");
+    let qty = s.get(id).unwrap().form.iter().find(|f| f.name == "qty").unwrap().value.clone();
+    assert!(qty.is_empty(), "no initialize script ran");
+    assert!(s.run_javascript(id, "", Some("addRow")).is_err());
+}
+
+#[test]
+fn hostile_xfa_scripts_cannot_hang_or_bloat_the_document() {
+    // A calculate script that adds a row every time it runs, a click script that loops on
+    // addInstance, and one that nests setInstances: each ends quickly with a bounded form.
+    let tpl = pdfcraft_xfa::fixtures::scripted_template()
+        .replace(
+            r#"<calculate><script contentType="application/x-javascript">qty.rawValue * price.rawValue</script></calculate>"#,
+            r#"<calculate><script contentType="application/x-javascript">table._row.addInstance(1); table._row.count</script></calculate>"#,
+        )
+        .replace(
+            r#"table._row.addInstance(1);</script>"#,
+            r#"for (var i = 0; i < 100000; i++) { table._row.addInstance(1); table._row.setInstances(0); }</script>"#,
+        );
+    let bytes = Arc::new(pdfcraft_xfa::fixtures::shell(&tpl));
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let started = std::time::Instant::now();
+    let id = s.open("hostile.pdf", None, bytes, None).expect("opens");
+    let rows = |s: &Session| s.get(id).unwrap().form.iter().filter(|f| f.name.starts_with("amount")).count();
+    assert!(rows(&s) <= 50, "{} rows", rows(&s));
+    let o = s.run_javascript(id, "", Some("addRow")).unwrap();
+    assert!(o.error.is_some() || rows(&s) <= 50, "{o:?}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(60), "{:?}", started.elapsed());
+}
+
+#[test]
+fn xfa_scripts_can_remove_rows_twice_and_reset_fields_by_name() {
+    let tpl = pdfcraft_xfa::fixtures::scripted_template()
+        .replace(r#"if (table._row.count > 1) { table._row.removeInstance(table._row.count - 1); }"#, r#"table._row.setInstances(1);"#)
+        .replace(r#"xfa.host.messageBox("Hello " + qty.rawValue);"#, r#"xfa.host.resetData("qty, table");"#);
+    let bytes = Arc::new(pdfcraft_xfa::fixtures::shell(&tpl));
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("rows.pdf", None, bytes, None).expect("opens");
+    let rows = |s: &Session| s.get(id).unwrap().form.iter().filter(|f| f.name.starts_with("amount")).count();
+    s.run_javascript(id, "", Some("addRow")).unwrap();
+    s.run_javascript(id, "", Some("addRow")).unwrap();
+    assert_eq!(rows(&s), 3);
+    s.apply(id, Edit::SetFieldValue { name: "amount".into(), value: FieldValue::Text("7".into()) }).unwrap();
+    // setInstances(1) removes two rows in one script: both go, nothing comes back.
+    s.run_javascript(id, "", Some("removeRow")).unwrap();
+    assert_eq!(rows(&s), 1, "{:?}", s.get(id).unwrap().form.iter().map(|f| &f.name).collect::<Vec<_>>());
+    let cos = pdfcraft_cos::Document::open(s.get(id).unwrap().bytes.clone()).unwrap();
+    let data = pdfcraft_xfa::data_of(&cos).unwrap();
+    assert_eq!(data.count(&pdfcraft_xfa::som_to_path("form[0].page1[0].table[0]"), "row"), 1);
+    // resetData with names clears those fields (the row's amount too) and nothing else.
+    s.apply(id, Edit::SetFieldValue { name: "price".into(), value: FieldValue::Text("9".into()) }).unwrap();
+    let o = s.run_javascript(id, "", Some("hello")).unwrap();
+    let value = |s: &Session, n: &str| s.get(id).unwrap().form.iter().find(|f| f.name == n).unwrap().value.clone();
+    assert!(value(&s, "qty").is_empty(), "{:?} {o:?}", value(&s, "qty"));
+    assert!(value(&s, "amount").is_empty());
+    assert_eq!(value(&s, "price"), vec!["9".to_string()]);
+}
+
+/// Streams in `bytes` (every revision) that hold an XFA datasets packet.
+fn datasets_streams(bytes: &Arc<Vec<u8>>) -> usize {
+    let cos = pdfcraft_cos::Document::open(bytes.clone()).unwrap();
+    cos.object_numbers()
+        .into_iter()
+        .filter(|&n| {
+            cos.try_get(n).ok().is_some_and(|o| match &*o {
+                pdfcraft_cos::Object::Stream(s) => s.decoded_within(1 << 24).is_ok_and(|b| b.windows(9).any(|w| w == b"datasets>")),
+                _ => false,
+            })
+        })
+        .count()
+}
+
+#[test]
+fn hostile_xfa_open_scripts_are_merged_capped_kept_from_printing_and_noted() {
+    // On open: a calculate setting its own value 50 000 times, an initialize script showing a
+    // thousand messages and asking to print, open a link and save.
+    let tpl = pdfcraft_xfa::fixtures::scripted_template()
+        .replace(
+            r#"<calculate><script contentType="application/x-javascript">qty.rawValue * price.rawValue</script></calculate>"#,
+            r#"<calculate><script contentType="application/x-javascript">for (var i = 0; i &lt; 50000; i++) this.rawValue = i;</script></calculate>"#,
+        )
+        .replace(
+            r#"if (qty.rawValue === null) qty.rawValue = 2;"#,
+            r#"for (var i = 0; i &lt; 1000; i++) xfa.host.messageBox("m" + i); xfa.host.print(); xfa.host.gotoURL("https://example.com/"); app.execMenuItem("SaveAs"); if (qty.rawValue === null) qty.rawValue = 2;"#,
+        );
+    let bytes = Arc::new(pdfcraft_xfa::fixtures::shell(&tpl));
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let started = std::time::Instant::now();
+    let id = s.open("hostile.pdf", None, bytes, None).expect("opens");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "{:?}", started.elapsed());
+    let doc = s.get(id).unwrap();
+    assert_eq!(doc.form.iter().find(|f| f.name == "total").unwrap().value, vec!["49999".to_string()]);
+    // One datasets stream for the scripts' revision, not one per value set.
+    assert!(datasets_streams(&doc.bytes) <= 3, "{} datasets streams", datasets_streams(&doc.bytes));
+    // What opening changed is noted with the form's other XFA notes.
+    assert!(doc.xfa_warnings.iter().any(|w| w.contains("scripts changed it on opening")), "{:?}", doc.xfa_warnings);
+    let out = s.take_js_output(id);
+    assert_eq!(out.alerts.len(), 100, "message boxes are capped");
+    assert!(out.errors.iter().any(|e| e.contains("more than 100 messages")), "{:?}", out.errors);
+    assert!(out.requests.is_empty(), "only a click may print, save or open links: {:?}", out.requests);
+    assert!(out.console.iter().any(|c| c.contains("only print when a button is clicked")), "{:?}", out.console);
+}
+
+#[test]
+fn runaway_xfa_calculations_at_open_end_quickly_with_a_report() {
+    // Nested loops in one frame stop at the loop limit; loops in nested calls (that limit is per
+    // call) are abandoned at the time limit and turn the form's scripts off.
+    let tpl = pdfcraft_xfa::fixtures::scripted_template()
+        .replace(
+            r#"<calculate><script contentType="application/x-javascript">qty.rawValue * price.rawValue</script></calculate>"#,
+            r#"<calculate><script contentType="application/x-javascript">for (var i = 0; i &lt; 1e9; i++) { for (var j = 0; j &lt; 1e9; j++) {} }</script></calculate>"#,
+        )
+        .replace(
+            r#"var t = 0; var rows"#,
+            r#"function f() { for (var j = 0; j &lt; 99999; j++) {} } for (var k = 0; k &lt; 5000; k++) f(); var t = 0; var rows"#,
+        );
+    let bytes = Arc::new(pdfcraft_xfa::fixtures::shell(&tpl));
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let started = std::time::Instant::now();
+    let id = s.open("runaway.pdf", None, bytes, None).expect("opens");
+    assert!(started.elapsed() < std::time::Duration::from_secs(4), "{:?}", started.elapsed());
+    let out = s.take_js_output(id);
+    assert!(out.errors.iter().any(|e| e.contains("total") && e.contains("maximum number of iteration")), "{:?}", out.errors);
+    assert!(out.errors.iter().any(|e| e.contains("abandoned")), "{:?}", out.errors);
+    assert!(out.errors.iter().any(|e| e.contains("scripts are off")), "{:?}", out.errors);
+    // The scripts stay off: a change runs nothing more.
+    let started = std::time::Instant::now();
+    s.apply(id, Edit::SetFieldValue { name: "qty".into(), value: FieldValue::Text("3".into()) }).unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    assert!(s.take_js_output(id).errors.is_empty());
+}

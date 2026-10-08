@@ -201,8 +201,7 @@ fn window_state_is_saved_with_the_settings_and_checked_on_the_way_back() {
 
 /// eframe's settings file: a RON map whose "pdfcraft" entry is the app's JSON.
 fn settings_file(app_json: &str) -> String {
-    let map: std::collections::BTreeMap<&str, &str> =
-        [("pdfcraft", app_json), ("window", "(maximized:true)"), ("egui", "()")].into_iter().collect();
+    let map: std::collections::BTreeMap<&str, &str> = [("pdfcraft", app_json), ("window", "(maximized:true)"), ("egui", "()")].into_iter().collect();
     ron::ser::to_string_pretty(&map, ron::ser::PrettyConfig::default()).expect("serializes")
 }
 

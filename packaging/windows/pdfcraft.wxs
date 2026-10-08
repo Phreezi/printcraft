@@ -2,15 +2,16 @@
 <!--
   PeDeeFe MSI (WiX Toolset v5: `dotnet tool install -g wix`). Built by package.ps1:
 
-    wix build pdfcraft.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -d DocIconPath=... -o out.msi
+    wix build pdfcraft.wxs installer-ui.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -d DocIconPath=... -o out.msi
 
   PeDeeFe is a fork of PdfCraft with its own identity (name, manufacturer, UpgradeCode, component
   GUIDs, executable name, ProgID and registry keys), so it installs next to an official PdfCraft
   instead of replacing it, and carries none of the ArtCraft marks or links.
 
-  Per-machine install into Program Files, a Start Menu shortcut, an App Paths entry, and PeDeeFe
-  registered as a PDF handler (offered under "Open with" and in Default apps, never forced as the
-  default). Files opened with PeDeeFe arrive on its command line.
+  Per-machine install into Program Files, a Start Menu shortcut, a desktop shortcut (on by default,
+  optional), an App Paths entry, and PeDeeFe registered as a PDF handler (offered under "Open with"
+  and in Default apps, never forced as the default). Files opened with PeDeeFe arrive on its
+  command line.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
@@ -35,11 +36,17 @@
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/Phreezi/printcraft" />
     <Property Id="ARPURLUPDATEINFO" Value="https://github.com/Phreezi/printcraft/releases" />
     <Property Id="ARPHELPLINK" Value="https://github.com/Phreezi/printcraft/issues" />
+    <!-- Desktop shortcut (#143): on by default, a checkbox in the full-UI welcome dialog, and
+         INSTALLDESKTOPSHORTCUT=0 on the msiexec command line for unattended installs. Secure, so the
+         choice made in the (unelevated) UI reaches the elevated install. -->
+    <Property Id="INSTALLDESKTOPSHORTCUT" Value="1" Secure="yes" />
+    <UIRef Id="PdfcraftInstallerUI" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="PeDeeFe" />
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
 
     <Feature Id="Main" Title="PeDeeFe" Level="1">
       <ComponentGroupRef Id="PdfcraftFiles" />
@@ -49,15 +56,11 @@
   <Fragment>
     <ComponentGroup Id="PdfcraftFiles" Directory="INSTALLFOLDER">
       <Component Id="PdfcraftApp" Guid="9B2E4A71-3C6D-4F08-8A5E-71D2C4B9E063">
-        <File Id="PdfcraftExe" Source="$(var.BinDir)\pdfcraft.exe" Name="pedeefe.exe" KeyPath="yes">
-          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="PeDeeFe"
-              Description="PeDeeFe PDF workbench" WorkingDirectory="INSTALLFOLDER" Advertise="yes"
-              Icon="PdfcraftIcon.ico" IconIndex="0" />
-        </File>
+        <File Id="PdfcraftExe" Source="$(var.BinDir)\pdfcraft.exe" Name="pedeefe.exe" KeyPath="yes" />
 
         <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\pedeefe.exe" Value="[#PdfcraftExe]" Type="string" />
 
-        <!-- PDF files (#107): PdfCraft is offered under "Open with" and in Settings ▸ Default
+        <!-- PDF files (#107): PeDeeFe is offered under "Open with" and in Settings ▸ Default
              apps, through Windows' Default Programs registration (a ProgID, OpenWithProgids,
              Capabilities and RegisteredApplications). It never takes over an existing default:
              .pdf's own default value is left alone, and the user chooses. Without this, the only
@@ -77,6 +80,58 @@
         <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities" Name="ApplicationIcon" Value="[#PdfcraftExe],0" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Capabilities\FileAssociations" Name=".pdf" Value="PeDeeFe.Document" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\RegisteredApplications" Name="PeDeeFe" Value="Software\PeDeeFe\Capabilities" Type="string" />
+
+        <!-- Image context menu (#190): convert without changing image file defaults. The verb is
+             PeDeeFe's own (PeDeeFe.CreatePdf), so it sits next to an official PdfCraft's. -->
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.png\shell\PeDeeFe.CreatePdf" Value="Create PDF with PeDeeFe…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.png\shell\PeDeeFe.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.png\shell\PeDeeFe.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jpg\shell\PeDeeFe.CreatePdf" Value="Create PDF with PeDeeFe…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jpg\shell\PeDeeFe.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jpg\shell\PeDeeFe.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jpeg\shell\PeDeeFe.CreatePdf" Value="Create PDF with PeDeeFe…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jpeg\shell\PeDeeFe.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jpeg\shell\PeDeeFe.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.tif\shell\PeDeeFe.CreatePdf" Value="Create PDF with PeDeeFe…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.tif\shell\PeDeeFe.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.tif\shell\PeDeeFe.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.tiff\shell\PeDeeFe.CreatePdf" Value="Create PDF with PeDeeFe…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.tiff\shell\PeDeeFe.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.tiff\shell\PeDeeFe.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.gif\shell\PeDeeFe.CreatePdf" Value="Create PDF with PeDeeFe…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.gif\shell\PeDeeFe.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.gif\shell\PeDeeFe.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.bmp\shell\PeDeeFe.CreatePdf" Value="Create PDF with PeDeeFe…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.bmp\shell\PeDeeFe.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.bmp\shell\PeDeeFe.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jp2\shell\PeDeeFe.CreatePdf" Value="Create PDF with PeDeeFe…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jp2\shell\PeDeeFe.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jp2\shell\PeDeeFe.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.j2k\shell\PeDeeFe.CreatePdf" Value="Create PDF with PeDeeFe…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.j2k\shell\PeDeeFe.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.j2k\shell\PeDeeFe.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jpx\shell\PeDeeFe.CreatePdf" Value="Create PDF with PeDeeFe…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jpx\shell\PeDeeFe.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jpx\shell\PeDeeFe.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
+      </Component>
+
+      <!-- Shortcuts (#143) are plain links to pedeefe.exe, not advertised MSI shortcuts: advertised
+           ones point at a Windows Installer descriptor rather than the program, which Windows can't
+           use as a file handler (#107), and 0.2.1's advertised one went missing from the Start menu
+           (#143). Each has its own component with an HKLM key path, so Windows Installer removes it
+           on uninstall; in this per-machine package both folders are the all-users ones. The GUIDs
+           and key paths are PeDeeFe's own, apart from an official PdfCraft's. -->
+      <Component Id="PdfcraftStartMenuShortcut" Directory="ProgramMenuFolder" Guid="229D5CEB-C34E-43DC-87CE-05030398A3F3">
+        <Shortcut Id="StartMenuShortcut" Name="PeDeeFe" Description="PeDeeFe PDF workbench"
+            Target="[#PdfcraftExe]" WorkingDirectory="INSTALLFOLDER" Icon="PdfcraftIcon.ico" IconIndex="0" />
+        <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Shortcuts" Name="StartMenu" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+
+      <Component Id="PdfcraftDesktopShortcut" Directory="DesktopFolder" Guid="22CFBDC3-8514-4DCF-9189-A3310B71CECE"
+          Condition="INSTALLDESKTOPSHORTCUT = 1">
+        <Shortcut Id="DesktopShortcut" Name="PeDeeFe" Description="PeDeeFe PDF workbench"
+            Target="[#PdfcraftExe]" WorkingDirectory="INSTALLFOLDER" Icon="PdfcraftIcon.ico" IconIndex="0" />
+        <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Shortcuts" Name="Desktop" Type="integer" Value="1" KeyPath="yes" />
       </Component>
 
       <Component Id="PdfcraftCli">

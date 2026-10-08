@@ -12,6 +12,29 @@ pub enum ThemeKind {
     Dark,
 }
 
+/// The saved user choice, independent of the light/dark colours currently displayed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum ThemePreference {
+    System,
+    #[default]
+    Light,
+    Dark,
+}
+
+impl ThemePreference {
+    pub fn resolve(self, system: Option<egui::Theme>, fallback: ThemeKind) -> ThemeKind {
+        match self {
+            Self::Light => ThemeKind::Light,
+            Self::Dark => ThemeKind::Dark,
+            Self::System => match system {
+                Some(egui::Theme::Light) => ThemeKind::Light,
+                Some(egui::Theme::Dark) => ThemeKind::Dark,
+                None => fallback,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Tokens {
     pub kind: ThemeKind,
@@ -151,10 +174,25 @@ pub fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(font_definitions());
 }
 
+/// Install the interface fonts with the CJK fallback order for the UI language (Chinese
+/// first for Simplified Chinese, Japanese first otherwise). Call it when the language
+/// changes; the new faces take effect next frame.
+pub fn install_fonts_for(ctx: &egui::Context, prefer_hans: bool) {
+    ctx.set_fonts(font_definitions_for(prefer_hans));
+}
+
 /// The interface fonts: Inter (and JetBrains Mono for code) first, then egui's defaults, then
-/// the Japanese faces of the optional craft-fonts build input (BIZ UDPGothic first) as the last
-/// fallback in every family. Without craft-fonts there is no Japanese face.
+/// the CJK faces of the optional craft-fonts build input as the last fallback in every family.
+/// Without craft-fonts there is no Japanese or Chinese face.
 pub fn font_definitions() -> FontDefinitions {
+    font_definitions_for(false)
+}
+
+/// [`font_definitions`] with the CJK fallback order for the UI language. Simplified Chinese
+/// must come first in Chinese mode: otherwise shared characters render in the Japanese face
+/// while Simplified-only characters (e.g. U+6B22 欢) fall through to the Chinese face, and
+/// the mixed vertical metrics sink them below the line.
+pub fn font_definitions_for(prefer_hans: bool) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     let add = |fonts: &mut FontDefinitions, name: &str, bytes: &'static [u8]| {
         fonts.font_data.insert(name.to_owned(), Arc::new(FontData::from_static(bytes)));
@@ -165,10 +203,13 @@ pub fn font_definitions() -> FontDefinitions {
     add(&mut fonts, "JetBrainsMono", include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf"));
     fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "Inter".to_owned());
     fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "JetBrainsMono".to_owned());
-    // The same static bytes pdfcraft-fonts uses for Japanese text in PDFs: one copy, not two.
-    for face in pdfcraft_fonts::ui_japanese_fonts() {
+    // The same static bytes pdfcraft-fonts uses for Japanese/Chinese text in PDFs: one copy, not two.
+    for face in pdfcraft_fonts::ui_cjk_fonts(prefer_hans) {
         let name = face.name();
-        add(&mut fonts, &name, face.bytes);
+        // Japanese and Chinese faces have distinct family names, so no collision here.
+        if !fonts.font_data.contains_key(&name) {
+            add(&mut fonts, &name, face.bytes);
+        }
         for family in [FontFamily::Proportional, FontFamily::Monospace] {
             fonts.families.entry(family).or_default().push(name.clone());
         }
@@ -193,6 +234,8 @@ pub fn semibold(size: f32) -> FontId {
 }
 
 pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
+    // egui must use the same theme for popup/menu styles as our custom chrome.
+    ctx.set_theme(if kind == ThemeKind::Dark { egui::Theme::Dark } else { egui::Theme::Light });
     let t = Tokens::for_kind(kind);
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("pdfcraft-theme"), t));
     let mut v = if t.dark() { Visuals::dark() } else { Visuals::light() };
@@ -306,18 +349,21 @@ mod tests {
     /// after it, and after switching the theme in Preferences.
     #[test]
     fn the_app_theme_holds_whatever_theme_the_system_reports() {
-        for kind in [ThemeKind::Light, ThemeKind::Dark] {
+        // A fixed preference holds whatever the system reports; System follows it. Either way the
+        // style is the app's own (colours, spacing, text sizes), never egui's defaults.
+        for preference in [ThemePreference::Light, ThemePreference::Dark, ThemePreference::System] {
             for system in [Some(egui::Theme::Light), Some(egui::Theme::Dark), None] {
                 let ctx = egui::Context::default();
                 let mut app = crate::PdfCraftApp::new();
-                app.theme = kind;
+                app.theme_preference = preference;
                 app.prepare(&ctx);
                 let mut f = eframe::Frame::_new_kittest();
-                let mut want = kind;
+                let mut want = preference.resolve(system, ThemeKind::Light);
                 for pass in 0..3 {
                     if pass == 2 {
-                        want = if kind == ThemeKind::Light { ThemeKind::Dark } else { ThemeKind::Light };
-                        app.set_theme(&ctx, want);
+                        let other = if want == ThemeKind::Light { ThemePreference::Dark } else { ThemePreference::Light };
+                        want = other.resolve(system, want);
+                        app.set_theme_preference(other);
                     }
                     let input = egui::RawInput { system_theme: system, ..Default::default() };
                     let mut seen = None;
@@ -334,7 +380,7 @@ mod tests {
                     out.textures_delta.clear();
                     let (panel, dark, spacing, body) = seen.unwrap_or_default();
                     let t = Tokens::for_kind(want);
-                    let at = format!("app {kind:?} then {want:?}, system {system:?}, pass {pass}");
+                    let at = format!("preference {preference:?}, now {want:?}, system {system:?}, pass {pass}");
                     assert_eq!(panel, t.panel, "{at}: the app's panel colour");
                     assert_eq!(dark, t.dark(), "{at}");
                     assert_eq!(spacing, egui::vec2(8.0, 6.0), "{at}: the app's spacing");

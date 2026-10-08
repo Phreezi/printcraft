@@ -1,7 +1,8 @@
 //! The Print dialog (Acrobat's File ▸ Print, execution plan M10.5): printer, copies, grayscale,
 //! print quality; pages to print (all, current, range with labels; odd/even, reverse); page
-//! sizing & handling (Size, Poster, Multiple, Booklet, and PeDeeFe's Window); orientation;
-//! comments & forms; and a live preview of the sheets, drawn sharp at the screen's resolution.
+//! sizing & handling (Size, Poster, Multiple with its cut-and-stack order for single-sided
+//! printing, Booklet, and PeDeeFe's Window); orientation; comments & forms; and a live preview
+//! of the sheets, drawn sharp at the screen's resolution.
 //!
 //! **Window** works like AutoCAD's plot window: the user drags a rectangle over the page (in a
 //! large picker with zoom and pan) and only that area prints, exactly as drawn: fitted to the
@@ -16,7 +17,8 @@
 //! The printer list is fetched in the background (on Windows it takes a moment), and jobs print
 //! in the background (on Windows every sheet is drawn first): the dialog closes at once and a
 //! notice says when the job reached the printer. Printer, paper, two-sided, colour, quality and
-//! the window options are remembered between sessions. "Save as PDF" writes the print-ready PDF.
+//! the window options are remembered between sessions. "Save as PDF" writes the print-ready PDF
+//! (in a browser it downloads it).
 
 use egui::{Color32, Pos2, Rect, Stroke, pos2, vec2};
 use pdfcraft_engine::print::{self, A3, A4, Binding, BookletSubset, Content, Layout, MARGIN, Orientation, PageOrder, SizeMode, Subset, spool};
@@ -277,8 +279,8 @@ pub fn sheet_label(name: &str, sheet: (f64, f64), printed: Option<(f64, f64)>) -
 /// "Scale: 186%" for a scale of 1.864 (1 = 100 %); "Scale: —" when there is none.
 pub fn scale_label(scale: Option<f64>) -> String {
     match scale.filter(|s| s.is_finite() && *s > 0.0) {
-        Some(s) => format!("Scale: {:.0}%", s * 100.0),
-        None => "Scale: —".into(),
+        Some(s) => crate::i18n::fmt(tl!("Scale: {pct}%"), &[("pct", &format!("{:.0}", s * 100.0))]),
+        None => tl!("Scale: —").to_string(),
     }
 }
 
@@ -366,6 +368,9 @@ pub fn poster_preview(
 impl PrintDraft {
     /// The engine settings for this draft (page count and labels from the document).
     pub fn settings(&self, count: usize, labels: &[String]) -> Result<print::Settings, String> {
+        if self.handling == Handling::Multiple && self.order == PageOrder::CutStack && self.duplex != spool::Duplex::Off {
+            return Err("Cut and stack needs Two-sided: Off. Print single-sided sheets.".into());
+        }
         let range = match self.which {
             Which::All => None,
             Which::Current => Some((self.current_page + 1).to_string()),
@@ -493,7 +498,9 @@ impl PdfCraftApp {
     /// Fetch the printer list in the background (on Windows it takes a moment).
     fn list_printers(&mut self) {
         if !spool::available() {
-            self.print_draft.listing = false;
+            // No printers here (the web): Save as PDF, which downloads the file there, even when
+            // a printer was remembered from elsewhere.
+            self.print_draft.printers_arrived(Vec::new());
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -552,11 +559,12 @@ impl PdfCraftApp {
                 }
             });
             for (printer, r) in finished {
-                self.notify(match r {
-                    Ok(msg) if msg.is_empty() => format!("Sent to {printer}"),
-                    Ok(msg) => format!("Sent to {printer}: {msg}"),
-                    Err(e) => format!("Couldn't print on {printer}: {e}"),
-                });
+                match r {
+                    Ok(msg) if msg.is_empty() => self.notify_fmt("Sent to {printer}", &[("printer", &printer)]),
+                    Ok(msg) => self.notify_fmt("Sent to {printer}: {msg}", &[("printer", &printer), ("msg", &msg)]),
+                    // The spooler's own words stay untranslated (see `notify_error`).
+                    Err(e) => self.notify_fmt("Couldn't print on {printer}: {e}", &[("printer", &printer), ("e", &e)]),
+                }
             }
             if (self.print_jobs.listing.is_some() || !self.print_jobs.running.is_empty())
                 && let Some(ctx) = &self.ctx
@@ -567,7 +575,9 @@ impl PdfCraftApp {
     }
 
     /// Print (or save) with the dialog's settings. Returns `true` when the job started (printing
-    /// carries on in the background) or the PDF was saved.
+    /// carries on in the background) or the PDF was saved. Save as PDF without a preset path
+    /// returns `true` once the save picker is showing; the file is written on a later frame, when
+    /// the user has chosen where.
     pub fn print_now(&mut self) -> bool {
         let Some((_, id)) = self.active_ids() else { return false };
         let Some(doc) = self.session.get(id) else { return false };
@@ -575,7 +585,7 @@ impl PdfCraftApp {
         let settings = match self.print_draft.settings(doc.info.pages.len(), &labels) {
             Ok(s) => s,
             Err(e) => {
-                self.notify(e);
+                self.notify_error(e);
                 return false;
             }
         };
@@ -583,7 +593,7 @@ impl PdfCraftApp {
         let bytes = match self.session.print_pdf(id, &settings) {
             Ok(b) => b,
             Err(e) => {
-                self.notify(e.to_string());
+                self.notify_error(e);
                 return false;
             }
         };
@@ -601,45 +611,72 @@ impl PdfCraftApp {
                         }
                     });
                     self.print_jobs.running.push((printer.clone(), rx));
-                    self.notify(format!("Printing on {printer}…"));
+                    self.notify_fmt("Printing on {printer}…", &[("printer", &printer)]);
                     true
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
                     match spool::submit(&bytes, &job) {
-                        Ok(_) => {
-                            self.notify(format!("Sent to {printer}"));
+                        Ok(msg) => {
+                            if msg.is_empty() {
+                                self.notify_fmt("Sent to {printer}", &[("printer", &printer)]);
+                            } else {
+                                self.notify_fmt("Sent to {printer}: {msg}", &[("printer", &printer), ("msg", &msg)]);
+                            }
                             true
                         }
                         Err(e) => {
-                            self.notify(e.to_string());
+                            self.notify_error(e);
                             false
                         }
                     }
                 }
             }
+            None => self.save_print_pdf(&name, bytes),
+        }
+    }
+
+    /// Print ▸ Save as PDF on the desktop: write to `save_override` (tests and automation), or
+    /// ask where and write on a later frame. Returns `true` once written, or once the save picker
+    /// is showing.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_print_pdf(&mut self, name: &str, bytes: Vec<u8>) -> bool {
+        let write = move |app: &mut Self, path: std::path::PathBuf| match crate::editing::write_atomically(&path.to_string_lossy(), &bytes) {
+            Ok(()) => {
+                app.notify_fmt("Saved the print-ready PDF to {path}", &[("path", &path.display().to_string())]);
+                true
+            }
+            Err(e) => {
+                app.notify_fmt("Could not save: {e}", &[("e", &e.to_string())]);
+                false
+            }
+        };
+        match self.save_override.clone() {
+            Some(p) => write(self, p.into()),
             None => {
-                let path = match self.save_override.clone() {
-                    Some(p) => Some(std::path::PathBuf::from(p)),
-                    #[cfg(not(target_arch = "wasm32"))]
-                    None => {
-                        let stem = name.trim_end_matches(".pdf").trim_end_matches(".PDF");
-                        rfd::FileDialog::new().add_filter("PDF", &["pdf"]).set_file_name(format!("{stem} (print).pdf")).save_file()
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    None => None,
-                };
-                let Some(path) = path else { return false };
-                match std::fs::write(&path, &bytes) {
-                    Ok(()) => {
-                        self.notify(format!("Saved the print-ready PDF to {}", path.display()));
-                        true
-                    }
-                    Err(e) => {
-                        self.notify(format!("Could not save: {e}"));
-                        false
-                    }
-                }
+                let stem = name.trim_end_matches(".pdf").trim_end_matches(".PDF");
+                let dialog = rfd::AsyncFileDialog::new().add_filter("PDF", &["pdf"]).set_file_name(format!("{stem} (print).pdf"));
+                self.ask_one(crate::pickers::Ask::Save(dialog), None, move |app, path| {
+                    write(app, path);
+                })
+            }
+        }
+    }
+
+    /// Print ▸ Save as PDF in a browser: download it, as Save does (#170). There is no folder to
+    /// choose and no file system to write to, so `save_override` doesn't apply.
+    #[cfg(target_arch = "wasm32")]
+    fn save_print_pdf(&mut self, name: &str, bytes: Vec<u8>) -> bool {
+        let stem = name.trim_end_matches(".pdf").trim_end_matches(".PDF");
+        let file = format!("{stem} (print).pdf");
+        match crate::editing::download(&file, &bytes) {
+            Ok(()) => {
+                self.notify_fmt("Downloaded {name}", &[("name", &file)]);
+                true
+            }
+            Err(e) => {
+                self.notify_fmt("Couldn't download {name}: {e}", &[("name", &file), ("e", &e)]);
+                false
             }
         }
     }
@@ -656,11 +693,11 @@ fn combo<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, value: &mut T, choice
 
 fn poster_controls(ui: &mut egui::Ui, d: &mut PrintDraft) {
     ui.horizontal(|ui| {
-        ui.label("Tile scale:");
+        ui.label(tl!("Tile scale:"));
         ui.add(egui::DragValue::new(&mut d.poster_scale).range(10.0..=1000.0).suffix(" %"));
-        ui.label("Overlap:");
+        ui.label(tl!("Overlap:"));
         ui.add(egui::DragValue::new(&mut d.overlap).range(0.0..=144.0).suffix(" pt"));
-        ui.checkbox(&mut d.cut_marks, "Cut marks");
+        ui.checkbox(&mut d.cut_marks, tl!("Cut marks"));
     });
 }
 
@@ -673,7 +710,8 @@ const PREVIEW_HEIGHT: f32 = 530.0;
 /// Every sizing tab's body is at least this tall, so switching tabs doesn't move the dialog.
 const TAB_BODY_HEIGHT: f32 = 112.0;
 
-/// The page sizing & handling modes, as the segmented control shows them.
+/// The page sizing & handling modes, as the segmented control shows them (in English; drawn
+/// through `tl!`).
 const TABS: [(Handling, &str); 5] = [
     (Handling::Size, "Size"),
     (Handling::Poster, "Poster"),
@@ -720,7 +758,7 @@ pub(crate) fn body(
         return (false, false);
     }
     ui.set_width(DIALOG_WIDTH);
-    ui.label(egui::RichText::new("Print").font(theme::semibold(18.0)));
+    ui.label(egui::RichText::new(tl!("Print")).font(theme::semibold(18.0)));
     ui.add_space(6.0);
     let settings = d.settings(sizes.len(), labels);
     // Laid out once a frame: the preview and the Print button both use it.
@@ -760,11 +798,11 @@ pub(crate) fn body(
     ui.add_space(10.0);
     let (mut go, mut cancel) = (false, false);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let label = if d.printer.is_some() { "Print" } else { "Save as PDF" };
+        let label = if d.printer.is_some() { tl!("Print") } else { tl!("Save as PDF") };
         if ui.add_enabled_ui(settings.is_ok() && !sheets.is_empty(), |ui| widgets::pill_button(ui, label, true)).inner.clicked() {
             go = true;
         }
-        if widgets::pill_button(ui, "Cancel", false).clicked() {
+        if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
             cancel = true;
         }
     });
@@ -773,69 +811,74 @@ pub(crate) fn body(
 
 /// The settings, one titled panel per section (like Acrobat's grouped boxes).
 fn settings_column(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens, page_count: usize) {
-    widgets::group(ui, "Printer", t.section[0], |ui| {
+    widgets::group(ui, tl!("Printer"), t.section[0], |ui| {
         egui::Grid::new("print-top").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-            ui.label("Printer:");
+            ui.label(tl!("Printer:"));
             let shown = match (&d.printer, d.listing) {
                 (Some(p), _) => p.clone(),
-                (None, true) if !d.printer_chosen => "Looking for printers…".into(),
-                (None, _) => "Save as PDF".into(),
+                (None, true) if !d.printer_chosen => tl!("Looking for printers…").to_string(),
+                (None, _) => tl!("Save as PDF").to_string(),
             };
             let before = d.printer.clone();
             egui::ComboBox::from_id_salt("printer").selected_text(shown).width(280.0).show_ui(ui, |ui| {
                 for p in &d.printers {
-                    let label = if p.default { format!("{} (default)", p.name) } else { p.name.clone() };
+                    let label = if p.default { crate::i18n::fmt(tl!("{name} (default)"), &[("name", &p.name)]) } else { p.name.clone() };
                     ui.selectable_value(&mut d.printer, Some(p.name.clone()), label);
                 }
                 if d.listing {
-                    ui.label(egui::RichText::new("Looking for printers…").color(t.text_muted));
+                    ui.label(egui::RichText::new(tl!("Looking for printers…")).color(t.text_muted));
                 } else if let Some(e) = &d.list_error {
-                    ui.label(egui::RichText::new(format!("Couldn't list the printers: {e}")).color(t.text_muted));
+                    let why = crate::i18n::fmt(tl!("Couldn't list the printers: {e}"), &[("e", e)]);
+                    ui.label(egui::RichText::new(why).color(t.text_muted));
                 } else if d.printers.is_empty() && spool::available() {
-                    ui.label(egui::RichText::new("No printers found").color(t.text_muted));
+                    ui.label(egui::RichText::new(tl!("No printers found")).color(t.text_muted));
                 }
-                ui.selectable_value(&mut d.printer, None, "Save as PDF");
+                ui.selectable_value(&mut d.printer, None, tl!("Save as PDF"));
             });
             if d.printer != before {
                 d.printer_chosen = true;
             }
             ui.end_row();
-            ui.label("Copies:");
+            ui.label(tl!("Copies:"));
             ui.horizontal(|ui| {
                 ui.add(egui::DragValue::new(&mut d.copies).range(1..=999));
-                ui.checkbox(&mut d.collate, "Collate");
-                ui.checkbox(&mut d.grayscale, "Print in grayscale");
+                ui.checkbox(&mut d.collate, tl!("Collate"));
+                ui.checkbox(&mut d.grayscale, tl!("Print in grayscale"));
             });
             ui.end_row();
-            ui.label("Two-sided:");
+            ui.label(tl!("Two-sided:"));
             combo(
                 ui,
                 "duplex",
                 &mut d.duplex,
-                &[(spool::Duplex::Off, "Off"), (spool::Duplex::LongEdge, "Flip on long edge"), (spool::Duplex::ShortEdge, "Flip on short edge")],
+                &[
+                    (spool::Duplex::Off, tl!("Off")),
+                    (spool::Duplex::LongEdge, tl!("Flip on long edge")),
+                    (spool::Duplex::ShortEdge, tl!("Flip on short edge")),
+                ],
                 160.0,
             );
             ui.end_row();
-            ui.label("Paper:");
+            ui.label(tl!("Paper:"));
             ui.horizontal(|ui| {
                 for (i, (name, _)) in PAPER_CHOICES.iter().enumerate() {
                     ui.radio_value(&mut d.paper, i, *name);
                 }
                 if spool::prints_images() {
                     ui.add_space(12.0);
-                    ui.label("Quality:");
-                    let choices: Vec<(u32, &str)> = spool::QUALITIES.to_vec();
+                    ui.label(tl!("Quality:"));
+                    let choices: Vec<(u32, &str)> = spool::QUALITIES.iter().map(|&(dpi, label)| (dpi, tl!(label))).collect();
                     combo(ui, "quality", &mut d.dpi, &choices, 140.0);
                 }
             });
             ui.end_row();
         });
     });
-    widgets::group(ui, "Pages to Print", t.section[1], |ui| {
+    widgets::group(ui, tl!("Pages to Print"), t.section[1], |ui| {
         ui.horizontal(|ui| {
-            ui.radio_value(&mut d.which, Which::All, "All");
-            ui.radio_value(&mut d.which, Which::Current, "Current page");
-            ui.radio_value(&mut d.which, Which::Range, "Pages");
+            ui.radio_value(&mut d.which, Which::All, tl!("All"));
+            ui.radio_value(&mut d.which, Which::Current, tl!("Current page"));
+            ui.radio_value(&mut d.which, Which::Range, tl!("Pages"));
             let r = ui.add_enabled(
                 d.which == Which::Range,
                 egui::TextEdit::singleline(&mut d.range).hint_text(format!("1-{page_count}")).desired_width(110.0),
@@ -845,20 +888,20 @@ fn settings_column(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens, page_count
             }
         });
         ui.horizontal(|ui| {
-            ui.label("More options:");
+            ui.label(tl!("More options:"));
             combo(
                 ui,
                 "subset",
                 &mut d.subset,
-                &[(Subset::All, "All pages in range"), (Subset::Odd, "Odd pages only"), (Subset::Even, "Even pages only")],
+                &[(Subset::All, tl!("All pages in range")), (Subset::Odd, tl!("Odd pages only")), (Subset::Even, tl!("Even pages only"))],
                 150.0,
             );
-            ui.checkbox(&mut d.reverse, "Reverse pages");
+            ui.checkbox(&mut d.reverse, tl!("Reverse pages"));
         });
     });
-    widgets::group(ui, "Page Sizing & Handling", t.section[2], |ui| {
+    widgets::group(ui, tl!("Page Sizing & Handling"), t.section[2], |ui| {
         let selected = TABS.iter().position(|(h, _)| *h == d.handling).unwrap_or(0);
-        if let Some(&(h, _)) = widgets::segmented(ui, "print-handling", &TABS.map(|tab| tab.1), selected).and_then(|i| TABS.get(i)) {
+        if let Some(&(h, _)) = widgets::segmented(ui, "print-handling", &TABS.map(|tab| tl!(tab.1)), selected).and_then(|i| TABS.get(i)) {
             if h == Handling::Window && d.handling != Handling::Window && d.which == Which::All && page_count > 1 {
                 // A window is usually wanted from the page being looked at.
                 d.which = Which::Current;
@@ -881,13 +924,13 @@ fn settings_column(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens, page_count
     // Side by side, the same height; columns justify their contents, so lay out from the left.
     let ragged = egui::Layout::top_down(egui::Align::Min);
     ui.columns_const(|[left, right]| {
-        widgets::group(left, "Orientation", t.section[3], |ui| {
+        widgets::group(left, tl!("Orientation"), t.section[3], |ui| {
             ui.set_min_height(72.0);
-            ui.radio_value(&mut d.orientation, Orientation::Auto, "Auto portrait/landscape");
-            ui.radio_value(&mut d.orientation, Orientation::Portrait, "Portrait");
-            ui.radio_value(&mut d.orientation, Orientation::Landscape, "Landscape");
+            ui.radio_value(&mut d.orientation, Orientation::Auto, tl!("Auto portrait/landscape"));
+            ui.radio_value(&mut d.orientation, Orientation::Portrait, tl!("Portrait"));
+            ui.radio_value(&mut d.orientation, Orientation::Landscape, tl!("Landscape"));
         });
-        widgets::group(right, "Comments & Forms", t.section[4], |ui| {
+        widgets::group(right, tl!("Comments & Forms"), t.section[4], |ui| {
             ui.set_min_height(72.0);
             let width = (ui.available_width() - 8.0).max(120.0);
             combo(
@@ -895,14 +938,14 @@ fn settings_column(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens, page_count
                 "content",
                 &mut d.content,
                 &[
-                    (Content::Document, "Document"),
-                    (Content::DocumentAndMarkups, "Document and markups"),
-                    (Content::DocumentAndStamps, "Document and stamps"),
-                    (Content::FormFieldsOnly, "Form fields only"),
+                    (Content::Document, tl!("Document")),
+                    (Content::DocumentAndMarkups, tl!("Document and markups")),
+                    (Content::DocumentAndStamps, tl!("Document and stamps")),
+                    (Content::FormFieldsOnly, tl!("Form fields only")),
                 ],
                 width,
             );
-            ui.with_layout(ragged, |ui| ui.label(egui::RichText::new(content_note(d.content)).size(12.0).color(t.text_muted)));
+            ui.with_layout(ragged, |ui| ui.label(egui::RichText::new(tl!(content_note(d.content))).size(12.0).color(t.text_muted)));
         });
     });
 }
@@ -912,13 +955,13 @@ fn tab_body(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens) {
     match d.handling {
         Handling::Size => {
             ui.horizontal(|ui| {
-                ui.radio_value(&mut d.size, SizeMode::Fit, "Fit");
-                ui.radio_value(&mut d.size, SizeMode::Actual, "Actual size");
-                ui.radio_value(&mut d.size, SizeMode::Shrink, "Shrink oversized pages");
+                ui.radio_value(&mut d.size, SizeMode::Fit, tl!("Fit"));
+                ui.radio_value(&mut d.size, SizeMode::Actual, tl!("Actual size"));
+                ui.radio_value(&mut d.size, SizeMode::Shrink, tl!("Shrink oversized pages"));
             });
             ui.horizontal(|ui| {
                 let custom = matches!(d.size, SizeMode::Custom(_));
-                if ui.radio(custom, "Custom scale:").clicked() {
+                if ui.radio(custom, tl!("Custom scale:")).clicked() {
                     d.size = SizeMode::Custom(d.custom_scale);
                 }
                 ui.add_enabled(custom, egui::DragValue::new(&mut d.custom_scale).range(1.0..=1000.0).suffix(" %"));
@@ -927,50 +970,60 @@ fn tab_body(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens) {
         Handling::Poster => {
             poster_controls(ui, d);
             ui.label(
-                egui::RichText::new("Each page is enlarged and printed in tiles, one per sheet; the preview shows the tiles over the page.")
+                egui::RichText::new(tl!("Each page is enlarged and printed in tiles, one per sheet; the preview shows the tiles over the page."))
                     .size(12.0)
                     .color(t.text_muted),
             );
         }
         Handling::Multiple => {
             ui.horizontal(|ui| {
-                ui.label("Pages per sheet:");
+                ui.label(tl!("Pages per sheet:"));
                 combo(ui, "per-sheet", &mut d.per_sheet, &[(2, "2"), (4, "4"), (6, "6"), (9, "9"), (16, "16")], 60.0);
-                ui.label("Page order:");
+                ui.label(tl!("Page order:"));
                 combo(
                     ui,
                     "order",
                     &mut d.order,
                     &[
-                        (PageOrder::Horizontal, "Horizontal"),
-                        (PageOrder::HorizontalReversed, "Horizontal reversed"),
-                        (PageOrder::Vertical, "Vertical"),
-                        (PageOrder::VerticalReversed, "Vertical reversed"),
+                        (PageOrder::Horizontal, tl!("Horizontal")),
+                        (PageOrder::HorizontalReversed, tl!("Horizontal reversed")),
+                        (PageOrder::Vertical, tl!("Vertical")),
+                        (PageOrder::VerticalReversed, tl!("Vertical reversed")),
+                        (PageOrder::CutStack, tl!("Cut and stack")),
                     ],
                     150.0,
                 );
             });
             ui.horizontal(|ui| {
-                ui.checkbox(&mut d.border, "Print page border");
-                ui.checkbox(&mut d.auto_rotate, "Auto-rotate pages");
+                ui.checkbox(&mut d.border, tl!("Print page border"));
+                ui.checkbox(&mut d.auto_rotate, tl!("Auto-rotate pages"));
             });
+            if d.order == PageOrder::CutStack {
+                ui.label(
+                    egui::RichText::new(tl!(
+                        "Print single-sided. Keep the sheets in order, cut at the marks, then stack the piles left to right, top to bottom."
+                    ))
+                    .size(12.0)
+                    .color(t.text_muted),
+                );
+            }
         }
         Handling::Booklet => {
             ui.horizontal(|ui| {
-                ui.label("Booklet subset:");
+                ui.label(tl!("Booklet subset:"));
                 combo(
                     ui,
                     "booklet",
                     &mut d.booklet_subset,
                     &[
-                        (BookletSubset::BothSides, "Both sides"),
-                        (BookletSubset::FrontOnly, "Front side only"),
-                        (BookletSubset::BackOnly, "Back side only"),
+                        (BookletSubset::BothSides, tl!("Both sides")),
+                        (BookletSubset::FrontOnly, tl!("Front side only")),
+                        (BookletSubset::BackOnly, tl!("Back side only")),
                     ],
                     130.0,
                 );
-                ui.label("Binding:");
-                combo(ui, "binding", &mut d.binding, &[(Binding::Left, "Left"), (Binding::Right, "Right")], 80.0);
+                ui.label(tl!("Binding:"));
+                combo(ui, "binding", &mut d.binding, &[(Binding::Left, tl!("Left")), (Binding::Right, tl!("Right"))], 80.0);
             });
         }
         Handling::Window => window_controls(ui, d, t),
@@ -996,7 +1049,8 @@ fn preview_panel(
         |ui| {
             ui.label(egui::RichText::new(scale_label(numbers.map(|v| v.0))).font(theme::semibold(13.5)).color(t.text));
             ui.add_space(14.0);
-            ui.label(egui::RichText::new(format!("Sheets: {n}")).font(theme::semibold(13.5)).color(t.text));
+            let count = crate::i18n::fmt(tl!("Sheets: {n}"), &[("n", &n.to_string())]);
+            ui.label(egui::RichText::new(count).font(theme::semibold(13.5)).color(t.text));
         },
         |ui| {
             let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), egui::Sense::hover());
@@ -1013,18 +1067,22 @@ fn preview_panel(
             }
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                if ui.add_enabled(d.sheet > 0, egui::Button::new("‹")).on_hover_text("Previous sheet").clicked() {
+                if ui.add_enabled(d.sheet > 0, egui::Button::new("‹")).on_hover_text(tl!("Previous sheet")).clicked() {
                     d.sheet = d.sheet.saturating_sub(1);
                 }
-                ui.label(if n == 0 { "No sheets".to_string() } else { format!("Sheet {} of {n}", d.sheet + 1) });
-                if ui.add_enabled(d.sheet + 1 < n, egui::Button::new("›")).on_hover_text("Next sheet").clicked() {
+                ui.label(if n == 0 {
+                    tl!("No sheets").to_string()
+                } else {
+                    crate::i18n::fmt(tl!("Sheet {s} of {n}"), &[("s", &(d.sheet + 1).to_string()), ("n", &n.to_string())])
+                });
+                if ui.add_enabled(d.sheet + 1 < n, egui::Button::new("›")).on_hover_text(tl!("Next sheet")).clicked() {
                     d.sheet += 1;
                 }
             });
             if let Some(s) = shown.sheets.get(d.sheet) {
                 let name = PAPER_CHOICES.get(d.paper).map_or("", |p| p.0);
                 ui.label(egui::RichText::new(sheet_label(name, s.size, numbers.map(|v| v.1))).size(12.5).color(t.text))
-                    .on_hover_text("The sheet, and in brackets the size the page prints at at this scale");
+                    .on_hover_text(tl!("The sheet, and in brackets the size the page prints at at this scale"));
             }
         },
     );
@@ -1110,10 +1168,14 @@ fn draw_poster(ui: &egui::Ui, area: Rect, d: &PrintDraft, t: &Tokens, shown: &Sh
     }
     painter.rect_stroke(page, 0.0, Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
     let current = g.current.and_then(|i| g.tiles.get(i));
-    let mut label = format!("Poster preview: {} × {} tiles", g.grid.0, g.grid.1);
-    if let Some((n, _)) = current {
-        label.push_str(&format!(", tile {n} highlighted"));
-    }
+    let (cols, rows) = (g.grid.0.to_string(), g.grid.1.to_string());
+    let label = match current {
+        Some((n, _)) => crate::i18n::fmt(
+            tl!("Poster preview: {cols} × {rows} tiles, tile {n} highlighted"),
+            &[("cols", &cols), ("rows", &rows), ("n", &n.to_string())],
+        ),
+        None => crate::i18n::fmt(tl!("Poster preview: {cols} × {rows} tiles"), &[("cols", &cols), ("rows", &rows)]),
+    };
     ui.interact(page, ui.id().with("poster-preview"), egui::Sense::hover())
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &label));
     for &(number, r) in &g.tiles {
@@ -1140,7 +1202,7 @@ fn draw_poster(ui: &egui::Ui, area: Rect, d: &PrintDraft, t: &Tokens, shown: &Sh
 /// The Window tab: choose the area and how it prints.
 fn window_controls(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens) {
     ui.horizontal(|ui| {
-        if widgets::pill_button(ui, "Select area…", d.region.is_none()).on_hover_text("Drag a rectangle over the page").clicked() {
+        if widgets::pill_button(ui, tl!("Select area…"), d.region.is_none()).on_hover_text(tl!("Drag a rectangle over the page")).clicked() {
             d.region_page = d.current_page;
             d.pick = PickView { before: d.region, ..PickView::default() };
             d.picking = true;
@@ -1148,28 +1210,31 @@ fn window_controls(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens) {
         ui.add_space(4.0);
         match d.region {
             Some(r) => {
-                ui.label(format!("Area: {}", area_label(r)));
+                ui.label(crate::i18n::fmt(tl!("Area: {area}"), &[("area", &area_label(r))]));
             }
             None => {
-                ui.label(egui::RichText::new("No area yet: whole pages print").color(t.text_muted));
+                ui.label(egui::RichText::new(tl!("No area yet: whole pages print")).color(t.text_muted));
             }
         }
     });
     ui.horizontal(|ui| {
-        ui.label("Print the area:");
-        ui.radio_value(&mut d.window_output, WindowOutput::Fit, "On one sheet");
-        ui.radio_value(&mut d.window_output, WindowOutput::Poster, "As a poster");
+        ui.label(tl!("Print the area:"));
+        ui.radio_value(&mut d.window_output, WindowOutput::Fit, tl!("On one sheet"));
+        ui.radio_value(&mut d.window_output, WindowOutput::Poster, tl!("As a poster"));
     });
     match d.window_output {
         WindowOutput::Fit => {
             if let Some(r) = d.region {
-                let pct = window_fit_percent(r, paper(d.paper), d.orientation);
-                ui.label(egui::RichText::new(format!("Prints at {pct:.0}% (the largest size that fits the sheet)")).color(t.text_muted));
+                let pct = format!("{:.0}", window_fit_percent(r, paper(d.paper), d.orientation));
+                let note = crate::i18n::fmt(tl!("Prints at {pct}% (the largest size that fits the sheet)"), &[("pct", &pct)]);
+                ui.label(egui::RichText::new(note).color(t.text_muted));
             }
         }
         WindowOutput::Poster => poster_controls(ui, d),
     }
-    ui.label(egui::RichText::new("The area prints exactly as drawn. To fill the sheet, hold Shift while drawing it.").size(12.0).color(t.text_muted));
+    ui.label(
+        egui::RichText::new(tl!("The area prints exactly as drawn. To fill the sheet, hold Shift while drawing it.")).size(12.0).color(t.text_muted),
+    );
 }
 
 /// Leave the picker, putting back the area from before.
@@ -1215,22 +1280,22 @@ fn picker(
     let width = ui.available_width().max(600.0);
     ui.set_width(width);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Select the area to print").font(theme::semibold(18.0)));
+        ui.label(egui::RichText::new(tl!("Select the area to print")).font(theme::semibold(18.0)));
         ui.add_space(12.0);
         if sizes.len() > 1 {
-            if ui.add_enabled(d.region_page > 0, egui::Button::new("‹")).on_hover_text("Previous page").clicked() {
+            if ui.add_enabled(d.region_page > 0, egui::Button::new("‹")).on_hover_text(tl!("Previous page")).clicked() {
                 d.region_page = d.region_page.saturating_sub(1);
             }
-            ui.label(format!("Page {} of {}", d.region_page + 1, sizes.len()));
-            if ui.add_enabled(d.region_page + 1 < sizes.len(), egui::Button::new("›")).on_hover_text("Next page").clicked() {
+            ui.label(crate::i18n::fmt(tl!("Page {p} of {n}"), &[("p", &(d.region_page + 1).to_string()), ("n", &sizes.len().to_string())]));
+            if ui.add_enabled(d.region_page + 1 < sizes.len(), egui::Button::new("›")).on_hover_text(tl!("Next page")).clicked() {
                 d.region_page += 1;
             }
         }
     });
     ui.label(
-        egui::RichText::new(
-            "Drag to draw the area; drag inside it to move it, or drag a corner to resize it. Scroll to zoom; drag with the right or middle button to pan.",
-        )
+        egui::RichText::new(tl!(
+            "Drag to draw the area; drag inside it to move it, or drag a corner to resize it. Scroll to zoom; drag with the right or middle button to pan."
+        ))
         .color(t.text_muted),
     );
     let shift = ui.input(|i| i.modifiers.shift);
@@ -1238,11 +1303,14 @@ fn picker(
     ui.horizontal(|ui| {
         keycap(ui, t, "Shift", shift);
         ui.label(
-            egui::RichText::new(format!("Hold Shift while dragging to keep the {paper_name} sheet's proportions, so the area fills the sheet."))
-                .color(if shift { t.text } else { t.text_muted }),
+            egui::RichText::new(crate::i18n::fmt(
+                tl!("Hold Shift while dragging to keep the {paper} sheet's proportions, so the area fills the sheet."),
+                &[("paper", paper_name)],
+            ))
+            .color(if shift { t.text } else { t.text_muted }),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Fit page").on_hover_text("Show the whole page").clicked() {
+            if ui.button(tl!("Fit page")).on_hover_text(tl!("Show the whole page")).clicked() {
                 d.pick.zoom = 1.0;
                 d.pick.pan = egui::Vec2::ZERO;
             }
@@ -1252,7 +1320,7 @@ fn picker(
     let screen_h = ui.ctx().content_rect().height();
     let height = (screen_h - 300.0).clamp(320.0, 1100.0);
     let (rect, resp) = ui.allocate_exact_size(vec2(width, height), egui::Sense::click_and_drag());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Print area"));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, tl!("Print area")));
     ui.painter().rect_filled(rect, 6.0, t.preview_fill);
     // Zoom (1 = the page fits) and pan.
     let fit = ((rect.width() - 32.0) / dw as f32).min((rect.height() - 32.0) / dh as f32).max(0.01);
@@ -1344,7 +1412,7 @@ fn picker(
         }
         None => {
             painter.rect_filled(page_rect, 0.0, Color32::WHITE);
-            painter.text(page_rect.center(), egui::Align2::CENTER_CENTER, "Drawing the page…", theme::regular(13.0), Color32::from_gray(140));
+            painter.text(page_rect.center(), egui::Align2::CENTER_CENTER, tl!("Drawing the page…"), theme::regular(13.0), Color32::from_gray(140));
         }
     }
     painter.rect_stroke(page_rect, 0.0, Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
@@ -1393,22 +1461,28 @@ fn picker(
     ui.horizontal(|ui| {
         match d.region {
             Some(r) => {
-                let what = match d.window_output {
-                    WindowOutput::Fit => format!("prints at {:.0}% on one sheet", window_fit_percent(r, paper_size, orientation)),
-                    WindowOutput::Poster => format!("prints as a poster at {:.0}%", d.poster_scale),
-                };
-                ui.label(format!("Area: {} · {what}", area_label(r)));
+                let area = area_label(r);
+                ui.label(match d.window_output {
+                    WindowOutput::Fit => {
+                        let pct = format!("{:.0}", window_fit_percent(r, paper_size, orientation));
+                        crate::i18n::fmt(tl!("Area: {area} · prints at {pct}% on one sheet"), &[("area", &area), ("pct", &pct)])
+                    }
+                    WindowOutput::Poster => {
+                        let pct = format!("{:.0}", d.poster_scale);
+                        crate::i18n::fmt(tl!("Area: {area} · prints as a poster at {pct}%"), &[("area", &area), ("pct", &pct)])
+                    }
+                });
             }
             None => {
-                ui.label(egui::RichText::new("No area: drag over the page").color(t.text_muted));
+                ui.label(egui::RichText::new(tl!("No area: drag over the page")).color(t.text_muted));
             }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.add_enabled_ui(d.region.is_some(), |ui| widgets::pill_button(ui, "Use this area", true)).inner.clicked() {
+            if ui.add_enabled_ui(d.region.is_some(), |ui| widgets::pill_button(ui, tl!("Use this area"), true)).inner.clicked() {
                 d.picking = false;
                 d.pick.drag = None;
             }
-            if widgets::pill_button(ui, "Cancel", false).clicked() {
+            if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
                 cancel_pick(d);
             }
         });

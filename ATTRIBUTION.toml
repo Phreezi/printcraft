@@ -11,6 +11,72 @@
 # Adobe-authored non-visual technical data allowed by AGENTS.md §1.1.
 
 [[asset]]
+path = "crates/ui-egui/src/i18n/zh-hans.tsv"
+title = "Simplified Chinese interface translation catalog"
+author = "PdfCraft contributors; PeDeeFe contributors (PeDeeFe's own entries)"
+source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "translation"
+usage = "Simplified Chinese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
+sha256 = "915c2f10cbf6de80cc9df03a8d509c6e7daa98410145300a2ae5ee86c2c05dd4"
+
+[[asset]]
+path = "crates/ui-egui/src/i18n/zh-hant.tsv"
+title = "Traditional Chinese (Taiwan) interface translation catalog"
+author = "PdfCraft contributors; PeDeeFe contributors (PeDeeFe's own entries)"
+source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "translation"
+usage = "Traditional Chinese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
+sha256 = "8558255f66e3dc81bd08db7ce82012bf297e2d7060621c72dc80b2a33518e36e"
+
+[[asset]]
+path = "crates/ui-egui/src/i18n/cs.tsv"
+title = "Czech interface translation catalog"
+author = "PdfCraft contributors; PeDeeFe contributors (PeDeeFe's own entries)"
+source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "translation"
+usage = "Czech UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
+sha256 = "f80696c2c9e5da77f98e7e8c6e33715e1bb184bf66114b53b553ebcb8883c2ad"
+
+[[asset]]
+path = "crates/ui-egui/src/i18n/pt-br.tsv"
+title = "Brazilian Portuguese interface translation catalog"
+author = "PdfCraft contributors"
+source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "translation"
+usage = "Brazilian Portuguese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
+sha256 = "0ee4d2f630623ef7e06413a7c34a4a0269a2600fba682f06988a1346be4d07a5"
+
+[[asset]]
+path = "crates/ui-egui/src/i18n/es.tsv"
+title = "Spanish interface translation catalog"
+author = "PdfCraft contributors; PeDeeFe contributors (PeDeeFe's own entries)"
+source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "translation"
+usage = "Spanish UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
+sha256 = "db27fbb350be92c86fb886614cd4eb70b479ff51240411b41d8fb7379ecf7997"
+
+[[asset]]
+path = "crates/ui-egui/src/i18n/ja.tsv"
+title = "Japanese interface translation catalog"
+author = "PdfCraft contributors; PeDeeFe contributors (PeDeeFe's own entries)"
+source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "translation"
+usage = "Japanese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
+sha256 = "df7af146241637c6df4b64ff1dfb9fbc50b3aced6863d8b26f21d6278aca4fbd"
+
+[[asset]]
 path = "assets/icons/accessibility.svg"
 title = "Lucide icon \"accessibility\""
 author = "Lucide Contributors (portions Cole Bemis, Feather)"

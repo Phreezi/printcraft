@@ -18,6 +18,7 @@ mod forms;
 mod links;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+mod measure;
 mod printing;
 mod redact;
 mod signing;
@@ -100,7 +101,11 @@ impl Automation {
 
     /// Confine every path the tools read or write to `root` (relative paths resolve inside it).
     pub fn with_root(mut self, root: impl Into<PathBuf>) -> std::io::Result<Self> {
-        self.root = Some(root.into().canonicalize()?);
+        let root = root.into().canonicalize()?;
+        if !root.is_dir() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "the root must be a folder"));
+        }
+        self.root = Some(root);
         Ok(self)
     }
 
@@ -112,6 +117,20 @@ impl Automation {
 
     pub fn session(&self) -> &Session {
         &self.session
+    }
+
+    /// Save `bytes` that a caller writes on the session's behalf, such as `pdfcraft-cli run`
+    /// saving a rendered page. With a root, it is confined like a tool's own output (a relative
+    /// path resolves inside it) and written atomically. Without one, the path is written as
+    /// given, so `/dev/stdout` and the like still work. Returns where the file went.
+    pub fn write_output(&self, path: &str, bytes: &[u8]) -> Result<PathBuf> {
+        let target = self.resolve(path, true)?;
+        if self.root.is_some() {
+            write_atomic(&target, bytes)?;
+        } else {
+            std::fs::write(&target, bytes).map_err(|e| failed(format!("{path}: {e}")))?;
+        }
+        Ok(target)
     }
 
     /// Run the tool `name` with JSON `args` (an object; `null` means no arguments).
@@ -326,6 +345,11 @@ impl Automation {
                 if name == "image_save" {
                     let (ext, bytes) = self.doc(&a)?.page_image_file(page, index).map_err(failed)?;
                     let mut path = self.resolve(a.str("path")?, true)?;
+                    if path.is_dir() {
+                        // Adding the extension to a folder's name would write beside it: "." is the
+                        // root, so that would land outside it.
+                        return Err(failed(format!("{}: is a folder, not a file", path.display())));
+                    }
                     if path.extension().is_none() {
                         path.set_extension(ext);
                     }
@@ -524,6 +548,14 @@ impl Automation {
             "doc_print" => self.doc_print(&a)?,
             "doc_remove_hidden" => self.doc_remove_hidden(&a)?,
             "fill_sign_add" => self.fill_sign_add(&a)?,
+            "measure_distance" => self.measurement_add(&a, pdfcraft_engine::measure::Kind::Distance)?,
+            "measure_perimeter" => self.measurement_add(&a, pdfcraft_engine::measure::Kind::Perimeter)?,
+            "measure_area" => self.measurement_add(&a, pdfcraft_engine::measure::Kind::Area)?,
+            "measure_info" => self.measurement_info(&a)?,
+            "measure_list" => self.measurement_list(&a)?,
+            "measure_scale" => self.measurement_scale(&a)?,
+            "measure_snap" => self.measurement_snap(&a)?,
+            "measure_export" => self.measurement_export(&a)?,
             "comment_list" => self.comment_list(&a)?,
             "comment_add" => self.comment_add(&a)?,
             "stamp_custom" => self.stamp_custom(&a)?,
@@ -927,7 +959,7 @@ impl Automation {
             let out = pdfcraft_engine::export::extract_images(&doc.export_source(), &pages, min).map_err(failed)?;
             let mut files = Vec::new();
             for (k, img) in out.images.iter().enumerate() {
-                let path = folder.join(pdfcraft_engine::export::image_file_name(&stem, img, k + 1));
+                let path = child(&folder, &pdfcraft_engine::export::image_file_name(&stem, img, k + 1));
                 write_atomic(&path, &img.data)?;
                 files.push(json!({ "path": path.to_string_lossy(), "page": img.page + 1, "width": img.width, "height": img.height }));
             }
@@ -945,7 +977,7 @@ impl Automation {
         let mut files = Vec::new();
         for p in pages {
             let img = ex.image(p, dpi, format).map_err(failed)?;
-            let path = folder.join(format!("{stem}_page_{}.{}", p + 1, format.extension()));
+            let path = child(&folder, &format!("{stem}_page_{}.{}", p + 1, format.extension()));
             write_atomic(&path, &img)?;
             files.push(path.to_string_lossy().into_owned());
         }
@@ -960,6 +992,7 @@ impl Automation {
                 ("Untitled.pdf".to_string(), self.session.create_blank(w, h, n).map_err(failed)?)
             }
             "images" => {
+                let resolution = a.opt_num("dpi")?.map_or(pdfcraft_engine::ImageResolution::Embedded, pdfcraft_engine::ImageResolution::Dpi);
                 let mut images = Vec::new();
                 for p in a.strs("paths")? {
                     let path = self.resolve(p, false)?;
@@ -971,7 +1004,7 @@ impl Automation {
                 } else {
                     "Images.pdf".into()
                 };
-                (name, self.session.create_from_images(&images).map_err(failed)?)
+                (name, self.session.create_from_images_with_resolution(&images, resolution).map_err(failed)?)
             }
             "text" => {
                 let (title, text) = match (a.opt_str("text")?, a.opt_str("path")?) {
@@ -1034,6 +1067,15 @@ impl Automation {
     fn doc_protect(&mut self, a: &Args) -> Result<Value> {
         use pdfcraft_engine::{Algorithm, Changes, Printing, Protection};
         let d = Protection::default();
+        // Restrictions only exist behind a permissions password (ISO 32000-2 §7.6.4.4: /P is
+        // enforced against the owner password; without one everything stays allowed). Refuse a
+        // restriction that could not take effect instead of writing an unrestricted file (#134).
+        let restriction = ["printing", "changes", "copy", "accessibility"].into_iter().find(|k| a.get(k).is_some());
+        if let (None, Some(key)) = (a.opt_str("permissions_password")?, restriction) {
+            return Err(ToolError::InvalidArgs(format!(
+                "`{key}` needs `permissions_password`: with open_password alone the document is encrypted but nothing is restricted"
+            )));
+        }
         let p = Protection {
             open_password: a.opt_str("open_password")?.map(str::to_owned),
             permissions_password: a.opt_str("permissions_password")?.map(str::to_owned),
@@ -1120,7 +1162,7 @@ impl Automation {
             let mut files = Vec::new();
             for &p in &pages {
                 let bytes = self.session.extract(id, &[p]).map_err(failed)?;
-                let path = dir.join(format!("{stem}-page{}.pdf", p + 1));
+                let path = child(&dir, &format!("{stem}-page{}.pdf", p + 1));
                 write_atomic(&path, &bytes)?;
                 files.push(path.to_string_lossy().into_owned());
             }
@@ -1199,7 +1241,7 @@ impl Automation {
                 Some((_, t)) => format!("{stem}-{}.pdf", safe(t)),
                 None => format!("{stem}-part{}.pdf", i + 1),
             };
-            let path = dir.join(file);
+            let path = child(&dir, &file);
             write_atomic(&path, bytes)?;
             files.push(json!({ "path": path.to_string_lossy(), "first_page": first, "last_page": last }));
         }
@@ -1344,35 +1386,87 @@ impl Automation {
 
     /// Resolve a user-supplied path, enforcing the root (if any). `for_write` allows a file that
     /// does not exist yet (its nearest existing ancestor must be inside the root).
+    ///
+    /// Every path outside the root gets the same refusal, so a confined client can't learn what
+    /// exists out there (#136): `..` is resolved by name first, another network share or device
+    /// namespace is refused without touching it, and the deepest existing ancestor (links
+    /// followed) must be inside the root before anything about the rest is reported.
     fn resolve(&self, path: &str, for_write: bool) -> Result<PathBuf> {
         let p = Path::new(path);
-        let joined = match &self.root {
-            Some(root) if p.is_relative() => root.join(p),
-            _ => p.to_path_buf(),
-        };
-        let Some(root) = &self.root else { return Ok(joined) };
-        let real = if for_write {
-            // Canonicalize the deepest existing ancestor, then re-append the rest.
-            let mut existing = joined.as_path();
-            let mut rest = Vec::new();
-            while !existing.exists() {
-                rest.push(existing.file_name().ok_or_else(|| failed(format!("{path}: invalid path")))?);
-                existing = existing.parent().ok_or_else(|| failed(format!("{path}: invalid path")))?;
-            }
-            if rest.iter().any(|c| *c == "..") {
-                return Err(failed(format!("{path}: '..' is not allowed here")));
-            }
-            let mut real = existing.canonicalize().map_err(|e| failed(format!("{path}: {e}")))?;
-            real.extend(rest.iter().rev());
-            real
-        } else {
-            joined.canonicalize().map_err(|e| failed(format!("{path}: {e}")))?
-        };
-        if !real.starts_with(root) {
-            return Err(failed(format!("{path} is outside the allowed directory {}", root.display())));
+        let Some(root) = &self.root else { return Ok(p.to_path_buf()) };
+        let outside = || failed(format!("{path} is outside the allowed directory {}", root.display()));
+        let joined = lexical(&root.join(p)).ok_or_else(outside)?;
+        if foreign_share(&joined, root) {
+            return Err(outside());
         }
+        let mut existing = joined.as_path();
+        let mut rest = Vec::new();
+        while !existing.exists() {
+            if existing.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+                return Err(outside()); // a broken link: going on would tell whether its target exists
+            }
+            match (existing.file_name(), existing.parent()) {
+                (Some(name), Some(parent)) => {
+                    rest.push(name);
+                    existing = parent;
+                }
+                _ => return Err(outside()), // not even a drive or share that exists
+            }
+        }
+        let mut real = existing.canonicalize().map_err(|_| outside())?;
+        if !real.starts_with(root) {
+            return Err(outside());
+        }
+        if !rest.is_empty() && !for_write {
+            // Missing, below a folder inside the root: say why, as the system reports it.
+            real = joined.canonicalize().map_err(|e| failed(format!("{path}: {e}")))?;
+            if !real.starts_with(root) {
+                return Err(outside()); // it appeared, as a link out, since the check above
+            }
+            return Ok(real);
+        }
+        real.extend(rest.iter().rev());
         Ok(real)
     }
+}
+
+/// `path` with `.` and `..` resolved by name, before the filesystem is consulted (Windows does
+/// the same, and so does joining onto a canonical root there). `None` if a `..` would climb
+/// above the start of the path.
+fn lexical(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut parts: Vec<Component> = Vec::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => match parts.last() {
+                Some(Component::Normal(_)) => {
+                    parts.pop();
+                }
+                _ => return None,
+            },
+            other => parts.push(other),
+        }
+    }
+    Some(parts.iter().collect())
+}
+
+/// Whether `path` names another network share or device namespace than `root` (Windows
+/// `\\host\share`, `\\?\UNC\…`, `\\.\…`, `\\?\…`). Those are refused by name: even checking
+/// that one exists would contact the host. Drive letters are left to the normal check.
+fn foreign_share(path: &Path, root: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    fn share(p: &Path) -> Option<String> {
+        let Some(Component::Prefix(prefix)) = p.components().next() else { return None };
+        let (kind, a, b) = match prefix.kind() {
+            Prefix::Disk(_) | Prefix::VerbatimDisk(_) => return None,
+            Prefix::UNC(host, share) | Prefix::VerbatimUNC(host, share) => ("unc", host, share),
+            Prefix::DeviceNS(name) => ("device", name, std::ffi::OsStr::new("")),
+            Prefix::Verbatim(name) => ("verbatim", name, std::ffi::OsStr::new("")),
+        };
+        Some(format!("{kind}\\{}\\{}", a.to_string_lossy(), b.to_string_lossy()).to_lowercase())
+    }
+    share(path).is_some_and(|s| share(root).as_ref() != Some(&s))
 }
 
 // ---- JSON helpers ----------------------------------------------------------------------------
@@ -1504,23 +1598,30 @@ fn info(d: &Document) -> Value {
         "creator": i.creator, "producer": i.producer,
         "tagged": i.tagged,
         "has_javascript": i.has_javascript,
-        // XFA forms aren't read yet: "static" (fields work, XFA data ignored) or "dynamic" (placeholder pages).
+        // XFA forms: "static" (the PDF's own fields work; the XFA data is ignored) or "dynamic"
+        // (laid out from the template by PdfCraft, see xfa_layout; placeholder pages when that failed).
         "xfa": i.xfa.map(|x| match x { pdfcraft_render::Xfa::Static => "static", pdfcraft_render::Xfa::Dynamic => "dynamic" }),
+        "xfa_layout": d.xfa.as_ref().map(|x| json!({ "pages": x.pages, "fields": x.fields, "warnings": x.warnings })),
+        // What was rewritten from, or could not be written to, the XFA data.
+        "xfa_warnings": d.xfa_warnings,
         "security": security,
         "pages": i.pages.iter().enumerate().map(|(n, p)| json!({
             "page": n + 1, "label": p.label, "width": p.width, "height": p.height, "rotation": p.rotation,
         })).collect::<Vec<_>>(),
         "outline": outline(&i.outline),
+        // Rectangles use the tools' convention (top-left of the displayed page, like
+        // comment_list and link_list), not raw PDF user space, so they can be fed back to
+        // geometry-taking tools (#129).
         "annotations": i.annotations.iter().map(|a| json!({
             "page": page1(a.page), "type": a.subtype, "author": a.author, "contents": a.contents,
-            "modified": a.modified, "name": a.name, "in_reply_to": a.in_reply_to, "rect": a.rect,
+            "modified": a.modified, "name": a.name, "in_reply_to": a.in_reply_to, "rect": view_rect(i, a.page, a.rect),
         })).collect::<Vec<_>>(),
         "fields": i.fields.iter().map(|f| json!({
             "name": f.name, "kind": format!("{:?}", f.kind), "value": f.value, "page": f.page.map(page1),
             "tooltip": f.tooltip, "has_actions": f.has_actions,
         })).collect::<Vec<_>>(),
         "links": i.links.iter().map(|l| json!({
-            "page": page1(l.page), "rect": l.rect,
+            "page": page1(l.page), "rect": view_rect(i, l.page, l.rect),
             "target": match &l.target {
                 pdfcraft_render::LinkTarget::Page(p) => json!({ "page": page1(*p) }),
                 pdfcraft_render::LinkTarget::Uri(u) => json!({ "uri": u }),
@@ -1535,6 +1636,12 @@ fn info(d: &Document) -> Value {
         "warnings": i.warnings,
         "repairs": d.repair_log(),
     })
+}
+
+/// A user-space rectangle on 0-based `page` in displayed-page coordinates; unchanged when the
+/// page is unknown (a malformed annotation that points at no page).
+fn view_rect(i: &pdfcraft_render::DocInfo, page: usize, rect: [f32; 4]) -> [f32; 4] {
+    i.pages.get(page).map_or(rect, |p| comments::rect_to_view(p, rect))
 }
 
 fn outline(items: &[pdfcraft_render::OutlineItem]) -> Value {
@@ -1599,8 +1706,24 @@ fn extract_parallel(bytes: &Arc<Vec<u8>>, password: Option<Arc<str>>, pages: &[u
     out
 }
 
+/// The file `name` inside `dir`, where `name` comes from a document or an argument: separators,
+/// colons (a Windows drive or stream) and control characters become `_`, and a name of only dots
+/// gets a leading `_`, so it is one plain file name and can't lead out of `dir`.
+fn child(dir: &Path, name: &str) -> PathBuf {
+    let mut safe: String = name.chars().map(|c| if matches!(c, '/' | '\\' | ':') || c.is_control() { '_' } else { c }).collect();
+    if safe.chars().all(|c| c == '.') {
+        safe.insert(0, '_');
+    }
+    dir.join(safe)
+}
+
 /// Write via a temporary file in the same directory, then rename over the target.
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    // A folder can't be replaced, and staging beside it could land outside the root: "." names
+    // the root itself, whose parent isn't ours to write in.
+    if path.is_dir() {
+        return Err(failed(format!("{}: is a folder, not a file", path.display())));
+    }
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let name = path.file_name().ok_or_else(|| failed(format!("{}: not a file path", path.display())))?;
     std::fs::create_dir_all(dir).map_err(|e| failed(format!("{}: {e}", dir.display())))?;
@@ -1610,4 +1733,60 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         let _ = std::fs::remove_file(&tmp);
         failed(format!("{}: {e}", path.display()))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dot_dot_resolves_by_name_and_never_climbs_above_the_start() {
+        let base = std::env::temp_dir();
+        let l = |rel: &str| lexical(&base.join(rel));
+        assert_eq!(l("a/./b/../c"), Some(base.join("a").join("c")));
+        assert_eq!(l("missing/../../x"), lexical(&base.join("..").join("x")));
+        assert_eq!(l("a/.."), Some(lexical(&base).unwrap()));
+        let deep = "../".repeat(base.components().count() + 1);
+        assert_eq!(lexical(&base.join(&deep)), None);
+        assert_eq!(lexical(Path::new("..")), None);
+    }
+
+    #[test]
+    fn names_from_documents_become_one_plain_file_name() {
+        let dir = std::env::temp_dir().join("out");
+        for name in ["../../x.png", "/abs/x.png", r"..\..\x.png", "C:x.png", r"\\host\share\x.png", "a:stream", "..", ".", "", "tab\there", "ok.png"]
+        {
+            let p = child(&dir, name);
+            assert_eq!(p.parent(), Some(dir.as_path()), "{name:?} -> {}", p.display());
+            assert_eq!(p.components().count(), dir.components().count() + 1, "{name:?} -> {}", p.display());
+        }
+        assert_eq!(child(&dir, "ok.png"), dir.join("ok.png"));
+        assert_eq!(child(&dir, "../x.png"), dir.join(".._x.png"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn other_shares_and_device_paths_are_refused_by_name() {
+        let local = Path::new(r"\\?\C:\work\root");
+        for p in [
+            r"\\host\share\x.pdf",
+            "//host/share/x.pdf",
+            r"\/host/share/x.pdf",
+            r"\\?\UNC\host\share\x.pdf",
+            r"\\.\pipe\x",
+            r"\\.\C:\work\root\x.pdf",
+            r"\\?\GLOBALROOT\Device\x",
+        ] {
+            assert!(foreign_share(Path::new(p), local), "{p}");
+        }
+        for p in [r"C:\work\root\x.pdf", r"c:\elsewhere\x.pdf", r"\\?\C:\work\root\x.pdf", r"D:\x.pdf", r"C:x.pdf"] {
+            assert!(!foreign_share(Path::new(p), local), "{p}");
+        }
+        // A root on a share accepts that share, however it is spelled, and nothing else.
+        let shared = Path::new(r"\\?\UNC\Server\Docs\root");
+        assert!(!foreign_share(Path::new(r"\\server\docs\root\x.pdf"), shared));
+        assert!(!foreign_share(Path::new(r"\\?\UNC\SERVER\DOCS\x.pdf"), shared));
+        assert!(foreign_share(Path::new(r"\\server\other\x.pdf"), shared));
+        assert!(foreign_share(Path::new(r"\\attacker\docs\x.pdf"), shared));
+    }
 }
