@@ -229,16 +229,28 @@ fn added_text_and_images_are_page_content_that_stays_editable() {
 
 /// One page with Helvetica (WinAnsi) and a subset font that has only the glyphs it uses.
 fn text_page(content: &str) -> Document {
-    let objs: Vec<String> = vec![
+    text_page_streams(&[content])
+}
+
+/// [`text_page`] with its content split over several content streams.
+fn text_page_streams(contents: &[&str]) -> Document {
+    // Objects 1–6 as in a one-stream page (the first stream is object 4); further streams follow.
+    let refs: Vec<String> = (0..contents.len()).map(|i| format!("{} 0 R", if i == 0 { 4 } else { 6 + i })).collect();
+    let stream = |c: &str| format!("<< /Length {} >>\nstream\n{c}\nendstream", c.len());
+    let mut objs: Vec<String> = vec![
         "<< /Type /Catalog /Pages 2 0 R >>".into(),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>".into(),
-        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents {} /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>",
+            if refs.len() == 1 { refs[0].clone() } else { format!("[{}]", refs.join(" ")) }
+        ),
+        stream(contents[0]),
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".into(),
         // Subset: glyphs for a (97) and b (98) only.
         "<< /Type /Font /Subtype /TrueType /BaseFont /ABCDEF+Arial /FirstChar 97 /LastChar 99 /Widths [500 520 0] /Encoding /WinAnsiEncoding >>"
             .into(),
     ];
+    objs.extend(contents.iter().skip(1).map(|c| stream(c)));
     let mut out = b"%PDF-1.7\n".to_vec();
     let mut offs = Vec::new();
     for (i, o) in objs.iter().enumerate() {
@@ -772,5 +784,133 @@ fn deleting_a_line_shown_with_quote_operators_keeps_the_next_line_in_place() {
         let lines = text::text_lines(&doc, 0).unwrap();
         assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["One", "Three"], "{src}");
         assert_eq!(lines[1].rect, three.rect, "{src}");
+    }
+}
+
+/// The texts of a page's lines, in content order.
+fn line_texts(doc: &Document) -> Vec<String> {
+    text::text_lines(doc, 0).unwrap().into_iter().map(|l| l.text).collect()
+}
+
+/// The index of the paragraph whose text is `text`.
+fn block_of(doc: &Document, text: &str) -> usize {
+    let blocks = text::text_blocks(doc, 0).unwrap();
+    blocks
+        .iter()
+        .position(|b| b.text == text)
+        .unwrap_or_else(|| panic!("no paragraph {text:?} in {:?}", blocks.iter().map(|b| &b.text).collect::<Vec<_>>()))
+}
+
+#[test]
+fn deleting_a_box_keeps_overlapping_text_that_is_not_a_copy_of_it() {
+    // A 45° watermark (as stamping tools add it, in its own content stream or in the same one):
+    // its axis-aligned box covers both body lines, and their boxes lie inside it. Neither is a
+    // copy of the other, so deleting one keeps the other.
+    let body = "BT /F1 12 Tf 72 500 Td (First line of body text) Tj 0 -40 Td (Second line far below) Tj ET";
+    let mark = "BT /F1 60 Tf 0.7071 0.7071 -0.7071 0.7071 100 250 Tm (CONFIDENTIAL) Tj ET";
+    let joined = format!("{body} {mark}");
+    for doc in [text_page_streams(&[body, mark]), text_page(&joined)] {
+        let wm = text::text_lines(&doc, 0).unwrap().into_iter().find(|l| l.text == "CONFIDENTIAL").unwrap();
+        let first = text::text_lines(&doc, 0).unwrap().into_iter().find(|l| l.text.starts_with("First")).unwrap();
+        let inside = |a: [f64; 4], b: [f64; 4]| a[0] < b[0] && a[1] < b[1] && a[2] > b[2] && a[3] > b[3];
+        assert!(inside(wm.rect, first.rect), "{:?} covers {:?}", wm.rect, first.rect);
+        let mut d = doc.clone();
+        let i = block_of(&d, "First line of body text");
+        assert_eq!(text::delete_blocks(&mut d, 0, &[i]), Ok(1));
+        assert_eq!(line_texts(&reopen(&d)), ["Second line far below", "CONFIDENTIAL"]);
+        let mut d = doc.clone();
+        let i = block_of(&d, "CONFIDENTIAL");
+        assert_eq!(text::delete_blocks(&mut d, 0, &[i]), Ok(1));
+        assert_eq!(line_texts(&reopen(&d)), ["First line of body text", "Second line far below"]);
+        // Editing a body line keeps the watermark too.
+        let mut d = doc.clone();
+        let i = block_of(&d, "First line of body text");
+        text::replace_block(&mut d, 0, i, "Changed").unwrap();
+        let texts = line_texts(&reopen(&d));
+        assert!(texts.contains(&"CONFIDENTIAL".to_string()) && texts.contains(&"Changed".to_string()), "{texts:?}");
+    }
+    // The same text turned 90° over the line, with nearly the same box, is not a copy either.
+    let doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET BT /F2 12 Tf 0 1 -1 0 82.8 697.8 Tm (ab) Tj ET");
+    let lines = text::text_lines(&doc, 0).unwrap();
+    let (a, b) = (lines[0].rect, lines[1].rect);
+    let inter = (a[2].min(b[2]) - a[0].max(b[0])).max(0.0) * (a[3].min(b[3]) - a[1].max(b[1])).max(0.0);
+    let area = |r: [f64; 4]| (r[2] - r[0]) * (r[3] - r[1]);
+    assert!(inter / area(a).max(area(b)) > 0.8, "the boxes nearly match: {a:?} {b:?}");
+    for keep in [0, 1] {
+        let mut d = doc.clone();
+        assert_eq!(text::delete_blocks(&mut d, 0, &[1 - keep]), Ok(1));
+        let left = text::text_lines(&reopen(&d), 0).unwrap();
+        assert_eq!(left.iter().map(|l| l.rect).collect::<Vec<_>>(), [lines[keep].rect], "the other one stays");
+    }
+    // The same words half a line lower (tight leading) and other words over the line stay, and
+    // so does an invisible text layer with the same words somewhere else on the page.
+    let mut doc = text_page(
+        "BT /F1 12 Tf 72 700 Td (Hello) Tj 0 -6 Td (Hello) Tj ET BT /F1 12 Tf 72 703 Td (World) Tj ET \
+         BT 3 Tr /F1 12 Tf 300 100 Td (Hello) Tj 0 Tr ET",
+    );
+    assert_eq!(text::delete_blocks(&mut doc, 0, &[0]), Ok(1));
+    let texts = line_texts(&reopen(&doc));
+    assert_eq!(texts, ["Hello", "World", "Hello"], "{texts:?}");
+}
+
+#[test]
+fn deleting_a_box_takes_its_copies_and_the_invisible_text_over_it() {
+    // A fake-bold copy (the same text drawn again a fraction of a point off) in another content
+    // stream, and an OCR layer (invisible text, Tr 3) whose words differ (an OCR misreading)
+    // drawn over the line: both go with it. The line below and its own invisible layer stay.
+    let doc = text_page_streams(&[
+        "BT /F1 12 Tf 72 700 Td (Hello world) Tj 0 -40 Td (Second line) Tj ET",
+        "BT /F1 12 Tf 72.4 700.2 Td (Hello world) Tj ET",
+        "BT 3 Tr /F1 12 Tf 72 700 Td (He11o) Tj 36 0 Td (warld) Tj ET BT 3 Tr /F1 12 Tf 72 660 Td (Second line) Tj 0 Tr ET",
+    ]);
+    let before = line_texts(&doc);
+    assert_eq!(before.iter().filter(|t| t.contains("Hello world")).count(), 2, "{before:?}");
+    let mut d = doc.clone();
+    let i = block_of(&d, "Hello world");
+    assert_eq!(text::delete_blocks(&mut d, 0, &[i]), Ok(1));
+    assert_eq!(line_texts(&reopen(&d)), ["Second line", "Second line"]);
+    // Within one text object too (the copy re-issues the matrix a little off).
+    let mut d = text_page("BT /F1 12 Tf 1 0 0 1 72 700 Tm (Hi there) Tj 1 0 0 1 300 700 Tm (Other) Tj 1 0 0 1 72.3 700 Tm (Hi there) Tj ET");
+    assert_eq!(line_texts(&d), ["Hi there", "Other", "Hi there"]);
+    assert_eq!(text::delete_blocks(&mut d, 0, &[0]), Ok(1));
+    assert_eq!(line_texts(&reopen(&d)), ["Other"]);
+}
+
+#[test]
+fn deleting_a_run_keeps_the_next_run_on_its_line_in_place() {
+    // A run in another font (a bold label, a coloured word) followed by more text in the same
+    // text object: that text starts where the deleted run ended, and must stay there.
+    for src in [
+        "BT /F2 12 Tf 72 700 Td (ab) Tj /F1 12 Tf ( this text stays) Tj ET",
+        "BT /F2 12 Tf 72 700 Td [(a) -100 (b)] TJ /F1 12 Tf ( this text stays) Tj ET",
+        // Horizontal scaling and character and word spacing count in the advance.
+        "BT /F2 12 Tf 80 Tz 1.5 Tc 72 700 Td (ab) Tj /F1 12 Tf 100 Tz 0 Tc ( this text stays) Tj ET",
+        "0.5 0 0 2 10 20 cm BT /F2 12 Tf 72 300 Td (ab) Tj /F1 12 Tf ( this text stays) Tj ET",
+        // ' and " move to the next line first: the run after them on that line stays too.
+        "BT /F1 10 Tf 12 TL 72 700 Td (One) Tj /F2 10 Tf (ab) ' /F1 10 Tf ( this text stays) Tj ET",
+        "BT /F1 10 Tf 12 TL 72 700 Td (One) Tj /F2 10 Tf 2 1 (ab) \" /F1 10 Tf ( this text stays) Tj ET",
+    ] {
+        let mut doc = text_page(src);
+        let stays = |d: &Document| text::text_lines(d, 0).unwrap().into_iter().find(|l| l.text.contains("stays")).unwrap().rect;
+        let before = stays(&doc);
+        let i = block_of(&doc, "ab");
+        assert_eq!(text::delete_blocks(&mut doc, 0, &[i]), Ok(1), "{src}");
+        let doc = reopen(&doc);
+        let texts = line_texts(&doc);
+        assert!(!texts.iter().any(|t| t.contains("ab")), "{src}: {texts:?}");
+        let after = stays(&doc);
+        assert!(before.iter().zip(after).all(|(a, b)| (a - b).abs() < 0.001), "{src}: {before:?} → {after:?}");
+    }
+    // A zero font size or horizontal scaling can't be skipped with a number adjustment; the run
+    // still goes and nothing degenerate is written.
+    for src in
+        ["BT /F2 0 Tf 2 Tc 72 700 Td (ab) Tj /F1 12 Tf 0 Tc ( stays) Tj ET", "BT /F2 12 Tf 0 Tz 72 700 Td (ab) Tj /F1 12 Tf 100 Tz ( stays) Tj ET"]
+    {
+        let mut doc = text_page(src);
+        let i = block_of(&doc, "ab");
+        assert_eq!(text::delete_blocks(&mut doc, 0, &[i]), Ok(1), "{src}");
+        let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+        assert!(!content.contains("NaN") && !content.contains("inf"), "{src}: {content}");
+        assert_eq!(line_texts(&reopen(&doc)), [" stays"], "{src}");
     }
 }

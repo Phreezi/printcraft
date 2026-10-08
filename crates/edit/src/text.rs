@@ -40,6 +40,12 @@ pub struct TextLine {
     pub decodable: bool,
     stream: usize,
     ops: Vec<usize>,
+    /// For each of `ops`, the `TJ` number adjustment that moves the text matrix as far as the
+    /// operator's text does without drawing it (`None` when no adjustment can: a zero or
+    /// non-finite font size × horizontal scaling, or no advance at all).
+    skips: Vec<Option<f64>>,
+    /// Drawn with an invisible text rendering mode (`3 Tr` or `7 Tr`: an OCR text layer).
+    invisible: bool,
     /// Where the line starts: text matrix (text space), the state there, and its `BT`.
     origin: Origin,
 }
@@ -146,6 +152,8 @@ struct Ts {
     scale: f64,
     leading: f64,
     rise: f64,
+    /// The text rendering mode is 3 or 7 (no fill, no stroke).
+    invisible: bool,
 }
 
 fn content_streams(doc: &Document, page: &Dict) -> Vec<(Object, Vec<u8>)> {
@@ -217,6 +225,8 @@ struct Shown {
     bold: bool,
     italic: bool,
     decodable: bool,
+    /// See [`TextLine::skips`].
+    skip: Option<f64>,
 }
 
 fn interpret(doc: &Document, ops: &[Op], fonts_res: &Dict, cache: &mut HashMap<Vec<u8>, Rc<Metrics>>) -> Vec<Shown> {
@@ -231,6 +241,7 @@ fn interpret(doc: &Document, ops: &[Op], fonts_res: &Dict, cache: &mut HashMap<V
         scale: 1.0,
         leading: 0.0,
         rise: 0.0,
+        invisible: false,
     };
     let mut at_bt = (0usize, ts.clone());
     let mut stack: Vec<Ts> = Vec::new();
@@ -280,6 +291,7 @@ fn interpret(doc: &Document, ops: &[Op], fonts_res: &Dict, cache: &mut HashMap<V
             b"Tz" => ts.scale = op.num(0).unwrap_or(100.0) / 100.0,
             b"TL" => ts.leading = op.num(0).unwrap_or(0.0),
             b"Ts" => ts.rise = op.num(0).unwrap_or(0.0),
+            b"Tr" => ts.invisible = matches!(op.operands.first().and_then(Object::as_int), Some(3 | 7)),
             b"Td" | b"TD" => {
                 if let Some([x, y]) = op.nums::<2>() {
                     if op.is("TD") {
@@ -356,6 +368,9 @@ fn interpret(doc: &Document, ops: &[Op], fonts_res: &Dict, cache: &mut HashMap<V
                     .iter()
                     .fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p.0), b[1].min(p.1), b[2].max(p.0), b[3].max(p.1)]);
                 let size_user = (trm0.0[2].powi(2) + trm0.0[3].powi(2)).sqrt() * ts.size;
+                // A TJ number n moves by -n / 1000 × Tfs × Th in text space.
+                let skip = -x_text * 1000.0 / (ts.size * ts.scale);
+                let skip = (x_text != 0.0 && skip.is_finite()).then_some(skip);
                 out.push(Shown {
                     op: i,
                     tm: Matrix([tm.0[0], tm.0[1], tm.0[2], tm.0[3], tm.0[4] - x_text * tm.0[0], tm.0[5] - x_text * tm.0[1]]),
@@ -375,6 +390,7 @@ fn interpret(doc: &Document, ops: &[Op], fonts_res: &Dict, cache: &mut HashMap<V
                     bold: m.bold,
                     italic: m.italic,
                     decodable,
+                    skip,
                 });
             }
             _ => {}
@@ -413,6 +429,8 @@ pub fn text_lines(doc: &Document, page: usize) -> Result<Vec<TextLine>, EditErro
                 l.text.push_str(&s.text);
                 l.rect = [l.rect[0].min(s.rect[0]), l.rect[1].min(s.rect[1]), l.rect[2].max(s.rect[2]), l.rect[3].max(s.rect[3])];
                 l.ops.push(s.op);
+                l.skips.push(s.skip);
+                l.invisible &= s.state.invisible;
                 l.decodable &= s.decodable;
                 l.color = fill_color(&s.state.fill);
             } else {
@@ -428,6 +446,8 @@ pub fn text_lines(doc: &Document, page: usize) -> Result<Vec<TextLine>, EditErro
                     decodable: s.decodable,
                     stream: si,
                     ops: vec![s.op],
+                    skips: vec![s.skip],
+                    invisible: s.state.invisible,
                     origin: Origin {
                         tm: s.tm.0,
                         tlm: s.tlm.0,
@@ -659,7 +679,7 @@ pub fn replace_line(doc: &mut Document, page: usize, line: usize, text: &str) ->
     }
     // Rebuild: the line's first operator becomes the replacement, its others go. Copies of the
     // line drawn in the same area go too, so the replacement is all that shows.
-    let drops = coincident_ops(&lines, std::slice::from_ref(&target.rect));
+    let drops = coincident_ops(&lines, &[&target]);
     let mut new_ops = Vec::with_capacity(ops.len() + replacement.len());
     for (i, op) in ops.drain(..).enumerate() {
         if i == first {
@@ -693,22 +713,46 @@ fn font_size_before(ops: &[Op], at: usize) -> Option<f64> {
     ops[..at].iter().rev().find(|o| o.is("Tf")).and_then(|o| o.num(1))
 }
 
-/// The operators of every line drawn in the same area as one of `rects`, grouped by content
-/// stream. Documents sometimes draw a line more than once (fake bold, an invisible text layer),
-/// and a surviving copy would show the old text under the replaced line. Copies overlap a
-/// member's rect by more than half of the smaller rect; neighbouring lines share no area.
-fn coincident_ops(lines: &[TextLine], rects: &[[f64; 4]]) -> std::collections::HashMap<usize, std::collections::HashSet<usize>> {
+/// The direction of a line's baseline in page space, as a unit vector.
+fn direction(l: &TextLine) -> Option<(f64, f64)> {
+    let m = Matrix(l.origin.tm).then(&Matrix(l.origin.ctm)).0;
+    let len = m[0].hypot(m[1]);
+    (len > 0.0 && len.is_finite()).then(|| (m[0] / len, m[1] / len))
+}
+
+/// The area two boxes share.
+fn overlap(a: [f64; 4], b: [f64; 4]) -> f64 {
+    (a[2].min(b[2]) - a[0].max(b[0])).max(0.0) * (a[3].min(b[3]) - a[1].max(b[1])).max(0.0)
+}
+
+/// The operators of `members` and of every other drawing of them, grouped by content stream.
+/// Documents sometimes draw a line more than once (fake bold, a shadow, an invisible text
+/// layer), and a surviving copy would show, or let a search find, the old text under the
+/// replaced or deleted line. A copy runs in the same direction as a member and is either the
+/// same text in nearly the same box (the boxes share more than 70% of the larger one), or
+/// invisible text (`3 Tr`, an OCR layer, whose words may be misread) lying mostly over the
+/// members' boxes. Nothing else counts, however much the boxes overlap: a line's box is
+/// axis-aligned, so a rotated watermark's covers most of the page, and other words drawn over
+/// a line (tight leading, a stamp) are not the line.
+fn coincident_ops(lines: &[TextLine], members: &[&TextLine]) -> HashMap<usize, std::collections::HashSet<usize>> {
     let area = |r: [f64; 4]| ((r[2] - r[0]) * (r[3] - r[1])).max(0.0);
-    let mut drop = std::collections::HashMap::new();
+    let mut drop: HashMap<usize, std::collections::HashSet<usize>> = HashMap::new();
     for l in lines {
-        let covered = rects.iter().any(|m| {
-            let ix = (m[2].min(l.rect[2]) - m[0].max(l.rect[0])).max(0.0);
-            let iy = (m[3].min(l.rect[3]) - m[1].max(l.rect[1])).max(0.0);
-            let small = area(*m).min(area(l.rect));
-            small > 0.0 && ix * iy / small > 0.5
+        let member = members.iter().any(|m| m.stream == l.stream && m.ops == l.ops);
+        let copy = direction(l).is_some_and(|dir| {
+            let along = |m: &TextLine| direction(m).is_some_and(|d| d.0 * dir.0 + d.1 * dir.1 > 0.999);
+            let same = members.iter().any(|m| {
+                let larger = area(m.rect).max(area(l.rect));
+                along(m) && larger > 0.0 && overlap(m.rect, l.rect) / larger > 0.7 && m.text.split_whitespace().eq(l.text.split_whitespace())
+            });
+            let under = l.invisible && area(l.rect) > 0.0 && {
+                let covered: f64 = members.iter().filter(|m| along(m)).map(|m| overlap(m.rect, l.rect)).sum();
+                covered / area(l.rect) > 0.5
+            };
+            same || under
         });
-        if covered {
-            drop.entry(l.stream).or_insert_with(std::collections::HashSet::new).extend(l.ops.iter().copied());
+        if member || copy {
+            drop.entry(l.stream).or_default().extend(l.ops.iter().copied());
         }
     }
     drop
@@ -1022,8 +1066,7 @@ pub fn rewrite_block(doc: &mut Document, page: usize, block: usize, text: Option
     // second copy, an invisible text layer): the new text is all that may show.
     let mut drop: std::collections::HashMap<usize, std::collections::HashSet<usize>> =
         members.iter().flat_map(|l| [(l.stream, l.ops.iter().copied().collect::<std::collections::HashSet<_>>())]).collect();
-    let member_rects: Vec<[f64; 4]> = members.iter().map(|l| l.rect).collect();
-    for (stream, ops) in coincident_ops(&lines, &member_rects) {
+    for (stream, ops) in coincident_ops(&lines, &members) {
         drop.entry(stream).or_default().extend(ops);
     }
     // Text shown earlier in the same text object stays first: the paragraph then goes where it
@@ -1077,10 +1120,15 @@ pub fn rewrite_block(doc: &mut Document, page: usize, block: usize, text: Option
 /// paragraphs went (duplicate indexes count once).
 ///
 /// Only the text-showing operators go; positioning, text state and graphics state stay, so the
-/// text after a deleted line keeps its place (`'` and `"` become `T*`, with `"`'s spacing). As
-/// when a paragraph is rewritten, text drawn in the same area as a deleted line (a fake-bold
-/// copy, an invisible text layer) goes too. Each changed content stream is written as a new
-/// object, since content streams may be shared.
+/// text after a deleted line keeps its place. A deleted operator becomes a `TJ` holding only the
+/// number adjustment that moves as far as its text did, so text shown after it in the same text
+/// object (the rest of a line after a bold label) doesn't slide back onto it; `'` and `"` first
+/// become `T*`, with `"`'s spacing. (A zero font size or horizontal scaling can't be expressed
+/// that way, and the move is left out.) As when a paragraph is rewritten, other drawings of a
+/// deleted line go too: a fake-bold copy of the same text in nearly the same box, or an
+/// invisible text layer over it (see [`coincident_ops`]); other text that overlaps it, such as a
+/// rotated watermark, stays. Each changed content stream is written as a new object, since
+/// content streams may be shared.
 pub fn delete_blocks(doc: &mut Document, page: usize, blocks: &[usize]) -> Result<usize, EditError> {
     let lines = text_lines(doc, page)?;
     let all = group_blocks(&lines);
@@ -1099,10 +1147,15 @@ pub fn delete_blocks(doc: &mut Document, page: usize, blocks: &[usize]) -> Resul
     for l in &members {
         drop.entry(l.stream).or_default().extend(l.ops.iter().copied());
     }
-    let member_rects: Vec<[f64; 4]> = members.iter().map(|l| l.rect).collect();
-    for (stream, ops) in coincident_ops(&lines, &member_rects) {
+    for (stream, ops) in coincident_ops(&lines, &members) {
         drop.entry(stream).or_default().extend(ops);
     }
+    // How far each deleted operator moved the text matrix, to move it as far without drawing.
+    let skips: HashMap<(usize, usize), f64> = lines
+        .iter()
+        .flat_map(|l| l.ops.iter().zip(&l.skips).filter_map(move |(op, skip)| skip.map(|n| ((l.stream, *op), n))))
+        .filter(|((stream, op), _)| drop.get(stream).is_some_and(|d| d.contains(op)))
+        .collect();
     let p = page_dict(doc, page)?;
     let streams = content_streams(doc, &p.dict);
     let mut contents: Vec<Object> = streams.iter().map(|(o, _)| o.clone()).collect();
@@ -1129,6 +1182,9 @@ pub fn delete_blocks(doc: &mut Document, page: usize, blocks: &[usize]) -> Resul
                     new_ops.push(Op::new("T*", vec![]));
                 }
                 _ => {}
+            }
+            if let Some(n) = skips.get(&(si, i)) {
+                new_ops.push(Op::new("TJ", vec![Object::Array(vec![printcraft_content::num(*n)])]));
             }
         }
         let mut dict = match &*doc.resolve(stream_obj) {

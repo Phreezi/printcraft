@@ -76,6 +76,10 @@ fn tool_table_is_well_formed() {
             assert!(props.contains_key(r.as_str().unwrap()), "{}: required {r} is not a property", t.name);
         }
         assert!(!(t.read_only && t.destructive), "{} is both read-only and destructive", t.name);
+        // MCP clients ask before running destructive tools; a delete must say it is one.
+        if t.name.ends_with("_delete") {
+            assert!(t.destructive, "{} deletes but is not marked destructive", t.name);
+        }
         if let Some(c) = t.command {
             assert!(printcraft_engine::commands::command(c).is_some(), "{} names unregistered command {c}", t.name);
         }

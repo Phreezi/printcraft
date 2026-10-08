@@ -953,6 +953,7 @@ pub fn tools() -> Vec<ToolDef> {
             .cmd("edit.edit_text")
             .with(schema(json!({ "doc": doc(), "page": { "type": "integer", "minimum": 1 } }), &["doc", "page"])),
         t("text_delete", "Delete paragraphs and images", "Delete paragraphs (numbers from text_paragraphs) and images (numbers from page_images) on one page in one undoable step, as Delete does for the boxes selected in Edit text & images. Every number refers to the page as it is before the call; the text after a deleted line keeps its place.")
+            .destructive()
             .cmd("edit.edit_text")
             .with(schema(
                 json!({ "doc": doc(), "page": { "type": "integer", "minimum": 1 },
