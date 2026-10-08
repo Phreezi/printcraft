@@ -10,8 +10,10 @@ let pdf = impose(&doc, &settings)?;                // the print-ready PDF
 spool::submit(&pdf, &spool::Job { printer: None, copies: 2, ..Default::default() })?;
 ```
 
-- **Size**: fit (to the sheet minus an 18 pt margin), actual size, shrink oversized, custom %;
-  centred; auto orientation turns the sheet for landscape pages.
+- **Size**: fit (to the whole sheet, edge to edge, no margin: an A4 page on A4 prints at 100 %,
+  A4 on A3 fills the A3 sheet), actual size, shrink oversized, custom %; centred; auto
+  orientation turns the sheet for landscape pages. Multiple, Booklet and Poster keep an 18 pt
+  margin (`MARGIN`) for their gutters, cut marks and tile overlap.
 - **Multiple**: 2/4/6/9/16 (or any n) pages per sheet, horizontal/vertical (reversed) order,
   page borders, auto-rotation of pages that don't match the cell.
 - **Cut and stack** (Multiple's page order): consecutive pages in each cell's pile,
@@ -45,6 +47,8 @@ monochrome options). On Windows, `raster` draws each sheet as a PNG at the job's
 (300 or 600 dpi) and `spool::windows` prints them through `System.Drawing.Printing`, driven by
 Windows PowerShell with a fixed script (no `unsafe`, nothing from the document in the script's
 text): the printer's matching paper, per-sheet orientation, copies, collation, duplex and colour.
+Each sheet image is drawn from the paper's corner at the paper's full size (zero margins, the
+hard margin offset undone), so the spooler adds no margin or scaling of its own.
 The web reports that printing to a printer isn't available; the print-ready PDF can always be
 saved.
 

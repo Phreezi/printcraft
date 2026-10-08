@@ -3,7 +3,9 @@
 //! [`impose`] turns the pages to print into a print-ready PDF of *sheets*, laid out the way
 //! Acrobat's Print dialog describes them:
 //! - **Size**: one page per sheet, Fit, Actual size, Shrink oversized pages or a custom scale,
-//!   centred;
+//!   centred. Fit fills the sheet edge to edge (keeping the page's proportions) and adds no
+//!   margin, as SumatraPDF does: a page the sheet's size prints at 100 %, an A4 page on A3 fills
+//!   the A3 sheet;
 //! - **Multiple**: pages per sheet in a grid (2, 4, 6, 9, 16 or custom), four page orders,
 //!   optional page borders and auto-rotation;
 //! - **Booklet**: saddle-stitched spreads (both sides, front or back only; left or right
@@ -181,7 +183,9 @@ pub const A3: (f64, f64) = (841.89, 1190.55);
 pub const PAPERS: [(&str, (f64, f64)); 6] =
     [("US Letter", (612.0, 792.0)), ("US Legal", (612.0, 1008.0)), ("Tabloid", (792.0, 1224.0)), ("A3", A3), ("A4", A4), ("A5", (419.53, 595.28))];
 
-/// The unprintable margin assumed around the sheet for Fit, Multiple and Booklet.
+/// The margin kept around the sheet by Multiple, Booklet and Poster (their gutters, cut marks
+/// and tile overlap live in it). The Size layouts (Fit, Actual size, Shrink, Custom) never add
+/// one: Fit fills the sheet edge to edge.
 pub const MARGIN: f64 = 18.0;
 
 /// One page as placed on a sheet: the source page, the matrix from its *display space* to the
@@ -316,7 +320,8 @@ pub fn layout(sizes: &[(f64, f64)], settings: &Settings) -> Result<Vec<Sheet>, P
             for &p in &pages {
                 let d = sizes[p];
                 let size = oriented(paper, settings.orientation, d.0 > d.1);
-                let fit = fit_scale(d, (size.0 - 2.0 * MARGIN, size.1 - 2.0 * MARGIN));
+                // The whole sheet, no margin: a page the sheet's size prints at exactly 100 %.
+                let fit = fit_scale(d, size);
                 let s = match mode {
                     SizeMode::Fit => fit,
                     SizeMode::Actual => 1.0,

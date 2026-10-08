@@ -1894,29 +1894,26 @@
 	Dynamic XFA form laid out from its template: {pages}, {fields}.	动态 XFA 表单已按模板排版：{pages}，{fields}。
 	XFA form: its fields and its XFA data are kept in step, so other viewers show what you fill in.	XFA 表单：字段与 XFA 数据保持同步，以便其他阅读器显示您填写的内容。
 
-# PeDeeFe Print dialog: printer list, preview labels, the Window tab and its area picker.
+# PeDeeFe Print dialog: printer list, preview labels, the print area (Full page | Window) and its picker.
 	Area: {area}	区域：{area}
 	Area: {area} · prints as a poster at {pct}%	区域：{area} · 按 {pct}% 作为海报打印
 	Area: {area} · prints at {pct}% on one sheet	区域：{area} · 按 {pct}% 打印在一张纸上
-	As a poster	作为海报
 	Couldn't list the printers: {e}	无法列出打印机：{e}
-	Drag a rectangle over the page	在页面上拖出一个矩形
+	Drag a rectangle over the page. The area prints exactly as drawn; to fill the sheet, hold Shift while drawing it.	在页面上拖出一个矩形。区域将完全按绘制的范围打印；要填满纸张，请在绘制时按住 Shift。
 	Drawing the page…	正在绘制页面…
 	Each page is enlarged and printed in tiles, one per sheet; the preview shows the tiles over the page.	每页放大后分块打印，每张纸一块；预览在页面上显示这些分块。
 	Fit page	适合页面
+	Full page	整页
 	Hold Shift while dragging to keep the {paper} sheet's proportions, so the area fills the sheet.	拖动时按住 Shift 可保持 {paper} 纸张的比例，使区域填满纸张。
 	Looking for printers…	正在查找打印机…
 	No area yet: whole pages print	尚未选择区域：将打印整页
 	No area: drag over the page	没有区域：请在页面上拖动
 	No printers found	未找到打印机
-	On one sheet	在一张纸上
 	Orientation	方向
 	Poster preview: {cols} × {rows} tiles	海报预览：{cols} × {rows} 块
 	Poster preview: {cols} × {rows} tiles, tile {n} highlighted	海报预览：{cols} × {rows} 块，突出显示第 {n} 块
 	Print area	打印区域
-	Print the area:	打印该区域：
 	Printer	打印机
-	Prints at {pct}% (the largest size that fits the sheet)	按 {pct}% 打印（适合纸张的最大尺寸）
 	Quality:	质量：
 	Scale: {pct}%	缩放：{pct}%
 	Scale: —	缩放：—
@@ -1924,9 +1921,9 @@
 	Select the area to print	选择要打印的区域
 	Sheets: {n}	纸张数：{n}
 	Show the whole page	显示整页
-	The area prints exactly as drawn. To fill the sheet, hold Shift while drawing it.	区域将完全按绘制的范围打印。要填满纸张，请在绘制时按住 Shift。
 	The sheet, and in brackets the size the page prints at at this scale	纸张，括号中为页面按此缩放比例打印的尺寸
 	Use this area	使用此区域
+	Whole pages print. Choose Window to print an area of each page.	打印整页。选择“窗口”可打印每页的某个区域。
 	Window	窗口
 	Standard (300 dpi)	标准 (300 dpi)
 	High (600 dpi)	高 (600 dpi)

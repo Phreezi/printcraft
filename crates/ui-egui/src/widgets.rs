@@ -138,7 +138,7 @@ pub fn segmented(ui: &mut egui::Ui, id_salt: &str, labels: &[&str], selected: us
     let t = Tokens::get(ui.ctx());
     let font = theme::medium(13.0);
     let bold = theme::semibold(13.0);
-    let widths: Vec<f32> = labels.iter().map(|l| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), bold.clone(), t.text).size().x) + 28.0).collect();
+    let widths = segment_widths(ui, labels);
     let total: f32 = widths.iter().sum::<f32>() + 4.0;
     let (strip, _) = ui.allocate_exact_size(vec2(total, 32.0), Sense::hover());
     ui.painter().rect(strip, CornerRadius::same(8), t.field, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
@@ -169,6 +169,19 @@ pub fn segmented(ui: &mut egui::Ui, id_salt: &str, labels: &[&str], selected: us
         }
     }
     clicked
+}
+
+/// Each segment's width in [`segmented`]: its label (in the bold face it takes when selected, so
+/// selecting doesn't move anything) plus padding.
+fn segment_widths(ui: &egui::Ui, labels: &[&str]) -> Vec<f32> {
+    let t = Tokens::get(ui.ctx());
+    let bold = theme::semibold(13.0);
+    labels.iter().map(|l| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), bold.clone(), t.text).size().x) + 28.0).collect()
+}
+
+/// The width [`segmented`] takes for `labels` (to decide whether it fits beside something).
+pub fn segmented_width(ui: &egui::Ui, labels: &[&str]) -> f32 {
+    segment_widths(ui, labels).iter().sum::<f32>() + 4.0
 }
 
 /// Transient message at the bottom centre.

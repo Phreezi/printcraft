@@ -5,10 +5,10 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use pdfcraft_engine::print::{self, A4, Orientation, SizeMode};
 use pdfcraft_ui_egui::print_ui::{
-    PAPER_CHOICES, PickDrag, area_label, decimal_comma, drag_window, move_window, poster_preview, poster_run, printable_aspect, scale_label,
-    sheet_label, window_fit_percent, window_landscape,
+    PAPER_CHOICES, PickDrag, area_label, decimal_comma, drag_window, move_window, pick_note, poster_preview, poster_run, printable_aspect,
+    scale_label, sheet_label, window_fit_percent, window_landscape,
 };
-use pdfcraft_ui_egui::{Dialog, PdfCraftApp, PrintDraft, PrintHandling, PrintWindowOutput};
+use pdfcraft_ui_egui::{Dialog, PdfCraftApp, PrintArea, PrintDraft, PrintHandling};
 
 fn harness() -> Harness<'static, PdfCraftApp> {
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
@@ -79,35 +79,88 @@ fn paper_is_a4_or_a3_and_a4_by_default() {
 }
 
 #[test]
-fn window_tab_prints_the_selected_area() {
+fn window_is_a_print_area_for_every_mode() {
+    use pdfcraft_engine::print::Layout;
     let mut h = harness();
     h.state_mut().execute("print.dialog");
     h.run_steps(3);
+    // Four sizing modes, no Window tab: Window is the print area beside them, Full page first.
+    for tab in ["Size", "Poster", "Multiple", "Booklet", "Full page", "Window"] {
+        h.get_by_label(tab);
+    }
+    assert_eq!(h.state().print_draft.area, PrintArea::FullPage);
+    h.get_by_label_contains("Whole pages print");
+    assert!(h.query_by_label("Select area…").is_none(), "no picker button for whole pages");
+    // The tabs and the area choice share one row, the area on the right.
+    let (size, window) = (h.get_by_label("Size").rect(), h.get_by_label("Window").rect());
+    assert!((size.center().y - window.center().y).abs() < 1.0 && window.left() > h.get_by_label("Booklet").rect().right(), "{size:?} {window:?}");
     h.get_by_label("Window").click();
     h.run_steps(2);
-    assert_eq!(h.state().print_draft.handling, PrintHandling::Window);
+    assert_eq!(h.state().print_draft.area, PrintArea::Window);
+    assert_eq!(h.state().print_draft.handling, PrintHandling::Size, "the sizing mode stays");
     h.get_by_label_contains("No area yet");
-    // An area (as the picker would leave it): printed alone, filling the sheet.
+    // The old Window-only output choice is gone (Size and Poster cover it), and so are "Whole
+    // page" and the proportions check box (Shift while drawing).
+    for gone in ["On one sheet", "As a poster", "Print the area:", "Whole page", "Keep the sheet"] {
+        assert!(h.query_by_label_contains(gone).is_none(), "{gone}");
+    }
+    // An area (as the picker would leave it): Size prints it alone, Fit filling the sheet.
     h.state_mut().print_draft.region = Some([0.0, 0.0, 200.0, 141.0]);
     h.run_steps(2);
     h.get_by_label_contains("Area: 71 × 50 mm");
-    // No "Whole page" (the Size tab prints whole pages) and no proportions check box (Shift).
-    assert!(h.query_by_label("Whole page").is_none());
-    assert!(h.query_by_label_contains("Keep the sheet").is_none());
-    h.get_by_label_contains("hold Shift while drawing");
     let s = h.state().print_draft.settings(1, &[]).unwrap();
     assert_eq!(s.region, Some([0.0, 0.0, 200.0, 141.0]));
-    assert!(matches!(s.layout, pdfcraft_engine::print::Layout::Size(pdfcraft_engine::print::SizeMode::Fit)));
-    h.get_by_label_contains("Prints at");
-    // As a poster instead: tiles.
-    h.get_by_label("As a poster").click();
+    assert!(matches!(s.layout, Layout::Size(SizeMode::Fit)));
+    // Poster tiles the area over several sheets (a window over 3 sheets, say).
+    h.get_by_label("Poster").click();
     h.run_steps(2);
-    assert_eq!(h.state().print_draft.window_output, PrintWindowOutput::Poster);
-    assert!(matches!(h.state().print_draft.settings(1, &[]).unwrap().layout, pdfcraft_engine::print::Layout::Poster { .. }));
-    // Other tabs print whole pages.
-    h.get_by_label("Size").click();
+    assert_eq!(h.state().print_draft.area, PrintArea::Window, "the area stays chosen across tabs");
+    let s = h.state().print_draft.settings(1, &[]).unwrap();
+    assert!(matches!(s.layout, Layout::Poster { .. }) && s.region.is_some());
+    h.get_by_label_contains("Area: 71 × 50 mm");
+    // Multiple and Booklet print each page's area too.
+    for tab in ["Multiple", "Booklet"] {
+        h.get_by_label(tab).click();
+        h.run_steps(2);
+        assert_eq!(h.state().print_draft.settings(1, &[]).unwrap().region, Some([0.0, 0.0, 200.0, 141.0]), "{tab}");
+    }
+    // Full page prints whole pages again, in every mode; the area is kept for later.
+    h.get_by_label("Full page").click();
     h.run_steps(2);
     assert_eq!(h.state().print_draft.settings(1, &[]).unwrap().region, None);
+    assert!(h.state().print_draft.region.is_some());
+    // A window over several sheets: Poster at 500 % of the 71 × 50 mm area.
+    let d = PrintDraft {
+        handling: PrintHandling::Poster,
+        area: PrintArea::Window,
+        region: Some([0.0, 0.0, 200.0, 141.0]),
+        poster_scale: 500.0,
+        ..Default::default()
+    };
+    let sheets = print::layout(&[(300.0, 400.0)], &d.settings(1, &[]).unwrap()).unwrap();
+    assert!(sheets.len() >= 2 && sheets.iter().all(|s| s.tile.is_some()), "{} sheets", sheets.len());
+    for sheet in &sheets {
+        let c = sheet.placed[0].clip;
+        assert!(c[2] <= 200.0 + 1e-9 && c[3] <= 141.0 + 1e-9, "only the area prints: {c:?}");
+    }
+}
+
+#[test]
+fn the_picker_line_follows_the_sizing_mode() {
+    let r = [0.0, 0.0, 200.0, 141.0];
+    let mut d = PrintDraft { area: PrintArea::Window, region: Some(r), ..Default::default() };
+    assert_eq!(pick_note(&d, r), "Area: 71 × 50 mm · prints at 421% on one sheet");
+    d.size = SizeMode::Actual;
+    assert_eq!(pick_note(&d, r), "Area: 71 × 50 mm · prints at 100% on one sheet");
+    d.size = SizeMode::Shrink;
+    assert_eq!(pick_note(&d, r), "Area: 71 × 50 mm · prints at 100% on one sheet");
+    d.size = SizeMode::Custom(250.0);
+    d.custom_scale = 250.0;
+    assert_eq!(pick_note(&d, r), "Area: 71 × 50 mm · prints at 250% on one sheet");
+    d.handling = PrintHandling::Poster;
+    assert_eq!(pick_note(&d, r), "Area: 71 × 50 mm · prints as a poster at 200%");
+    d.handling = PrintHandling::Booklet;
+    assert_eq!(pick_note(&d, r), "Area: 71 × 50 mm");
 }
 
 #[test]
@@ -197,7 +250,7 @@ fn window_picker_shift_drag_keeps_the_sheet_shape() {
     drag(&mut h, at(50.0, 350.0), at(250.0, 250.0), egui::Modifiers::NONE);
     let r = h.state().print_draft.region.expect("an area");
     assert!(near(r, [50.0, 250.0, 250.0, 350.0], tol), "{r:?}");
-    // With Shift: the sheet's proportions (a wide box: a landscape A4's printable area). (Drawn
+    // With Shift: the sheet's proportions (a wide box: a landscape A4 sheet). (Drawn
     // afresh: a drag from the area's corner would resize it.)
     h.state_mut().print_draft.region = None;
     h.run_steps(1);
@@ -219,8 +272,9 @@ fn window_picker_shift_drag_keeps_the_sheet_shape() {
 #[test]
 fn window_geometry() {
     let a4 = pdfcraft_engine::print::A4;
+    // Fit adds no margin: the shape that fills the sheet is the sheet's own.
     let r = printable_aspect(a4, false);
-    assert!((r - (595.28 - 36.0) / (841.89 - 36.0)).abs() < 1e-9);
+    assert!((r - 595.28 / 841.89).abs() < 1e-9);
     assert!((printable_aspect(a4, true) - 1.0 / r).abs() < 1e-9);
     assert!(window_landscape(Orientation::Auto, 300.0, 200.0));
     assert!(!window_landscape(Orientation::Portrait, 300.0, 200.0));
@@ -236,11 +290,11 @@ fn window_geometry() {
     assert_eq!(drag_window((10.0, 20.0), (1200.0, 5.0), page, None), [10.0, 5.0, 1000.0, 20.0]);
     // Moving stays on the page.
     assert_eq!(move_window([0.0, 0.0, 100.0, 100.0], 950.0, -20.0, page), [900.0, 0.0, 1000.0, 100.0]);
-    // A window the sheet's shape fills the printable area: an A4 page's printable area prints at 100%.
-    let full = [0.0, 0.0, 595.28 - 36.0, 841.89 - 36.0];
+    // A window the size of an A4 sheet prints at 100% on A4, and fills A3 at about 141%.
+    let full = [0.0, 0.0, 595.28, 841.89];
     assert!((window_fit_percent(full, a4, Orientation::Auto) - 100.0).abs() < 1e-6);
-    let a3 = 100.0 * ((841.89 - 36.0) / (595.28_f64 - 36.0)).min((1190.55 - 36.0) / (841.89 - 36.0));
-    assert!((window_fit_percent(full, pdfcraft_engine::print::A3, Orientation::Auto) - a3).abs() < 1e-6, "about 143% on A3");
+    let a3 = 100.0 * (841.89 / 595.28_f64).min(1190.55 / 841.89);
+    assert!((window_fit_percent(full, pdfcraft_engine::print::A3, Orientation::Auto) - a3).abs() < 1e-6, "about 141% on A3");
     assert_eq!(area_label([0.0, 0.0, 841.89, 595.28]), "297 × 210 mm");
 }
 
@@ -258,13 +312,22 @@ fn print_settings_are_remembered() {
     let d = &again.print_draft;
     assert_eq!(d.printer.as_deref(), Some("Office"));
     assert!(d.printer_chosen && d.grayscale);
-    // The proportions check box is gone (Shift while dragging): not saved any more, and a file
-    // from before, which has it, still loads.
+    // The proportions check box and the Window tab's output choice are gone (Shift while
+    // dragging; the Size and Poster tabs): not saved any more, and a file from before, which has
+    // them, still loads.
     assert!(app.print_draft.prefs().get("lock_aspect").is_none());
+    assert!(app.print_draft.prefs().get("window_poster").is_none());
     let mut old = PdfCraftApp::new();
     old.restore(r#"{"print": {"paper": "A3", "lock_aspect": false, "window_poster": true}}"#);
     assert_eq!(old.print_draft.paper, 1);
-    assert_eq!(old.print_draft.window_output, PrintWindowOutput::Poster);
+    assert_eq!((old.print_draft.area, old.print_draft.handling), (PrintArea::FullPage, PrintHandling::Size));
+    // The print area and the window last for the session, not between sessions.
+    let mut window = PdfCraftApp::new();
+    window.print_draft.area = PrintArea::Window;
+    window.print_draft.region = Some([1.0, 2.0, 30.0, 40.0]);
+    let mut next = PdfCraftApp::new();
+    next.restore(&window.persist());
+    assert_eq!((next.print_draft.area, next.print_draft.region), (PrintArea::FullPage, None));
     assert_eq!(d.paper, 1);
     assert_eq!(d.duplex, pdfcraft_engine::print::spool::Duplex::LongEdge);
     // Untrusted settings: nonsense keeps the defaults.
@@ -319,11 +382,12 @@ fn dialog_with(set: impl FnOnce(&mut PrintDraft)) -> Harness<'static, PdfCraftAp
 
 #[test]
 fn preview_reports_the_real_scale_and_printed_size() {
-    // Fit: the 300 × 400 page fills A4's printable 559.28 × 805.89 at 186 %.
+    // Fit: the 300 × 400 page fills the A4 sheet (595.28 × 841.89, no margin) at 198 %: edge to
+    // edge across.
     let h = dialog_with(|_| {});
-    h.get_by_label("Scale: 186%");
+    h.get_by_label("Scale: 198%");
     h.get_by_label("Sheets: 1");
-    h.get_by_label("A4 - 210 × 297 mm [197,30 × 263,07 mm]");
+    h.get_by_label("A4 - 210 × 297 mm [210,00 × 280,00 mm]");
     let h = dialog_with(|d| d.size = SizeMode::Actual);
     h.get_by_label("Scale: 100%");
     h.get_by_label("A4 - 210 × 297 mm [105,83 × 141,11 mm]");
@@ -347,15 +411,27 @@ fn preview_reports_the_real_scale_and_printed_size() {
     h.run_steps(2);
     h.get_by_label("Sheet 2 of 2");
     h.get_by_label("Scale: 134%");
-    // A window, fitted to the sheet: the same number as "Prints at".
+    // A window, fitted to the sheet (landscape, edge to edge across).
     let h = dialog_with(|d| {
-        d.handling = PrintHandling::Window;
+        d.area = PrintArea::Window;
         d.region = Some([0.0, 0.0, 200.0, 141.0]);
-        d.window_output = PrintWindowOutput::Fit;
     });
-    h.get_by_label("Scale: 397%");
-    h.get_by_label("A4 - 297 × 210 mm [279,86 × 197,30 mm]");
-    h.get_by_label_contains("Prints at 397%");
+    h.get_by_label("Scale: 421%");
+    h.get_by_label("A4 - 297 × 210 mm [297,00 × 209,39 mm]");
+    // A page the sheet's size prints at 100 % with Fit, the same as Actual size (R3).
+    let mut h = harness();
+    let bytes = h.state().session.create_blank(A4.0, A4.1, 1).unwrap();
+    h.state_mut().open_bytes("a4.pdf", None, bytes.as_ref().clone()).unwrap();
+    h.run_steps(2);
+    h.state_mut().execute("print.dialog");
+    h.run_steps(3);
+    assert_eq!(h.state().print_draft.size, SizeMode::Fit, "Fit is the default");
+    h.get_by_label("Scale: 100%");
+    h.get_by_label("A4 - 210 × 297 mm [210,00 × 297,00 mm]");
+    // On A3 it fills the sheet.
+    h.get_by_label("A3").click();
+    h.run_steps(2);
+    h.get_by_label("Scale: 141%");
 }
 
 #[test]
@@ -434,8 +510,8 @@ fn poster_preview_shows_the_whole_page_grid() {
     assert_eq!((again.page_rect, again.current, again.tiles.len(), again.tiles[0].0), (g.page_rect, Some(1), 9, 1));
     // A window printed as a poster: the window, not the page, fills the preview.
     let window = PrintDraft {
-        handling: PrintHandling::Window,
-        window_output: PrintWindowOutput::Poster,
+        handling: PrintHandling::Poster,
+        area: PrintArea::Window,
         region: Some([0.0, 0.0, 200.0, 141.0]),
         poster_scale: 500.0,
         ..Default::default()
@@ -459,13 +535,18 @@ fn close(a: Rect, b: Rect) -> bool {
 }
 
 #[test]
-fn control_verbs_set_the_window_output_and_poster_scale() {
+fn control_verbs_set_the_print_area_and_poster_scale() {
     let mut app = PdfCraftApp::new();
-    app.set_option("print-window-output", "poster").unwrap();
-    assert_eq!(app.print_draft.window_output, PrintWindowOutput::Poster);
-    app.set_option("print-window-output", "fit").unwrap();
-    assert_eq!(app.print_draft.window_output, PrintWindowOutput::Fit);
-    assert!(app.set_option("print-window-output", "sideways").is_err());
+    app.set_option("print-area", "window").unwrap();
+    assert_eq!(app.print_draft.area, PrintArea::Window);
+    app.set_option("print-area", "full").unwrap();
+    assert_eq!(app.print_draft.area, PrintArea::FullPage);
+    assert!(app.set_option("print-area", "sideways").is_err());
+    // The old Window tab: a script asking for it gets the Window area, the sizing mode unchanged.
+    app.set_option("print-tab", "poster").unwrap();
+    app.set_option("print-tab", "window").unwrap();
+    assert_eq!((app.print_draft.area, app.print_draft.handling), (PrintArea::Window, PrintHandling::Poster));
+    assert!(app.set_option("print-window-output", "poster").is_err(), "the Window-only output choice is gone");
     app.set_option("print-poster-scale", "350%").unwrap();
     assert_eq!(app.print_draft.poster_scale, 350.0);
     for bad in ["5", "5000", "NaN", "inf", "big"] {
@@ -548,4 +629,109 @@ fn a_failed_save_as_pdf_keeps_the_dialog_open() {
     assert_eq!(h.state().dialog, Some(Dialog::Print), "the dialog stays open, with its settings");
     let toast = h.state().toast.as_ref().map(|(m, _)| m.clone()).unwrap_or_default();
     assert!(toast.contains("Could not save"), "the user is told why: {toast:?}");
+}
+
+/// The dialog on form.pdf printing to `out` (Save as PDF, as there is no printer here).
+fn saving_dialog(out: &std::path::Path) -> Harness<'static, PdfCraftApp> {
+    let mut h = harness();
+    assert!(h.state_mut().execute("print.dialog"));
+    h.run_steps(3);
+    h.state_mut().save_override = Some(out.to_string_lossy().into_owned());
+    h.state_mut().print_draft.printer = None;
+    h.state_mut().print_draft.printer_chosen = true;
+    h.run_steps(2);
+    h
+}
+
+/// R2: "I type 1-2 in Pages and press Enter: Enter doesn't print."
+#[test]
+fn enter_prints_from_the_pages_field() {
+    let out = std::env::temp_dir().join(format!("pdfcraft-enter-pages-{}.pdf", std::process::id()));
+    let _ = std::fs::remove_file(&out);
+    let mut h = saving_dialog(&out);
+    // Choose Pages, click into its field, type, press Enter.
+    h.get_by(|n| n.role() == egui::accesskit::Role::RadioButton && n.label().as_deref() == Some("Pages")).click();
+    h.run_steps(2);
+    assert_eq!(h.state().print_draft.which, pdfcraft_ui_egui::PrintWhich::Range);
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Pages").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Pages").type_text("1");
+    h.run_steps(1);
+    assert_eq!(h.state().print_draft.range, "1");
+    assert!(h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Pages").is_focused(), "typing in the field");
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, None, "Enter printed and closed the dialog");
+    let doc = pdfcraft_cos::Document::open(std::sync::Arc::new(std::fs::read(&out).expect("printed"))).unwrap();
+    assert_eq!(pdfcraft_model::pages(&doc).len(), 1);
+    let _ = std::fs::remove_file(out);
+}
+
+#[test]
+fn enter_prints_with_nothing_focused_and_commits_a_typed_number() {
+    let out = std::env::temp_dir().join(format!("pdfcraft-enter-copies-{}.pdf", std::process::id()));
+    let _ = std::fs::remove_file(&out);
+    let mut h = saving_dialog(&out);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, None, "Enter is the Print button");
+    assert!(out.exists());
+    let _ = std::fs::remove_file(&out);
+    // A custom scale typed into its field, then Enter: printed with the new value.
+    let mut h = saving_dialog(&out);
+    h.state_mut().print_draft.size = SizeMode::Custom(100.0);
+    h.state_mut().print_draft.custom_scale = 100.0;
+    h.run_steps(2);
+    h.get_by_value("100 %").click();
+    h.run_steps(2);
+    h.get_by(|n| n.role() == egui::accesskit::Role::SpinButton && n.is_focused()).type_text("50");
+    h.run_steps(1);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, None);
+    assert_eq!(h.state().print_draft.custom_scale, 50.0, "the typed value counts");
+    let doc = pdfcraft_cos::Document::open(std::sync::Arc::new(std::fs::read(&out).expect("printed"))).unwrap();
+    let page = &pdfcraft_model::pages(&doc)[0];
+    let contents = page.dict.get(b"Contents").expect("contents").clone();
+    let content = match &*doc.resolve(&contents) {
+        pdfcraft_cos::Object::Stream(st) => String::from_utf8_lossy(&st.decoded().unwrap()).into_owned(),
+        other => panic!("{other:?}"),
+    };
+    assert!(content.starts_with("q 0.5 0 0 0.5 "), "printed at 50 %: {content}");
+    let _ = std::fs::remove_file(out);
+}
+
+#[test]
+fn enter_does_not_print_while_a_menu_or_the_picker_is_open() {
+    let out = std::env::temp_dir().join(format!("pdfcraft-enter-menu-{}.pdf", std::process::id()));
+    let _ = std::fs::remove_file(&out);
+    let mut h = saving_dialog(&out);
+    // An open combo box takes Enter (to pick its item).
+    h.get_by_value("Document and markups").click();
+    h.run_steps(2);
+    h.get_by_label("Form fields only");
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, Some(Dialog::Print), "a menu was open: no print");
+    assert!(!out.exists());
+    // The window picker: Enter does nothing there either.
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    h.state_mut().print_draft.area = PrintArea::Window;
+    h.run_steps(2);
+    h.get_by_label("Select area…").click();
+    h.run_steps(3);
+    assert!(h.state().print_draft.picking);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, Some(Dialog::Print));
+    assert!(h.state().print_draft.picking, "still picking");
+    assert!(!out.exists());
+    // Escape still cancels: the picker first, then the dialog.
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    assert_eq!(h.state().dialog, None);
+    assert!(!out.exists(), "cancelled, not printed");
 }

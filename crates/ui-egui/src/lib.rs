@@ -67,7 +67,7 @@ mod panels;
 mod pickers;
 pub mod prepare;
 pub mod print_ui;
-pub use print_ui::{Handling as PrintHandling, PrintDraft, Which as PrintWhich, WindowOutput as PrintWindowOutput};
+pub use print_ui::{Handling as PrintHandling, PrintArea, PrintDraft, Which as PrintWhich};
 mod redact_ui;
 pub use redact_ui::{HiddenDraft, PagesDraft as RedactPagesDraft, RedactPrefs, SearchDraft as RedactSearchDraft};
 pub mod i18n;
@@ -1228,8 +1228,19 @@ impl PdfCraftApp {
                     "poster" => PrintHandling::Poster,
                     "multiple" => PrintHandling::Multiple,
                     "booklet" => PrintHandling::Booklet,
-                    "window" => PrintHandling::Window,
-                    _ => return Err("print-tab must be size, poster, multiple, booklet or window".into()),
+                    // The Window tab became the print area (print-area); old scripts still work.
+                    "window" => {
+                        self.print_draft.area = PrintArea::Window;
+                        return Ok(());
+                    }
+                    _ => return Err("print-tab must be size, poster, multiple or booklet".into()),
+                };
+            }
+            ("print-area", _) => {
+                self.print_draft.area = match value {
+                    "full" | "full-page" | "page" => PrintArea::FullPage,
+                    "window" => PrintArea::Window,
+                    _ => return Err("print-area must be full or window".into()),
                 };
             }
             ("print-paper", _) => {
@@ -1240,13 +1251,6 @@ impl PdfCraftApp {
                 let r: Vec<f64> = value.split(',').filter_map(|v| v.trim().parse().ok()).collect();
                 let r = <[f64; 4]>::try_from(r).map_err(|_| "print-region must be x0,y0,x1,y1 in points")?;
                 self.print_draft.region = r.iter().all(|v| v.is_finite()).then_some(r);
-            }
-            ("print-window-output", _) => {
-                self.print_draft.window_output = match value {
-                    "fit" => PrintWindowOutput::Fit,
-                    "poster" => PrintWindowOutput::Poster,
-                    _ => return Err("print-window-output must be fit or poster".into()),
-                };
             }
             ("print-poster-scale", _) => {
                 let pct: f64 = value.trim().trim_end_matches('%').trim().parse().map_err(|_| "print-poster-scale must be a percentage")?;

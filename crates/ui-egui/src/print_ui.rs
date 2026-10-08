@@ -1,27 +1,34 @@
 //! The Print dialog (Acrobat's File ▸ Print, execution plan M10.5): printer, copies, grayscale,
 //! print quality; pages to print (all, current, range with labels; odd/even, reverse); page
 //! sizing & handling (Size, Poster, Multiple with its cut-and-stack order for single-sided
-//! printing, Booklet, and PeDeeFe's Window); orientation; comments & forms; and a live preview
-//! of the sheets, drawn sharp at the screen's resolution.
+//! printing, Booklet), with PeDeeFe's print area (Full page or Window) applying to all of them;
+//! orientation; comments & forms; and a live preview of the sheets, drawn sharp at the screen's
+//! resolution.
 //!
 //! **Window** works like AutoCAD's plot window: the user drags a rectangle over the page (in a
-//! large picker with zoom and pan) and only that area prints, exactly as drawn: fitted to the
-//! A4/A3 sheet at the largest size, or as a poster over several sheets. Holding Shift while
-//! dragging keeps the area in the sheet's proportions, so it fills the sheet.
+//! large picker with zoom and pan) and only that area of each page prints, exactly as drawn, in
+//! whichever sizing mode is chosen: on one sheet with Size (Fit fills the A4/A3 sheet with it), as
+//! a poster over several sheets with Poster, several areas per sheet with Multiple, or as a
+//! booklet. Holding Shift while dragging keeps the area in the sheet's proportions, so it fills
+//! the sheet.
 //!
 //! The dialog is grouped like Acrobat's: each section in its own titled panel, the sizing modes
-//! as a segmented control, and the preview with the scale and sheet count above it and, below,
-//! the sheet and (in brackets) the printed size of the page at that scale. A poster previews the
-//! whole page with its tiles over it.
+//! as a segmented control with the print area choice to its right, and the preview with the
+//! scale and sheet count above it and, below, the sheet and (in brackets) the printed size of the
+//! page at that scale. A poster previews the whole page (or area) with its tiles over it.
+//!
+//! Enter prints (like the Print button) from anywhere in the dialog, also while the Pages,
+//! Copies or scale fields have focus, but not while a menu is open or the area picker shows;
+//! Escape cancels.
 //!
 //! The printer list is fetched in the background (on Windows it takes a moment), and jobs print
 //! in the background (on Windows every sheet is drawn first): the dialog closes at once and a
-//! notice says when the job reached the printer. Printer, paper, two-sided, colour, quality and
-//! the window options are remembered between sessions. "Save as PDF" writes the print-ready PDF
+//! notice says when the job reached the printer. Printer, paper, two-sided, colour and quality
+//! are remembered between sessions; the print area and the window, for the session. "Save as PDF" writes the print-ready PDF
 //! (in a browser it downloads it).
 
 use egui::{Color32, Pos2, Rect, Stroke, pos2, vec2};
-use pdfcraft_engine::print::{self, A3, A4, Binding, BookletSubset, Content, Layout, MARGIN, Orientation, PageOrder, SizeMode, Subset, spool};
+use pdfcraft_engine::print::{self, A3, A4, Binding, BookletSubset, Content, Layout, Orientation, PageOrder, SizeMode, Subset, spool};
 
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, widgets};
@@ -42,18 +49,16 @@ pub enum Handling {
     Poster,
     Multiple,
     Booklet,
-    /// An area of the page, chosen like AutoCAD's plot window.
-    Window,
 }
 
-/// How a window prints.
+/// What part of each page prints, whatever the sizing mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum WindowOutput {
-    /// On one sheet, as large as it fits.
+pub enum PrintArea {
+    /// The whole page.
     #[default]
-    Fit,
-    /// Tiled over several sheets at the poster's scale.
-    Poster,
+    FullPage,
+    /// An area of the page, chosen like AutoCAD's plot window ([`PrintDraft::region`]).
+    Window,
 }
 
 /// A gesture in the window picker, in page display space (points, y up).
@@ -122,12 +127,14 @@ pub struct PrintDraft {
     /// The sheet shown in the preview (0-based).
     pub sheet: usize,
     pub current_page: usize,
-    /// Window: the area to print, `[x0, y0, x1, y1]` in page display space (points from the
-    /// bottom-left). `None` prints the whole page.
+    /// Whole pages or the window.
+    pub area: PrintArea,
+    /// The window: the area to print, `[x0, y0, x1, y1]` in page display space (points from the
+    /// bottom-left), used when [`Self::area`] is [`PrintArea::Window`]. `None` prints the whole
+    /// page.
     pub region: Option<[f64; 4]>,
     /// The page the window picker shows.
     pub region_page: usize,
-    pub window_output: WindowOutput,
     /// The window picker is showing (instead of the settings).
     pub picking: bool,
     pub pick: PickView,
@@ -167,9 +174,9 @@ impl Default for PrintDraft {
             paper: 0,
             sheet: 0,
             current_page: 0,
+            area: PrintArea::FullPage,
             region: None,
             region_page: 0,
-            window_output: WindowOutput::Fit,
             picking: false,
             pick: PickView::default(),
         }
@@ -181,10 +188,10 @@ pub fn paper(i: usize) -> (f64, f64) {
     PAPER_CHOICES.get(i).map_or(A4, |p| p.1)
 }
 
-/// Width ÷ height of the printable part of `paper` (the sheet less its margins), turned for
-/// `landscape`: the shape a window drawn with Shift keeps, so that it fills the sheet exactly.
+/// Width ÷ height of `paper` turned for `landscape` (Fit adds no margin, so the whole sheet is
+/// printable): the shape a window drawn with Shift keeps, so that it fills the sheet exactly.
 pub fn printable_aspect(paper: (f64, f64), landscape: bool) -> f64 {
-    let (w, h) = (paper.0.min(paper.1) - 2.0 * MARGIN, paper.0.max(paper.1) - 2.0 * MARGIN);
+    let (w, h) = (paper.0.min(paper.1), paper.0.max(paper.1));
     let r = if w > 0.0 && h > 0.0 { w / h } else { 1.0 };
     if landscape { 1.0 / r } else { r }
 }
@@ -235,14 +242,15 @@ pub fn move_window(from: [f64; 4], dx: f64, dy: f64, page: (f64, f64)) -> [f64; 
     [x0, y0, x0 + w, y0 + h]
 }
 
-/// The scale (percent) a window prints at on one sheet of `paper`.
+/// The scale (percent) a window prints at with Fit on one sheet of `paper` (edge to edge: Fit
+/// adds no margin).
 pub fn window_fit_percent(region: [f64; 4], paper: (f64, f64), orientation: Orientation) -> f64 {
     let r = norm(region);
     let (w, h) = (r[2] - r[0], r[3] - r[1]);
     if w <= 0.0 || h <= 0.0 {
         return 100.0;
     }
-    let (pw, ph) = (paper.0.min(paper.1) - 2.0 * MARGIN, paper.0.max(paper.1) - 2.0 * MARGIN);
+    let (pw, ph) = (paper.0.min(paper.1), paper.0.max(paper.1));
     let (sw, sh) = if window_landscape(orientation, w, h) { (ph, pw) } else { (pw, ph) };
     (sw / w).min(sh / h) * 100.0
 }
@@ -377,7 +385,6 @@ impl PrintDraft {
             Which::Range => Some(self.range.clone()),
         };
         let pages = print::select_pages(count, range.as_deref(), labels, self.subset, self.reverse).map_err(|e| e.to_string())?;
-        let poster = Layout::Poster { scale: self.poster_scale, overlap: self.overlap, cut_marks: self.cut_marks };
         let layout = match self.handling {
             Handling::Size => Layout::Size(match self.size {
                 SizeMode::Custom(_) => SizeMode::Custom(self.custom_scale),
@@ -390,13 +397,10 @@ impl PrintDraft {
                 other => other,
             },
             Handling::Booklet => Layout::Booklet { subset: self.booklet_subset, binding: self.binding },
-            Handling::Poster => poster,
-            Handling::Window => match self.window_output {
-                WindowOutput::Fit => Layout::Size(SizeMode::Fit),
-                WindowOutput::Poster => poster,
-            },
+            Handling::Poster => Layout::Poster { scale: self.poster_scale, overlap: self.overlap, cut_marks: self.cut_marks },
         };
-        let region = if self.handling == Handling::Window { self.region } else { None };
+        // The window applies to every sizing mode.
+        let region = if self.area == PrintArea::Window { self.region } else { None };
         Ok(print::Settings { pages, paper: paper(self.paper), orientation: self.orientation, layout, content: self.content, region })
     }
 
@@ -438,13 +442,14 @@ impl PrintDraft {
             "grayscale": self.grayscale,
             "collate": self.collate,
             "dpi": self.dpi,
-            "window_poster": self.window_output == WindowOutput::Poster,
         })
     }
 
     /// Restore [`Self::prefs`]. Settings are untrusted: anything unknown keeps the default.
     /// Only the keys read here count, so older files still load: their `lock_aspect` (the
-    /// "Keep the sheet's proportions" check box, now Shift while dragging) is ignored.
+    /// "Keep the sheet's proportions" check box, now Shift while dragging) and `window_poster`
+    /// (the Window tab's "one sheet / as a poster" choice, now the Size and Poster tabs with the
+    /// Window area) are ignored.
     pub fn restore_prefs(&mut self, v: &serde_json::Value) {
         if let Some(name) = v["printer"].as_str().filter(|n| !n.is_empty() && n.len() <= 512) {
             self.printer = Some(name.to_string());
@@ -469,9 +474,6 @@ impl PrintDraft {
         }
         if let Some(dpi) = v["dpi"].as_u64().and_then(|d| spool::QUALITIES.iter().find(|q| u64::from(q.0) == d)) {
             self.dpi = dpi.0;
-        }
-        if let Some(p) = v["window_poster"].as_bool() {
-            self.window_output = if p { WindowOutput::Poster } else { WindowOutput::Fit };
         }
     }
 }
@@ -712,13 +714,12 @@ const TAB_BODY_HEIGHT: f32 = 112.0;
 
 /// The page sizing & handling modes, as the segmented control shows them (in English; drawn
 /// through `tl!`).
-const TABS: [(Handling, &str); 5] = [
-    (Handling::Size, "Size"),
-    (Handling::Poster, "Poster"),
-    (Handling::Multiple, "Multiple"),
-    (Handling::Booklet, "Booklet"),
-    (Handling::Window, "Window"),
-];
+const TABS: [(Handling, &str); 4] =
+    [(Handling::Size, "Size"), (Handling::Poster, "Poster"), (Handling::Multiple, "Multiple"), (Handling::Booklet, "Booklet")];
+
+/// The print area choices, shown to the right of the sizing modes (in English; drawn through
+/// `tl!`).
+const AREAS: [(PrintArea, &str); 2] = [(PrintArea::FullPage, "Full page"), (PrintArea::Window, "Window")];
 
 /// What each Comments & Forms choice prints.
 fn content_note(c: Content) -> &'static str {
@@ -730,8 +731,8 @@ fn content_note(c: Content) -> &'static str {
     }
 }
 
-/// What the preview shows: the pages' display sizes, the sheets laid out, the window (Window
-/// tab) and the pages' sharpest textures.
+/// What the preview shows: the pages' display sizes, the sheets laid out, the window (when the
+/// print area is Window) and the pages' sharpest textures.
 struct Shown<'a> {
     sizes: &'a [(f64, f64)],
     sheets: &'a [print::Sheet],
@@ -758,6 +759,7 @@ pub(crate) fn body(
         return (false, false);
     }
     ui.set_width(DIALOG_WIDTH);
+    let enter = enter_pressed(ui);
     ui.label(egui::RichText::new(tl!("Print")).font(theme::semibold(18.0)));
     ui.add_space(6.0);
     let settings = d.settings(sizes.len(), labels);
@@ -797,16 +799,39 @@ pub(crate) fn body(
     });
     ui.add_space(10.0);
     let (mut go, mut cancel) = (false, false);
+    let can_print = settings.is_ok() && !sheets.is_empty();
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let label = if d.printer.is_some() { tl!("Print") } else { tl!("Save as PDF") };
-        if ui.add_enabled_ui(settings.is_ok() && !sheets.is_empty(), |ui| widgets::pill_button(ui, label, true)).inner.clicked() {
+        if ui.add_enabled_ui(can_print, |ui| widgets::pill_button(ui, label, true)).inner.clicked() {
             go = true;
         }
         if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
             cancel = true;
         }
     });
+    // Enter is the Print button, unless this frame's Enter opened a menu (a focused combo box)
+    // or the area picker (a focused "Select area…"). The fields saw the key first, so a value
+    // being typed (Copies, a scale) is already in the draft.
+    if enter && can_print && !cancel && !d.picking && !egui::Popup::is_any_open(ui.ctx()) {
+        go = true;
+    }
     (go, cancel)
+}
+
+/// Whether Enter (alone) was pressed this frame for the Print dialog: not while a menu or combo
+/// box is open (Enter picks its item there). Read before the dialog's widgets: unless a text field
+/// (Pages, or Copies or a scale being typed) has focus, the key is taken here, so a focused check
+/// box, radio button or button doesn't also act on it; a focused field keeps it, so it commits
+/// what was typed.
+fn enter_pressed(ui: &egui::Ui) -> bool {
+    let ctx = ui.ctx();
+    if egui::Popup::is_any_open(ctx) || !ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.is_none()) {
+        return false;
+    }
+    if !ctx.text_edit_focused() {
+        ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    }
+    true
 }
 
 /// The settings, one titled panel per section (like Acrobat's grouped boxes).
@@ -878,11 +903,14 @@ fn settings_column(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens, page_count
         ui.horizontal(|ui| {
             ui.radio_value(&mut d.which, Which::All, tl!("All"));
             ui.radio_value(&mut d.which, Which::Current, tl!("Current page"));
-            ui.radio_value(&mut d.which, Which::Range, tl!("Pages"));
-            let r = ui.add_enabled(
-                d.which == Which::Range,
-                egui::TextEdit::singleline(&mut d.range).hint_text(format!("1-{page_count}")).desired_width(110.0),
-            );
+            let pages = ui.radio_value(&mut d.which, Which::Range, tl!("Pages"));
+            let r = ui
+                .add_enabled(
+                    d.which == Which::Range,
+                    egui::TextEdit::singleline(&mut d.range).hint_text(format!("1-{page_count}")).desired_width(110.0),
+                )
+                // Screen readers name the field after its radio button.
+                .labelled_by(pages.id);
             if r.gained_focus() {
                 d.which = Which::Range;
             }
@@ -900,15 +928,34 @@ fn settings_column(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens, page_count
         });
     });
     widgets::group(ui, tl!("Page Sizing & Handling"), t.section[2], |ui| {
-        let selected = TABS.iter().position(|(h, _)| *h == d.handling).unwrap_or(0);
-        if let Some(&(h, _)) = widgets::segmented(ui, "print-handling", &TABS.map(|tab| tl!(tab.1)), selected).and_then(|i| TABS.get(i)) {
-            if h == Handling::Window && d.handling != Handling::Window && d.which == Which::All && page_count > 1 {
+        let tabs = TABS.map(|tab| tl!(tab.1));
+        let areas = AREAS.map(|a| tl!(a.1));
+        // The print area sits to the right of the sizing modes, or under them when a language's
+        // longer words don't leave room.
+        let beside = widgets::segmented_width(ui, &tabs) + 16.0 + widgets::segmented_width(ui, &areas) <= ui.available_width();
+        let mut area_choice = None;
+        ui.horizontal(|ui| {
+            let selected = TABS.iter().position(|(h, _)| *h == d.handling).unwrap_or(0);
+            if let Some(&(h, _)) = widgets::segmented(ui, "print-handling", &tabs, selected).and_then(|i| TABS.get(i)) {
+                d.handling = h;
+                d.sheet = 0;
+            }
+            if beside {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| area_choice = area_segments(ui, d, &areas));
+            }
+        });
+        if !beside {
+            ui.horizontal(|ui| area_choice = area_segments(ui, d, &areas));
+        }
+        if let Some(a) = area_choice {
+            if a == PrintArea::Window && d.area != PrintArea::Window && d.which == Which::All && page_count > 1 {
                 // A window is usually wanted from the page being looked at.
                 d.which = Which::Current;
             }
-            d.handling = h;
+            d.area = a;
             d.sheet = 0;
         }
+        area_row(ui, d, t);
         ui.add_space(2.0);
         egui::Frame::new()
             .fill(t.card)
@@ -1026,8 +1073,13 @@ fn tab_body(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens) {
                 combo(ui, "binding", &mut d.binding, &[(Binding::Left, tl!("Left")), (Binding::Right, tl!("Right"))], 80.0);
             });
         }
-        Handling::Window => window_controls(ui, d, t),
     }
+}
+
+/// The print area control ("Full page" | "Window"): the choice clicked, if any.
+fn area_segments(ui: &mut egui::Ui, d: &PrintDraft, labels: &[&str]) -> Option<PrintArea> {
+    let selected = AREAS.iter().position(|(a, _)| *a == d.area).unwrap_or(0);
+    widgets::segmented(ui, "print-area", labels, selected).and_then(|i| AREAS.get(i)).map(|a| a.0)
 }
 
 /// The preview, like Acrobat's: the scale and the number of sheets above the drawing; the sheet
@@ -1199,10 +1251,17 @@ fn draw_poster(ui: &egui::Ui, area: Rect, d: &PrintDraft, t: &Tokens, shown: &Sh
     }
 }
 
-/// The Window tab: choose the area and how it prints.
-fn window_controls(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens) {
+/// The row under the sizing modes: with Window, "Select area…" and the area's size; with Full
+/// page, a note (so the dialog keeps its height when the choice changes).
+fn area_row(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens) {
     ui.horizontal(|ui| {
-        if widgets::pill_button(ui, tl!("Select area…"), d.region.is_none()).on_hover_text(tl!("Drag a rectangle over the page")).clicked() {
+        ui.set_min_height(30.0);
+        if d.area == PrintArea::FullPage {
+            ui.label(egui::RichText::new(tl!("Whole pages print. Choose Window to print an area of each page.")).size(12.0).color(t.text_muted));
+            return;
+        }
+        let hint = tl!("Drag a rectangle over the page. The area prints exactly as drawn; to fill the sheet, hold Shift while drawing it.");
+        if widgets::pill_button(ui, tl!("Select area…"), d.region.is_none()).on_hover_text(hint).clicked() {
             d.region_page = d.current_page;
             d.pick = PickView { before: d.region, ..PickView::default() };
             d.picking = true;
@@ -1217,24 +1276,27 @@ fn window_controls(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens) {
             }
         }
     });
-    ui.horizontal(|ui| {
-        ui.label(tl!("Print the area:"));
-        ui.radio_value(&mut d.window_output, WindowOutput::Fit, tl!("On one sheet"));
-        ui.radio_value(&mut d.window_output, WindowOutput::Poster, tl!("As a poster"));
-    });
-    match d.window_output {
-        WindowOutput::Fit => {
-            if let Some(r) = d.region {
-                let pct = format!("{:.0}", window_fit_percent(r, paper(d.paper), d.orientation));
-                let note = crate::i18n::fmt(tl!("Prints at {pct}% (the largest size that fits the sheet)"), &[("pct", &pct)]);
-                ui.label(egui::RichText::new(note).color(t.text_muted));
-            }
+}
+
+/// The line under the window picker: the area's size and how it prints with the sizing mode
+/// chosen (its scale on one sheet with Size, the poster's scale with Poster).
+pub fn pick_note(d: &PrintDraft, region: [f64; 4]) -> String {
+    let area = area_label(region);
+    let one_sheet =
+        |pct: f64| crate::i18n::fmt(tl!("Area: {area} · prints at {pct}% on one sheet"), &[("area", &area), ("pct", &format!("{pct:.0}"))]);
+    let fit = || window_fit_percent(region, paper(d.paper), d.orientation);
+    match d.handling {
+        Handling::Size => match d.size {
+            SizeMode::Fit => one_sheet(fit()),
+            SizeMode::Shrink => one_sheet(fit().min(100.0)),
+            SizeMode::Actual => one_sheet(100.0),
+            SizeMode::Custom(_) => one_sheet(d.custom_scale),
+        },
+        Handling::Poster => {
+            crate::i18n::fmt(tl!("Area: {area} · prints as a poster at {pct}%"), &[("area", &area), ("pct", &format!("{:.0}", d.poster_scale))])
         }
-        WindowOutput::Poster => poster_controls(ui, d),
+        Handling::Multiple | Handling::Booklet => crate::i18n::fmt(tl!("Area: {area}"), &[("area", &area)]),
     }
-    ui.label(
-        egui::RichText::new(tl!("The area prints exactly as drawn. To fill the sheet, hold Shift while drawing it.")).size(12.0).color(t.text_muted),
-    );
 }
 
 /// Leave the picker, putting back the area from before.
@@ -1461,17 +1523,7 @@ fn picker(
     ui.horizontal(|ui| {
         match d.region {
             Some(r) => {
-                let area = area_label(r);
-                ui.label(match d.window_output {
-                    WindowOutput::Fit => {
-                        let pct = format!("{:.0}", window_fit_percent(r, paper_size, orientation));
-                        crate::i18n::fmt(tl!("Area: {area} · prints at {pct}% on one sheet"), &[("area", &area), ("pct", &pct)])
-                    }
-                    WindowOutput::Poster => {
-                        let pct = format!("{:.0}", d.poster_scale);
-                        crate::i18n::fmt(tl!("Area: {area} · prints as a poster at {pct}%"), &[("area", &area), ("pct", &pct)])
-                    }
-                });
+                ui.label(pick_note(d, r));
             }
             None => {
                 ui.label(egui::RichText::new(tl!("No area: drag over the page")).color(t.text_muted));

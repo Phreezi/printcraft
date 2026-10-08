@@ -75,7 +75,7 @@ fn size_modes() {
     let sizes = [(200.0, 300.0), (1000.0, 1500.0)];
     let fit = layout(&sizes, &settings(vec![0, 1], Layout::Size(SizeMode::Fit))).unwrap();
     let s0 = fit[0].placed[0].matrix.0[0];
-    assert!(close(s0, 2.52), "min(576 / 200, 756 / 300): {s0}");
+    assert!(close(s0, 2.64), "the whole sheet, no margin: min(612 / 200, 792 / 300): {s0}");
     let actual = layout(&sizes, &settings(vec![0], Layout::Size(SizeMode::Actual))).unwrap();
     assert_eq!(actual[0].placed[0].matrix.0, [1.0, 0.0, 0.0, 1.0, 206.0, 246.0], "centred at 100%");
     let shrink = layout(&sizes, &settings(vec![0, 1], Layout::Size(SizeMode::Shrink))).unwrap();
@@ -86,6 +86,41 @@ fn size_modes() {
     // Auto orientation turns the sheet for landscape pages.
     let land = layout(&[(300.0, 200.0)], &settings(vec![0], Layout::Size(SizeMode::Fit))).unwrap();
     assert_eq!(land[0].size, (792.0, 612.0));
+}
+
+/// Issue R3 (round 3): Fit adds no margin. A page the size of the sheet prints at exactly
+/// 100 % (as Actual size does), a page smaller or larger than the sheet scales to fill it edge
+/// to edge, keeping its proportions; Shrink leaves a page the sheet's size alone.
+#[test]
+fn fit_fills_the_sheet_without_margins() {
+    let fit = |page: (f64, f64), paper: (f64, f64), mode: SizeMode| {
+        let s = Settings { pages: vec![0], paper, layout: Layout::Size(mode), ..Settings::default() };
+        layout(&[page], &s).unwrap().remove(0)
+    };
+    // A4 on A4: 100 %, from the sheet's corner, the same placement as Actual size.
+    let a4 = fit(A4, A4, SizeMode::Fit);
+    assert_eq!(a4.size, A4);
+    assert_eq!(a4.placed[0].matrix.0, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], "A4 on A4 prints at 100 %");
+    assert_eq!(a4.placed[0].matrix, fit(A4, A4, SizeMode::Actual).placed[0].matrix);
+    assert_eq!(fit(A4, A4, SizeMode::Shrink).placed[0].matrix.0[0], 1.0, "nothing to shrink");
+    // A4 on A3: fills the A3 sheet (A3 is √2 × A4, to the rounding of the point sizes).
+    let a3 = fit(A4, A3, SizeMode::Fit);
+    let b = a3.placed[0].matrix.bbox([0.0, 0.0, A4.0, A4.1]);
+    assert!(close(b[1], 0.0) && close(b[3], A3.1), "edge to edge vertically: {b:?}");
+    assert!(b[0] >= -0.01 && b[2] <= A3.0 + 0.01 && (A3.0 - (b[2] - b[0])) < 1.0, "and (to under a point) across: {b:?}");
+    assert!(close(a3.placed[0].scale(), A3.1 / A4.1));
+    // A landscape A4 page turns the sheet (auto orientation) and prints at 100 % too.
+    let land = fit((A4.1, A4.0), A4, SizeMode::Fit);
+    assert_eq!(land.size, (A4.1, A4.0));
+    assert!(close(land.placed[0].scale(), 1.0));
+    // Letter on A4: as large as fits, touching both sides, centred top to bottom.
+    let letter = fit((612.0, 792.0), A4, SizeMode::Fit);
+    let b = letter.placed[0].matrix.bbox([0.0, 0.0, 612.0, 792.0]);
+    assert!(close(b[0], 0.0) && close(b[2], A4.0), "{b:?}");
+    assert!(close(b[1], A4.1 - b[3]), "centred: {b:?}");
+    // A small page grows to the sheet; a big one shrinks to it.
+    assert!(close(fit((100.0, 141.42), A4, SizeMode::Fit).placed[0].scale(), A4.0 / 100.0));
+    assert!(close(fit((1190.55, 1683.78), A4, SizeMode::Fit).placed[0].scale(), A4.0 / 1190.55));
 }
 
 #[test]
@@ -153,12 +188,12 @@ fn posters_tile_with_overlap() {
 
 #[test]
 fn placement_scale_and_printed_size() {
-    // Fit of 200 × 300 on Letter (576 × 756 printable): min(2.88, 2.52) = 2.52.
+    // Fit of 200 × 300 on Letter (612 × 792, no margin): min(3.06, 2.64) = 2.64.
     let fit = layout(&[(200.0, 300.0)], &settings(vec![0], Layout::Size(SizeMode::Fit))).unwrap();
     let s = fit[0].placed[0].scale();
-    assert!(close(s, 2.52), "{s}");
+    assert!(close(s, 2.64), "{s}");
     let p = printed_size((200.0, 300.0), None, s).unwrap();
-    assert!(close(p.0, 504.0) && close(p.1, 756.0), "{p:?}");
+    assert!(close(p.0, 528.0) && close(p.1, 792.0), "{p:?}");
     // A page turned on its cell (Multiple, auto-rotate) prints at the same scale as unturned.
     let sizes = [(200.0, 300.0), (300.0, 200.0)];
     let multi = layout(&sizes, &settings(vec![0, 1], Layout::multiple(2))).unwrap();
@@ -246,13 +281,13 @@ fn a_window_prints_only_that_area() {
     let fit = layout(&sizes, &Settings { region, ..settings(vec![0], Layout::Size(SizeMode::Fit)) }).unwrap();
     let pl = fit[0].placed[0];
     assert_eq!(pl.clip, [100.0, 150.0, 200.0, 300.0], "clipped to the window");
-    // The window (100 × 150) fills the printable area: min(576 / 100, 756 / 150) = 5.04.
-    assert!(close(pl.matrix.0[0], 5.04), "{:?}", pl.matrix);
-    // Its corners land inside the sheet's printable area, centred.
+    // The window (100 × 150) fills the sheet: min(612 / 100, 792 / 150) = 5.28.
+    assert!(close(pl.matrix.0[0], 5.28), "{:?}", pl.matrix);
+    // Its corners land on the sheet, centred.
     let (x0, y0) = pl.matrix.apply(100.0, 150.0);
     let (x1, y1) = pl.matrix.apply(200.0, 300.0);
     assert!(close(x0 + x1, 612.0) && close(y0 + y1, 792.0), "centred: {x0} {y0} {x1} {y1}");
-    assert!(close(y1 - y0, 756.0), "full printable height");
+    assert!(close(y1 - y0, 792.0), "the full height of the sheet");
     // Poster: the window, enlarged, tiles over several sheets; nothing outside it shows.
     let poster = layout(&sizes, &Settings { region, ..settings(vec![0], Layout::Poster { scale: 800.0, overlap: 0.0, cut_marks: false }) }).unwrap();
     assert!(poster.len() > 1);

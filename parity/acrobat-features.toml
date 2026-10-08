@@ -7818,8 +7818,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["doc_print", "printers"]
-evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf", "crates/ui-egui/tests/print.rs::print_dialog_opens_at_its_final_size", "crates/engine/src/tests.rs::printing_lays_out_sheets_that_render"]
-notes = "⌘P; settings in grouped panels like Acrobat's (Printer, Pages to Print, Page Sizing & Handling, Orientation, Comments & Forms; each with a coloured header, light and dark themes), the sizing modes as a segmented control, live sheet preview; scrolls on short screens (1280 × 720). Not yet: the printer's own properties dialog, Acrobat's Advanced and Page Setup."
+evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf", "crates/ui-egui/tests/print.rs::print_dialog_opens_at_its_final_size", "crates/engine/src/tests.rs::printing_lays_out_sheets_that_render", "crates/ui-egui/tests/print.rs::enter_prints_from_the_pages_field", "crates/ui-egui/tests/print.rs::enter_prints_with_nothing_focused_and_commits_a_typed_number", "crates/ui-egui/tests/print.rs::enter_does_not_print_while_a_menu_or_the_picker_is_open"]
+notes = "⌘P; settings in grouped panels like Acrobat's (Printer, Pages to Print, Page Sizing & Handling, Orientation, Comments & Forms; each with a coloured header, light and dark themes), the sizing modes as a segmented control with PeDeeFe's print area (Full page | Window) to its right, live sheet preview; scrolls on short screens (1280 × 720). Enter prints from anywhere in the dialog (also while typing in Pages, Copies or a scale field, which commit first), not while a menu is open or the area picker shows; Escape cancels. Not yet: the printer's own properties dialog, Acrobat's Advanced and Page Setup; Enter on a focused button prints rather than pressing that button."
 
 [[feature]]
 id = "print.printer-selection"
@@ -7878,8 +7878,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["doc_print"]
-evidence = ["crates/print/src/tests.rs::size_modes", "crates/print/src/tests.rs::placement_scale_and_printed_size", "crates/ui-egui/tests/print.rs::preview_reports_the_real_scale_and_printed_size"]
-notes = "fit, actual size, shrink oversized, custom %; the preview shows the real scale of every mode"
+evidence = ["crates/print/src/tests.rs::size_modes", "crates/print/src/tests.rs::placement_scale_and_printed_size", "crates/print/src/tests.rs::fit_fills_the_sheet_without_margins", "crates/ui-egui/tests/print.rs::preview_reports_the_real_scale_and_printed_size"]
+notes = "fit, actual size, shrink oversized, custom %; the preview shows the real scale of every mode. Fit fills the whole sheet edge to edge with no margin (as SumatraPDF does): an A4 page on A4 prints at 100 %, A4 on A3 at 141 %; the Windows spooler draws each sheet from the paper's corner at the paper's size, adding no margin either. Unlike Acrobat's Fit (which fits the printer's printable area), content within the printer's hardware margin (a few mm on most printers) can be cut off, exactly as with Actual size; Multiple, Booklet and Poster keep their 18 pt margin (gutters, cut marks, tile overlap). Not yet: a fit-to-printable-area choice using the driver's margins."
 
 [[feature]]
 id = "print.paper-source-by-size"
@@ -7950,8 +7950,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["doc_print"]
-evidence = ["crates/print/src/tests.rs::a_window_prints_only_that_area", "crates/ui-egui/tests/print.rs::window_tab_prints_the_selected_area", "crates/ui-egui/tests/print.rs::window_picker_draws_and_moves_the_area", "crates/ui-egui/tests/print.rs::window_picker_shift_drag_keeps_the_sheet_shape", "crates/ui-egui/tests/print.rs::window_geometry"]
-notes = "PeDeeFe's Window tab, like AutoCAD's plot window: drag a rectangle in a large picker (zoom, pan; drag inside to move, a corner to resize; Escape cancels the picker); the area drawn prints exactly, fitted to the A4/A3 sheet at the largest size or as a poster; Shift while dragging keeps the sheet's proportions so the area fills the sheet; outside the area is dimmed and its size shows on a badge; the area applies to every page printed. doc_print region. Acrobat's own route is a snapshot of the selected graphic."
+evidence = ["crates/print/src/tests.rs::a_window_prints_only_that_area", "crates/ui-egui/tests/print.rs::window_is_a_print_area_for_every_mode", "crates/ui-egui/tests/print.rs::the_picker_line_follows_the_sizing_mode", "crates/ui-egui/tests/print.rs::window_picker_draws_and_moves_the_area", "crates/ui-egui/tests/print.rs::window_picker_shift_drag_keeps_the_sheet_shape", "crates/ui-egui/tests/print.rs::window_geometry"]
+notes = "PeDeeFe's print area, like AutoCAD's plot window: Full page | Window beside the sizing modes, so the window works with every mode (Size: on one sheet, Fit filling it; Poster: tiled over several sheets; Multiple and Booklet: each page's window). Drag a rectangle in a large picker (zoom, pan; drag inside to move, a corner to resize; Escape cancels the picker); the area drawn prints exactly; Shift while dragging keeps the sheet's proportions so the area fills the sheet; outside the area is dimmed and its size shows on a badge; the area applies to every page printed (a page the window misses is reported). The area choice and the window last for the session; older settings files still load. doc_print region. Acrobat's own route is a snapshot of the selected graphic."
 
 [[feature]]
 id = "print.orientation"
