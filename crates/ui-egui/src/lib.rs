@@ -1562,6 +1562,7 @@ impl PdfCraftApp {
         {
             return;
         }
+        self.tab_keys(ctx);
         self.registry_shortcuts(ctx);
         // Before the canvas's own keys: ⌘A there selects all text.
         self.edit_text_keys(ctx);
@@ -1580,6 +1581,27 @@ impl PdfCraftApp {
             }
             let space = self.space_pages(ctx);
             canvas::shortcuts(&mut self.views[i], ctx, space);
+        }
+    }
+
+    /// Ctrl+Tab shows the next tab and Ctrl+Shift+Tab the previous one, in strip order and
+    /// wrapping around (from Home: the first or the last tab). Ctrl on every platform, as in
+    /// browsers and Acrobat; it works while typing in a field too, but not under a modal.
+    fn tab_keys(&mut self, ctx: &egui::Context) {
+        use egui::{Key, KeyboardShortcut, Modifiers};
+        if self.modal_open() {
+            return;
+        }
+        // Shift first: consume_shortcut ignores a Shift the shortcut doesn't name.
+        let step = if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab))) {
+            -1
+        } else if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::CTRL, Key::Tab))) {
+            1
+        } else {
+            return;
+        };
+        if let Some(next) = cycle_tab(self.active, self.views.len(), step) {
+            self.active = Some(next);
         }
     }
 
@@ -1809,4 +1831,19 @@ impl eframe::App for PdfCraftApp {
             storage.flush();
         }
     }
+}
+
+/// The tab `step` places from `active` among `count` tabs, wrapping around. From Home (no active
+/// tab) a step forward gives the first tab and a step back the last. `None` without tabs.
+pub(crate) fn cycle_tab(active: Option<usize>, count: usize, step: isize) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    let count_i = isize::try_from(count).ok()?;
+    let next = match active.and_then(|a| isize::try_from(a.min(count - 1)).ok()) {
+        Some(a) => (a + step).rem_euclid(count_i),
+        None if step < 0 => count_i - 1,
+        None => 0,
+    };
+    usize::try_from(next).ok()
 }

@@ -225,7 +225,8 @@ fn tab(ui: &mut egui::Ui, t: &Tokens, name: &str, dirty: bool, active: bool, clo
     } else if active || resp.hovered() || x.hovered() {
         icons::paint(ui, x_rect, "x", 13.0, t.text_muted);
     }
-    if x.clicked() {
+    // The close button, or a middle click anywhere on the tab (as in browsers and Acrobat).
+    if x.clicked() || resp.middle_clicked() {
         *close = Some(index);
     }
     resp.on_hover_text(if dirty { crate::i18n::fmt(tl!("{name} — unsaved changes"), &[("name", name)]) } else { name.to_string() })

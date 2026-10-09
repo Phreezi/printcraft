@@ -2024,3 +2024,8 @@
 
 # Viewer: Space and Shift+Space.
 	Next / previous screen (next / previous page in single-page view)	下一屏 / 上一屏（单页视图中为下一页 / 上一页）
+
+# Tabs: Ctrl+Tab and middle click.
+	Next / previous tab	下一个 / 上一个标签页
+	Middle-click a tab	中键单击标签页
+	Close the tab	关闭标签页

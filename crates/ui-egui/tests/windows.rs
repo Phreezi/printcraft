@@ -338,3 +338,69 @@ fn closing_every_window_together_quits_but_closing_the_root_alone_hands_it_anoth
     assert_eq!(names(&h, ROOT_WINDOW), ["b.pdf"]);
     assert!(!root_close_sent(&h), "the app keeps running");
 }
+
+fn press(h: &mut Harness<'_, PdfCraftApp>, key: egui::Key, modifiers: egui::Modifiers) {
+    h.event(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers });
+    h.event(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers });
+    h.run_steps(2);
+}
+
+#[test]
+fn ctrl_tab_shows_the_next_tab_and_ctrl_shift_tab_the_previous_wrapping_around() {
+    let mut h = harness();
+    // Ctrl as Windows and Linux report it (egui's `command` is Ctrl there too).
+    let ctrl = egui::Modifiers { ctrl: true, command: true, ..Default::default() };
+    let ctrl_shift = egui::Modifiers { shift: true, ..ctrl };
+    h.state_mut().active = Some(0);
+    h.run_steps(1);
+    press(&mut h, egui::Key::Tab, ctrl);
+    assert_eq!(h.state().active, Some(1));
+    press(&mut h, egui::Key::Tab, ctrl);
+    press(&mut h, egui::Key::Tab, ctrl);
+    assert_eq!(h.state().active, Some(0), "past the last tab: back to the first");
+    press(&mut h, egui::Key::Tab, ctrl_shift);
+    assert_eq!(h.state().active, Some(2), "before the first tab: the last");
+    press(&mut h, egui::Key::Tab, ctrl_shift);
+    assert_eq!(h.state().active, Some(1));
+    // From Home: forward gives the first tab, back the last.
+    h.state_mut().active = None;
+    h.run_steps(1);
+    press(&mut h, egui::Key::Tab, ctrl);
+    assert_eq!(h.state().active, Some(0));
+    h.state_mut().active = None;
+    h.run_steps(1);
+    press(&mut h, egui::Key::Tab, ctrl_shift);
+    assert_eq!(h.state().active, Some(2));
+    assert!(h.ctx.memory(|m| m.focused()).is_none(), "Ctrl+Shift+Tab doesn't move the keyboard focus");
+    // Not under a modal.
+    h.state_mut().execute("help.shortcuts");
+    h.run_steps(1);
+    press(&mut h, egui::Key::Tab, ctrl);
+    assert_eq!(h.state().active, Some(2), "the Keyboard shortcuts dialog is open");
+}
+
+#[test]
+fn a_middle_click_on_a_tab_closes_it() {
+    let mut h = harness();
+    h.state_mut().active = Some(0);
+    h.run_steps(1);
+    let at = h.get_by_label("b.pdf").rect().center();
+    h.event(egui::Event::PointerMoved(at));
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Middle, pressed, modifiers: Default::default() });
+    }
+    h.run_steps(3);
+    assert_eq!(names(&h, ROOT_WINDOW), ["a.pdf", "c.pdf"]);
+    assert!(h.state().close_request.is_none(), "an unchanged document closes without asking");
+    // A primary click still only shows the tab.
+    let at = h.get_by_label("c.pdf").rect().center();
+    h.event(egui::Event::PointerMoved(at));
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() });
+    }
+    h.run_steps(3);
+    assert_eq!(names(&h, ROOT_WINDOW), ["a.pdf", "c.pdf"]);
+    assert_eq!(h.state().active, Some(1));
+}

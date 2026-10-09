@@ -2122,3 +2122,8 @@
 
 # Viewer: Space and Shift+Space.
 	Next / previous screen (next / previous page in single-page view)	Ecrã seguinte / anterior (página seguinte / anterior na vista de página única)
+
+# Tabs: Ctrl+Tab and middle click.
+	Next / previous tab	Separador seguinte / anterior
+	Middle-click a tab	Clique do meio num separador
+	Close the tab	Fechar o separador
