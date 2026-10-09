@@ -24,6 +24,9 @@ permissions:
 jobs:
   freebsd:
     name: FreeBSD 14 (build + test)
+    # Forks (PeDeeFe) run this only by hand: GitHub disables a fork's workflows when its Actions
+    # usage is high.
+    if: github.repository == 'storytold/pdfcraft' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:

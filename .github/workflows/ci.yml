@@ -19,11 +19,14 @@ concurrency:
 jobs:
   test:
     name: test (${{ matrix.os }})
+    # Forks (PeDeeFe) skip the nightly run and macOS: GitHub disables a fork's workflows when its
+    # Actions usage is high. A manual run still tests everything.
+    if: github.repository == 'storytold/pdfcraft' || github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ (github.repository == 'storytold/pdfcraft' || github.event_name == 'workflow_dispatch') && fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -82,6 +85,7 @@ jobs:
 
   wasm:
     name: wasm32 check
+    if: github.repository == 'storytold/pdfcraft' || github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +100,7 @@ jobs:
 
   deny:
     name: dependency licences and advisories
+    if: github.repository == 'storytold/pdfcraft' || github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -105,7 +110,7 @@ jobs:
 
   fuzz:
     name: fuzz (mutation, 15 min)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'schedule' && github.repository == 'storytold/pdfcraft') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

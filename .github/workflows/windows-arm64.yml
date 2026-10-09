@@ -33,6 +33,9 @@ env:
 jobs:
   package:
     name: package (cross-compiled on x64)
+    # Forks (PeDeeFe) run this only by hand: GitHub disables a fork's workflows when its Actions
+    # usage is high.
+    if: github.repository == 'storytold/pdfcraft' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -139,6 +142,9 @@ jobs:
 
   test:
     name: test (native ARM64)
+    # Forks (PeDeeFe) run this only by hand: GitHub disables a fork's workflows when its Actions
+    # usage is high.
+    if: github.repository == 'storytold/pdfcraft' || github.event_name == 'workflow_dispatch'
     runs-on: windows-11-arm
     timeout-minutes: 120
     steps:
