@@ -281,7 +281,7 @@ fn stamp_palette(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
                         ui.painter().text(
                             egui::pos2(chip.center().x, chip.bottom() - 6.0),
                             Align2::CENTER_CENTER,
-                            "By name at time, date",
+                            tl!("By name at time, date"),
                             theme::regular(7.5),
                             col,
                         );

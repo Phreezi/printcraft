@@ -1903,7 +1903,7 @@
 	Area: {area} · prints as a poster at {pct}%	Área: {area} · imprime como cartaz a {pct}%
 	Area: {area} · prints at {pct}% on one sheet	Área: {area} · imprime a {pct}% numa folha
 	Couldn't list the printers: {e}	Não foi possível listar as impressoras: {e}
-	Drag a rectangle over the page. The area prints exactly as drawn; to fill the sheet, hold Shift while drawing it.	Arraste um retângulo sobre a página. A área é impressa exatamente como a desenhar; para preencher a folha, mantenha premida a tecla Shift enquanto desenha.
+	Drag a rectangle over the page. The area prints exactly as drawn; to fill the sheet, hold Shift while drawing it.	Arraste um retângulo sobre a página. A área é impressa exatamente como foi desenhada; para preencher a folha, mantenha premida a tecla Shift enquanto a desenha.
 	Drawing the page…	A desenhar a página…
 	Each page is enlarged and printed in tiles, one per sheet; the preview shows the tiles over the page.	Cada página é ampliada e impressa em mosaicos, um por folha; a pré-visualização mostra os mosaicos sobre a página.
 	Fit page	Ajustar à página
@@ -2060,3 +2060,32 @@
 	Use {what}	Utilizar {what}
 	Place saved {what}	Colocar {what} que guardou
 	Remove saved {what}	Remover {what} que guardou
+# Print errors, the comment composer's header, the credit, Document Properties ▸ Fonts, history
+# labels, the stamp chips, Set Page Boxes and the signature appearance's labels.
+	There are no pages to print	Não há páginas para imprimir
+	Page {n} is out of range (1–{count})	A página {n} está fora do intervalo (1–{count})
+	“{t}” is not a page number or label	«{t}» não é um número nem uma etiqueta de página
+	The window to print is outside page {n}	A janela a imprimir fica fora da página {n}
+	invalid paper size	tamanho de papel inválido
+	the scale must be more than 0%	a escala tem de ser superior a 0%
+	invalid number of pages per sheet	número de páginas por folha inválido
+	the page grid does not fit on the paper	a grelha de páginas não cabe no papel
+	page size is missing	falta o tamanho da página
+	invalid page size	tamanho de página inválido
+	page size cannot be scaled to the grid	não é possível ajustar o tamanho da página à grelha
+	invalid tile scale or overlap	escala dos mosaicos ou sobreposição inválida
+	the overlap is larger than the tile	a sobreposição é maior do que o mosaico
+	the poster would need more than 1024 sheets	o cartaz precisaria de mais de 1024 folhas
+	Inserted text	Texto inserido
+	Based on {project} (formerly {old}) by the {team} team	Baseado no {project} (anteriormente {old}) da equipa {team}
+	Embedded subset	Subconjunto incorporado
+	Embedded	Incorporado
+	Not embedded (substituted)	Não incorporado (substituído)
+	Delete {n} fields	Eliminar {n} campos
+	By name at time, date	Por nome, hora e data
+	Page {n}	Página {n}
+	Digitally signed by	Assinado digitalmente por
+	Reason:	Motivo:
+	Location:	Local:
+	Date:	Data:
+	(the signing time)	(a hora da assinatura)

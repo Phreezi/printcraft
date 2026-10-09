@@ -220,3 +220,121 @@ fn dragging_a_tab_along_the_strip_reorders_and_never_tears_off_where_windows_are
     assert_eq!(h.state().windows.keys(), vec![ROOT_WINDOW]);
     assert_eq!(names(&h, ROOT_WINDOW), ["b.pdf", "c.pdf", "a.pdf"]);
 }
+
+/// A queue of [`OsEvent`]s the app polls, and the handle to add to it.
+type OsQueue = std::rc::Rc<std::cell::RefCell<Vec<pdfcraft_ui_egui::OsEvent>>>;
+
+fn os_queue(app: &mut PdfCraftApp) -> OsQueue {
+    let queue: OsQueue = Default::default();
+    let q = queue.clone();
+    app.os_events = Some(Box::new(move || q.borrow_mut().drain(..).collect()));
+    queue
+}
+
+fn temp_pdf(tag: &str, pages: usize) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("pdfcraft-{tag}-{}.pdf", std::process::id()));
+    std::fs::write(&path, fixture(pages)).unwrap();
+    path
+}
+
+/// R5: a file forwarded by another launch (or a relaunch) brings a minimized window back. eframe
+/// runs only `App::logic` while every window is minimized, so the window has to be restored and
+/// focused from there, not from the `ui` pass that never comes.
+#[test]
+fn a_forwarded_file_or_a_relaunch_restores_a_minimized_window_from_logic_alone() {
+    use eframe::App as _;
+    use egui::{ViewportCommand, ViewportId, ViewportInfo};
+    let path = temp_pdf("minimized", 1);
+    let ctx = egui::Context::default();
+    let mut app = PdfCraftApp::new();
+    let queue = os_queue(&mut app);
+    let mut frame = eframe::Frame::_new_kittest();
+    let mut input = egui::RawInput::default();
+    input.viewports.insert(ViewportId::ROOT, ViewportInfo { minimized: Some(true), ..Default::default() });
+    let raise = [ViewportCommand::Minimized(false), ViewportCommand::Focus];
+    for event in [pdfcraft_ui_egui::OsEvent::Open(vec![path.to_string_lossy().into_owned()]), pdfcraft_ui_egui::OsEvent::Activate] {
+        queue.borrow_mut().push(event);
+        let out = ctx.run_logic(&input, |ctx| app.logic(ctx, &mut frame));
+        let commands = out.viewport_commands.get(&ViewportId::ROOT).cloned().unwrap_or_default();
+        assert!(commands.windows(2).any(|w| w == raise), "un-minimized, then focused: {commands:?}");
+    }
+    std::fs::remove_file(&path).ok();
+    assert_eq!(app.views.len(), 1, "the forwarded file opened");
+}
+
+/// R5: a file forwarded while a dialog is open waits for it to close: the Print dialog keeps
+/// printing the document it was opened for, and a password prompt isn't dropped.
+#[test]
+fn a_forwarded_file_waits_for_an_open_dialog_or_prompt() {
+    use pdfcraft_ui_egui::{Dialog, OsEvent};
+    let path = temp_pdf("held", 2);
+    let mut h = harness();
+    let queue = os_queue(h.state_mut());
+    let a = doc(&h, "a.pdf");
+    h.state_mut().active = Some(0);
+    assert!(h.state_mut().execute("print.dialog"));
+    h.run_steps(2);
+    queue.borrow_mut().push(OsEvent::Open(vec![path.to_string_lossy().into_owned()]));
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, Some(Dialog::Print));
+    assert_eq!(h.state().views.len(), 3, "not opened under the dialog");
+    assert_eq!(h.state().active_ids().map(|(_, id)| id), Some(a), "Print still prints a.pdf");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, None);
+    assert_eq!(h.state().views.len(), 4, "opened once the dialog closed");
+    // A password prompt for an encrypted file stays while a forwarded file waits.
+    h.state_mut().password_prompt = Some(pdfcraft_ui_egui::PasswordPrompt {
+        name: "locked.pdf".into(),
+        path: None,
+        bytes: std::sync::Arc::new(Vec::new()),
+        input: "secr".into(),
+        error: None,
+    });
+    queue.borrow_mut().push(OsEvent::Open(vec![path.to_string_lossy().into_owned()]));
+    h.run_steps(3);
+    assert!(h.state().password_prompt.as_ref().is_some_and(|p| p.input == "secr"), "the prompt and what was typed stay");
+    assert_eq!(h.state().views.len(), 4);
+    h.state_mut().password_prompt = None;
+    h.run_steps(3);
+    assert_eq!(h.state().views.len(), 5);
+    std::fs::remove_file(&path).ok();
+}
+
+fn close_root(h: &mut Harness<'static, PdfCraftApp>) {
+    h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+}
+
+fn root_close_sent(h: &Harness<'static, PdfCraftApp>) -> bool {
+    h.output().viewport_output.get(&egui::ViewportId::ROOT).is_some_and(|v| v.commands.iter().any(|c| matches!(c, egui::ViewportCommand::Close)))
+}
+
+/// R5: "Close all windows" (the Windows taskbar) closes the root window and the others at once:
+/// the app quits, rather than the root staying open (empty, or with another window's tabs).
+#[test]
+fn closing_every_window_together_quits_but_closing_the_root_alone_hands_it_another_windows_tabs() {
+    let mut h = harness();
+    let b = doc(&h, "b.pdf");
+    let w = h.state_mut().move_tab(b, TabTarget::NewWindow(None)).expect("a new window");
+    h.run_steps(2);
+    close_root(&mut h);
+    h.step();
+    assert!(h.state().window_tabs(ROOT_WINDOW).is_empty(), "the root's tabs closed");
+    assert_eq!(h.state().windows.keys(), vec![ROOT_WINDOW, w], "the other window isn't taken over yet");
+    // The other window's close arrives a moment later.
+    h.state_mut().close_window(w);
+    h.step();
+    assert!(root_close_sent(&h), "every window closed: the app quits");
+
+    // The root window closed on its own: after the moment, it takes over the other window.
+    let mut h = harness();
+    let b = doc(&h, "b.pdf");
+    h.state_mut().move_tab(b, TabTarget::NewWindow(None)).expect("a new window");
+    h.run_steps(2);
+    close_root(&mut h);
+    h.step();
+    h.run_steps(pdfcraft_ui_egui::windows::CLOSE_ALL_FRAMES as usize + 4);
+    assert_eq!(h.state().windows.keys(), vec![ROOT_WINDOW]);
+    assert_eq!(names(&h, ROOT_WINDOW), ["b.pdf"]);
+    assert!(!root_close_sent(&h), "the app keeps running");
+}

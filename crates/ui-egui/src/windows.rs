@@ -173,6 +173,23 @@ pub struct Windows {
     pub(crate) drag: Option<TabDrag>,
     /// The app is quitting (the system's Quit), not just closing the root window.
     pub(crate) quitting: bool,
+    /// When (time, root frame number) the root window's close button (or the system) closed its
+    /// tabs while other windows were open: for a moment ([`CLOSE_ALL_GRACE`]) the root doesn't
+    /// take another window over, so closes reaching the other windows too ("Close all windows" on
+    /// the Windows taskbar) quit the app.
+    pub(crate) root_closed_at: Option<(f64, u64)>,
+}
+
+/// How long after the root window was closed (with other windows open) closes reaching the other
+/// windows count as closing every window, in seconds; and at least [`CLOSE_ALL_FRAMES`] frames,
+/// for a slow machine. The taskbar sends them together.
+pub const CLOSE_ALL_GRACE: f64 = 0.2;
+/// See [`CLOSE_ALL_GRACE`].
+pub const CLOSE_ALL_FRAMES: u64 = 2;
+
+/// The time and root frame number [`Windows::root_closed_at`] records.
+pub(crate) fn close_stamp(ctx: &egui::Context) -> (f64, u64) {
+    (ctx.input(|i| i.time), ctx.cumulative_frame_nr_for(ViewportId::ROOT))
 }
 
 impl Default for Windows {
@@ -188,6 +205,7 @@ impl Default for Windows {
             pending_moves: Vec::new(),
             drag: None,
             quitting: false,
+            root_closed_at: None,
         }
     }
 }
@@ -545,6 +563,21 @@ impl PdfCraftApp {
         self.window_keys(ctx);
     }
 
+    /// Bring window `key` to the front for a request from outside (files forwarded by another
+    /// launch, a relaunch), from `logic`. eframe doesn't run `ui` (so neither `tidy_windows`)
+    /// while every window is minimized, and the cached [`Geometry::minimized`] isn't refreshed
+    /// then either: the window is un-minimized here, unconditionally (a no-op for a window that
+    /// isn't minimized), and focused. `tidy_windows` focuses it again once it is drawn.
+    pub fn raise_window(&mut self, ctx: &egui::Context, key: WindowKey) {
+        if self.windows.get(key).is_none() {
+            return;
+        }
+        let id = viewport_id(key);
+        ctx.send_viewport_cmd_to(id, ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd_to(id, ViewportCommand::Focus);
+        self.windows.request_focus(key);
+    }
+
     /// Apply what the windows asked for while they were drawn: tab moves, windows left without
     /// tabs closing, the root taking over a window, the focus. Then the focus window's tabs are
     /// in [`Self::views`] until the next frame.
@@ -555,8 +588,28 @@ impl PdfCraftApp {
         self.enter_window(ROOT_WINDOW);
         // Windows other than the root close once they have no tabs.
         self.windows.list.retain(|w| w.key == ROOT_WINDOW || w.parked.as_ref().is_some_and(|t| !t.views.is_empty()));
+        let (now, frame) = close_stamp(ctx);
+        let root_closing = self.windows.root_closed_at.and_then(|(t, f)| {
+            let age = now - t;
+            (age < CLOSE_ALL_GRACE || frame.saturating_sub(f) <= CLOSE_ALL_FRAMES).then_some(age)
+        });
+        if root_closing.is_none() {
+            self.windows.root_closed_at = None;
+        }
         if self.views.is_empty() && self.windows.several() {
-            self.root_takes_over(ctx);
+            match root_closing {
+                // The other windows may be closing too: wait a moment before taking one over.
+                Some(age) => {
+                    let wait = if age.is_finite() { (CLOSE_ALL_GRACE - age).clamp(0.0, CLOSE_ALL_GRACE) } else { 0.0 };
+                    ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+                }
+                None => self.root_takes_over(ctx),
+            }
+        } else if self.views.is_empty() && root_closing.is_some() && self.close_request.is_none() {
+            // The root window and then every other one were closed: that is quitting (guard_quit
+            // still checks for unsaved changes, and there are none left).
+            self.windows.root_closed_at = None;
+            ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
         }
         if self.windows.get(self.windows.focus).is_none() {
             self.windows.focus = ROOT_WINDOW;
@@ -564,7 +617,8 @@ impl PdfCraftApp {
         if let Some(key) = self.windows.pending_focus.take().filter(|k| self.windows.get(*k).is_some()) {
             self.windows.focus = key;
             let id = viewport_id(key);
-            if self.windows.geometry(key).is_some_and(|g| g.minimized) {
+            let live = ctx.input(|i| i.raw.viewports.get(&id).and_then(|v| v.minimized)) == Some(true);
+            if live || self.windows.geometry(key).is_some_and(|g| g.minimized) {
                 ctx.send_viewport_cmd_to(id, ViewportCommand::Minimized(false));
             }
             ctx.send_viewport_cmd_to(id, ViewportCommand::Focus);

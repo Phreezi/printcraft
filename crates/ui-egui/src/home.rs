@@ -32,16 +32,12 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     ui.horizontal(|ui| {
                         ui.add(icons::image("message-square-text", 28.0, t.accent));
                         ui.vertical(|ui| {
-                            // PeDeeFe's own card (no ArtCraft community or Discord). The credit stays
-                            // as written (links::CREDIT), in English in every language.
+                            // PeDeeFe's own card (no ArtCraft community or Discord). The credit is
+                            // links::CREDIT in the UI's language (`i18n::credit`).
                             ui.label(egui::RichText::new(tl!("Help and feedback")).font(theme::semibold(15.0)));
                             ui.label(
-                                egui::RichText::new(format!(
-                                    "{} {}.",
-                                    tl!("Report a problem or suggest a change on GitHub."),
-                                    pdfcraft_engine::links::CREDIT
-                                ))
-                                .color(t.text_muted),
+                                egui::RichText::new(format!("{} {}.", tl!("Report a problem or suggest a change on GitHub."), crate::i18n::credit()))
+                                    .color(t.text_muted),
                             );
                         });
                     });

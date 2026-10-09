@@ -65,8 +65,10 @@ fn page_selection() {
     assert_eq!(select_pages(5, Some("ii-2, A-1"), &labels, Subset::All, false).unwrap(), [1, 2, 3, 4], "labels, even with a dash");
     assert_eq!(select_pages(5, None, &[], Subset::Even, true).unwrap(), [3, 1]);
     assert_eq!(select_pages(5, None, &[], Subset::Odd, false).unwrap(), [0, 2, 4]);
-    assert!(matches!(select_pages(5, Some("7"), &[], Subset::All, false), Err(PrintError::Invalid(_))));
-    assert!(matches!(select_pages(5, Some("x"), &[], Subset::All, false), Err(PrintError::Invalid(_))));
+    assert_eq!(select_pages(5, Some("7"), &[], Subset::All, false), Err(PrintError::PageOutOfRange { page: 7, count: 5 }));
+    assert_eq!(select_pages(5, Some("7"), &[], Subset::All, false).map_err(|e| e.to_string()), Err("page 7 is out of range (1–5)".into()));
+    assert_eq!(select_pages(5, Some("x"), &[], Subset::All, false), Err(PrintError::NotAPage("x".into())));
+    assert_eq!(select_pages(5, Some("x"), &[], Subset::All, false).map_err(|e| e.to_string()), Err("\"x\" is not a page number or label".into()));
     assert_eq!(select_pages(1, None, &[], Subset::Even, false), Err(PrintError::NoPages));
 }
 
@@ -298,7 +300,7 @@ fn a_window_prints_only_that_area() {
     // A window larger than the page is cut to the page; one off the page is an error.
     assert_eq!(page_view((200.0, 300.0), Some([-50.0, -50.0, 500.0, 500.0])), Some(((0.0, 0.0), (200.0, 300.0))));
     let off = layout(&sizes, &Settings { region: Some([300.0, 300.0, 400.0, 400.0]), ..settings(vec![0], Layout::Size(SizeMode::Fit)) });
-    assert!(matches!(off, Err(PrintError::Invalid(_))));
+    assert_eq!(off.map(|_| ()), Err(PrintError::WindowOutsidePage(1)));
     assert_eq!(page_view((200.0, 300.0), Some([f64::NAN, 0.0, 10.0, 10.0])), None);
     // The print-ready PDF clips to the window.
     let doc = fixture(1);

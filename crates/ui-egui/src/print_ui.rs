@@ -138,6 +138,10 @@ pub struct PrintDraft {
     /// The window picker is showing (instead of the settings).
     pub picking: bool,
     pub pick: PickView,
+    /// The dialog has been on screen for a frame without Enter: only then does Enter print. The
+    /// Enter that opened the dialog (from the command palette, or a focused Print button) must not
+    /// also print before the user has seen it.
+    pub enter_ready: bool,
 }
 
 impl Default for PrintDraft {
@@ -179,6 +183,7 @@ impl Default for PrintDraft {
             region_page: 0,
             picking: false,
             pick: PickView::default(),
+            enter_ready: false,
         }
     }
 }
@@ -373,6 +378,23 @@ pub fn poster_preview(
     Some(PosterPreview { page, page_rect, uv, zoom, grid, tiles, current: marked })
 }
 
+/// A layout or page-range error in the UI's language (shown under the preview and as the toast
+/// when Print is pressed).
+pub fn error_text(e: &print::PrintError) -> String {
+    use print::PrintError as E;
+    match e {
+        E::NoPages => tl!("There are no pages to print").to_string(),
+        E::PageOutOfRange { page, count } => {
+            crate::i18n::fmt(tl!("Page {n} is out of range (1–{count})"), &[("n", &page.to_string()), ("count", &count.to_string())])
+        }
+        E::NotAPage(token) => crate::i18n::fmt(tl!("“{t}” is not a page number or label"), &[("t", token)]),
+        E::WindowOutsidePage(page) => crate::i18n::fmt(tl!("The window to print is outside page {n}"), &[("n", &page.to_string())]),
+        // The layout's fixed messages have catalog entries; the spooler's own words stay as they are.
+        E::Invalid(message) => tl!(message).to_string(),
+        other => other.to_string(),
+    }
+}
+
 impl PrintDraft {
     /// The engine settings for this draft (page count and labels from the document).
     pub fn settings(&self, count: usize, labels: &[String]) -> Result<print::Settings, String> {
@@ -384,7 +406,7 @@ impl PrintDraft {
             Which::Current => Some((self.current_page + 1).to_string()),
             Which::Range => Some(self.range.clone()),
         };
-        let pages = print::select_pages(count, range.as_deref(), labels, self.subset, self.reverse).map_err(|e| e.to_string())?;
+        let pages = print::select_pages(count, range.as_deref(), labels, self.subset, self.reverse).map_err(|e| error_text(&e))?;
         let layout = match self.handling {
             Handling::Size => Layout::Size(match self.size {
                 SizeMode::Custom(_) => SizeMode::Custom(self.custom_scale),
@@ -492,7 +514,7 @@ impl PdfCraftApp {
         let Some((i, _)) = self.active_ids() else { return };
         let current = self.views[i].current;
         let keep = std::mem::take(&mut self.print_draft);
-        self.print_draft = PrintDraft { current_page: current, sheet: 0, picking: false, pick: PickView::default(), ..keep };
+        self.print_draft = PrintDraft { current_page: current, sheet: 0, picking: false, pick: PickView::default(), enter_ready: false, ..keep };
         self.list_printers();
         self.dialog = Some(crate::Dialog::Print);
     }
@@ -759,7 +781,10 @@ pub(crate) fn body(
         return (false, false);
     }
     ui.set_width(DIALOG_WIDTH);
-    let enter = enter_pressed(ui);
+    // Enter counts only once the dialog has been shown: not on the frame whose Enter opened it.
+    let pressed = enter_pressed(ui);
+    let enter = pressed && d.enter_ready;
+    d.enter_ready |= !pressed;
     ui.label(egui::RichText::new(tl!("Print")).font(theme::semibold(18.0)));
     ui.add_space(6.0);
     let settings = d.settings(sizes.len(), labels);
@@ -767,7 +792,7 @@ pub(crate) fn body(
     let (sheets, error) = match &settings {
         Ok(s) => match print::layout(sizes, s) {
             Ok(sheets) => (sheets, None),
-            Err(e) => (Vec::new(), Some(e.to_string())),
+            Err(e) => (Vec::new(), Some(error_text(&e))),
         },
         Err(e) => (Vec::new(), Some(e.clone())),
     };

@@ -342,6 +342,10 @@ pub fn fmt(template: &str, args: &[(&str, &str)]) -> String {
 /// A generated history label (the action part of "Undo …") in the current language. Captured
 /// values (file and field names) are inserted as they are; unknown labels are looked up whole.
 pub fn action_label(text: &str) -> String {
+    // Several form fields deleted at once (Prepare a form).
+    if let Some(n) = text.strip_prefix("Delete ").and_then(|rest| rest.strip_suffix(" fields")).filter(|n| n.parse::<u64>().is_ok()) {
+        return fmt(t("Delete {n} fields"), &[("n", n)]);
+    }
     for (prefix, template) in [
         ("Insert pages from ", "Insert pages from {name}"),
         ("Fill in ", "Fill in {name}"),
@@ -378,6 +382,17 @@ pub fn menu_label(id: &str, label: &str) -> String {
         Some(translated) => translated.to_owned(),
         None => command_label(label),
     }
+}
+
+/// Whether `lang` writes decimals with a comma (1,5 rather than 1.5).
+pub fn decimal_comma(lang: Lang) -> bool {
+    matches!(lang.code(), "pt-pt" | "pt-br" | "es" | "cs")
+}
+
+/// The credit to the original project ([`pdfcraft_engine::links::CREDIT`] in English) in the
+/// current language. The names are filled in as written, so no catalog carries them.
+pub fn credit() -> String {
+    fmt(t("Based on {project} (formerly {old}) by the {team} team"), &[("project", "PdfCraft"), ("old", "PrintCraft"), ("team", "ArtCraft")])
 }
 
 /// A plural-aware message: `one`/`other` are the English forms (with `{n}` where the count goes).
@@ -976,7 +991,11 @@ mod tests {
         assert_eq!(menu_label("file.save_as", "Save as…"), "Guardar como…");
         assert_eq!(command_label("Undo Insert pages from Relatório {n}.pdf"), "Anular Inserir páginas de Relatório {n}.pdf");
         assert_eq!(action_label("Change Title"), "Alterar Título");
+        assert_eq!(command_label("Undo Delete 3 fields"), "Anular Eliminar 3 campos");
+        assert!(decimal_comma(pt) && !decimal_comma(Lang::EN));
+        assert_eq!(credit(), "Baseado no PdfCraft (anteriormente PrintCraft) da equipa ArtCraft");
         set_current(Lang::EN);
+        assert_eq!(credit(), pdfcraft_engine::links::CREDIT, "in English it is the credit as written");
     }
 
     /// Every registered command, menu title and All tools group, section and item.

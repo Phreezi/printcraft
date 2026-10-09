@@ -5,25 +5,34 @@
 //! where they open as tabs in the window used last, which comes to the front, and exits.
 //!
 //! The running app (the *primary*) listens on a random TCP port on `127.0.0.1` only, and writes
-//! the port and a random 128-bit token to `instance.json` in the user's settings folder, readable
-//! by the user alone (0600 on Unix; the per-user profile's permissions on Windows). A later
-//! process reads the file, connects, and sends one line of JSON:
+//! the port and a random 128-bit token to `instance.json` in a folder of the user's on this
+//! machine (`instance_dir` in main.rs: LocalAppData on Windows, not the roaming profile),
+//! readable by the user alone (0600 on Unix; the per-user profile's permissions on Windows). A
+//! later process reads the file and connects. The token itself never crosses the connection:
+//! each side proves it knows it with an HMAC-SHA256 over a fresh random nonce, and the files are
+//! sent only once the primary has proved itself:
 //!
 //! ```text
-//! {"pedeefe":1,"token":"<32 hex digits>","open":["/absolute/path/a.pdf", …]}
+//! → {"pedeefe":2,"nonce":"<32 hex>","mac":"<HMAC(token, "client:" nonce)>"}
+//! ← {"ok":true,"proof":"<HMAC(token, "server:" nonce)>"}
+//! → {"open":["/absolute/path/a.pdf", …]}
+//! ← {"ok":true}
 //! ```
 //!
-//! The primary answers `{"ok":true}` (or `{"ok":false,"error":…}`) and closes the connection. A
-//! connection that doesn't present the token gets nothing done. The request is bounded (size,
-//! number and length of paths, time), paths must be absolute, and the primary opens them like any
-//! file the user picks (untrusted input, never a crash). Other users on the machine can reach the
-//! port but can't read the token; nothing listens beyond the machine.
+//! A refusal is `{"ok":false,"error":…}`, and the connection closes. A connection that can't
+//! prove it knows the token gets nothing done; a listener that can't (another process holding the
+//! port named by a file a crash left behind) gets no file names, and the launch becomes the
+//! primary itself. Requests are bounded (size, number and length of paths, time), paths must be
+//! absolute, and the primary opens them like any file the user picks (untrusted input, never a
+//! crash). Other users on the machine can reach the port but can't read the token; nothing
+//! listens beyond the machine.
 //!
 //! Two processes started together (Explorer opens one per selected file) agree on one primary
 //! through `instance.lock`, created exclusively by whichever comes first; the others wait for the
 //! primary's `instance.json` and pass it their files. A lock left behind by a crash is ignored
-//! after a few seconds, and a stale `instance.json` (nothing answering) is replaced. If anything
-//! goes wrong, the process simply runs on its own, as before.
+//! after a few seconds, and a stale `instance.json` (nothing answering, or something that can't
+//! prove it is the app) is replaced. If anything goes wrong, the process simply runs on its own,
+//! as before.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -34,10 +43,12 @@ use std::time::{Duration, Instant, SystemTime};
 use pdfcraft_ui_egui::OsEvent;
 use serde_json::{Value, json};
 
-/// The protocol's version, sent as `"pedeefe"` with every request.
-const VERSION: u64 = 1;
+/// The protocol's version, sent as `"pedeefe"` in the first line.
+const VERSION: u64 = 2;
 /// The longest request read (bytes): the paths below and the JSON around them.
 const MAX_REQUEST: u64 = 1 << 20;
+/// The longest first line (bytes): the version, the nonce and the MAC.
+const MAX_HELLO: u64 = 1024;
 /// The most files one request may name, and the longest path (bytes).
 const MAX_PATHS: usize = 256;
 const MAX_PATH_LEN: usize = 4096;
@@ -72,23 +83,74 @@ impl std::fmt::Display for Refused {
     }
 }
 
-/// The request a second process sends: open these files (none: just come to the front).
-pub fn encode_request(token: &str, paths: &[String]) -> String {
-    json!({ "pedeefe": VERSION, "token": token, "open": paths }).to_string()
+/// HMAC-SHA256 (RFC 2104) of `msg` under `key`, hex-encoded.
+fn hmac_hex(key: &[u8], msg: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut block = [0u8; 64];
+    if key.len() > block.len() {
+        block.iter_mut().zip(Sha256::digest(key).iter()).for_each(|(b, k)| *b = *k);
+    } else {
+        block.iter_mut().zip(key).for_each(|(b, k)| *b = *k);
+    }
+    let mut inner = Sha256::new();
+    inner.update(block.map(|b| b ^ 0x36));
+    inner.update(msg);
+    let inner = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(block.map(|b| b ^ 0x5c));
+    outer.update(inner);
+    outer.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Check a request line against the primary's token and return the files it asks to open.
-pub fn parse_request(line: &str, token: &str) -> Result<Vec<String>, Refused> {
-    let v: Value = serde_json::from_str(line.trim()).map_err(|e| Refused::Malformed(e.to_string()))?;
-    let obj = v.as_object().ok_or_else(|| Refused::Malformed("not an object".into()))?;
-    // The token first: nothing else about a request without it is looked at.
-    let presented = obj.get("token").and_then(Value::as_str).ok_or(Refused::BadToken)?;
-    if !constant_time_eq(presented, token) {
-        return Err(Refused::BadToken);
+/// What the launching process sends to prove it knows `token`, for `nonce`.
+pub fn client_mac(token: &str, nonce: &str) -> String {
+    hmac_hex(token.as_bytes(), format!("client:{nonce}").as_bytes())
+}
+
+/// What the primary answers to prove it knows `token`, for `nonce`.
+pub fn server_proof(token: &str, nonce: &str) -> String {
+    hmac_hex(token.as_bytes(), format!("server:{nonce}").as_bytes())
+}
+
+/// The first line a launching process sends.
+pub fn encode_hello(token: &str, nonce: &str) -> String {
+    json!({ "pedeefe": VERSION, "nonce": nonce, "mac": client_mac(token, nonce) }).to_string()
+}
+
+/// The second line: open these files (none: just come to the front).
+pub fn encode_open(paths: &[String]) -> String {
+    json!({ "open": paths }).to_string()
+}
+
+fn object(line: &str) -> Result<serde_json::Map<String, Value>, Refused> {
+    match serde_json::from_str(line.trim()) {
+        Ok(Value::Object(o)) => Ok(o),
+        Ok(_) => Err(Refused::Malformed("not an object".into())),
+        Err(e) => Err(Refused::Malformed(e.to_string())),
     }
+}
+
+fn is_hex(s: &str, len: usize) -> bool {
+    s.len() == len && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Check the first line against the primary's token; returns the nonce to answer with a proof.
+pub fn parse_hello(line: &str, token: &str) -> Result<String, Refused> {
+    let obj = object(line)?;
     if obj.get("pedeefe").and_then(Value::as_u64) != Some(VERSION) {
         return Err(Refused::WrongVersion);
     }
+    let nonce = obj.get("nonce").and_then(Value::as_str).filter(|n| is_hex(n, 32)).ok_or(Refused::BadToken)?;
+    let mac = obj.get("mac").and_then(Value::as_str).ok_or(Refused::BadToken)?;
+    if !constant_time_eq(mac, &client_mac(token, nonce)) {
+        return Err(Refused::BadToken);
+    }
+    Ok(nonce.to_string())
+}
+
+/// The files the second line asks to open.
+pub fn parse_open(line: &str) -> Result<Vec<String>, Refused> {
+    let obj = object(line)?;
     let list = match obj.get("open") {
         None | Some(Value::Null) => return Ok(Vec::new()),
         Some(Value::Array(a)) => a,
@@ -197,18 +259,36 @@ pub fn start(dir: &Path, files: &[String]) -> Outcome {
     }
 }
 
-/// Send the files to the primary at `info`; `Ok` once it has accepted them.
+/// Send the files to the primary at `info`; `Ok` once it has accepted them. Nothing about the
+/// files is sent until the listener has proved it knows the token.
 pub fn forward(info: &InstanceInfo, files: &[String]) -> std::io::Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], info.port));
-    let mut stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)?;
+    let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)?;
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
-    writeln!(stream, "{}", encode_request(&info.token, files))?;
-    stream.flush()?;
-    let mut reply = String::new();
-    BufReader::new(stream.take(4096)).read_line(&mut reply)?;
-    let ok = serde_json::from_str::<Value>(&reply).ok().and_then(|v| v.get("ok").and_then(Value::as_bool)) == Some(true);
-    if ok { Ok(()) } else { Err(std::io::Error::other(format!("the running app refused: {}", reply.trim()))) }
+    let mut write = stream.try_clone()?;
+    let mut read = BufReader::new(stream.take(8192));
+    let reply = |read: &mut BufReader<std::io::Take<TcpStream>>| -> std::io::Result<serde_json::Map<String, Value>> {
+        let mut line = String::new();
+        read.read_line(&mut line)?;
+        let obj = object(&line).map_err(|e| std::io::Error::other(e.to_string()))?;
+        if obj.get("ok").and_then(Value::as_bool) == Some(true) {
+            Ok(obj)
+        } else {
+            Err(std::io::Error::other(format!("the running app refused: {}", line.trim())))
+        }
+    };
+    let nonce = random_token()?;
+    writeln!(write, "{}", encode_hello(&info.token, &nonce))?;
+    write.flush()?;
+    let hello = reply(&mut read)?;
+    let proof = hello.get("proof").and_then(Value::as_str).unwrap_or_default();
+    if !constant_time_eq(proof, &server_proof(&info.token, &nonce)) {
+        return Err(std::io::Error::other("the listener could not prove it is the running app"));
+    }
+    writeln!(write, "{}", encode_open(files))?;
+    write.flush()?;
+    reply(&mut read).map(|_| ())
 }
 
 /// What the primary's listener hands the UI, and how it wakes it.
@@ -285,10 +365,33 @@ fn serve_one(stream: TcpStream, token: &str, shared: &Mutex<Shared>) {
         return;
     }
     let Ok(read) = stream.try_clone() else { return };
+    let mut write = stream;
+    let mut answer = |reply: Value| writeln!(write, "{reply}").and_then(|()| write.flush()).is_ok();
+    let refuse = |e: Refused| {
+        log::warn!("single instance: refused a request: {e}");
+        json!({ "ok": false, "error": e.to_string() })
+    };
+    let mut read = BufReader::new(read.take(MAX_HELLO + MAX_REQUEST));
     let mut line = String::new();
-    let reply = match BufReader::new(read.take(MAX_REQUEST)).read_line(&mut line) {
-        Err(e) => json!({ "ok": false, "error": format!("unreadable request: {e}") }),
-        Ok(_) => match parse_request(&line, token) {
+    // The first line: the client proves it knows the token, then so does this side.
+    let hello = match (&mut read).take(MAX_HELLO).read_line(&mut line) {
+        Err(e) => Err(Refused::Malformed(format!("unreadable request: {e}"))),
+        Ok(_) => parse_hello(&line, token),
+    };
+    let nonce = match hello {
+        Ok(nonce) => nonce,
+        Err(e) => {
+            answer(refuse(e));
+            return;
+        }
+    };
+    if !answer(json!({ "ok": true, "proof": server_proof(token, &nonce) })) {
+        return;
+    }
+    line.clear();
+    let reply = match read.read_line(&mut line) {
+        Err(e) => refuse(Refused::Malformed(format!("unreadable request: {e}"))),
+        Ok(_) => match parse_open(&line) {
             Ok(paths) => {
                 let event = if paths.is_empty() { OsEvent::Activate } else { OsEvent::Open(paths) };
                 if let Ok(mut s) = shared.lock() {
@@ -299,14 +402,10 @@ fn serve_one(stream: TcpStream, token: &str, shared: &Mutex<Shared>) {
                 }
                 json!({ "ok": true })
             }
-            Err(e) => {
-                log::warn!("single instance: refused a request: {e}");
-                json!({ "ok": false, "error": e.to_string() })
-            }
+            Err(e) => refuse(e),
         },
     };
-    let mut write = stream;
-    let _ = writeln!(write, "{reply}").and_then(|()| write.flush());
+    answer(reply);
 }
 
 /// Write `text` to `path` so that only the current user can read it.
@@ -355,40 +454,53 @@ mod tests {
         std::env::temp_dir().join(name).to_string_lossy().into_owned()
     }
 
+    const NONCE: &str = "00112233445566778899aabbccddeeff";
+
+    #[test]
+    fn hmac_matches_rfc_4231() {
+        // Test cases 2 and 6 (a key longer than the block).
+        assert_eq!(hmac_hex(b"Jefe", b"what do ya want for nothing?"), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+        assert_eq!(
+            hmac_hex(&[0xaa; 131], b"Test Using Larger Than Block-Size Key - Hash Key First"),
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+        );
+        assert_ne!(client_mac(TOKEN, NONCE), server_proof(TOKEN, NONCE), "each side's proof is its own");
+    }
+
     #[test]
     fn a_request_round_trips_and_needs_the_token() {
+        let line = encode_hello(TOKEN, NONCE);
+        assert!(!line.contains(TOKEN), "the token itself never crosses the connection");
+        assert_eq!(parse_hello(&line, TOKEN), Ok(NONCE.to_string()));
+        assert_eq!(parse_hello(&format!("{line}\n"), TOKEN), Ok(NONCE.to_string()), "the newline is part of the framing");
+        assert_eq!(parse_hello(&line, "fedcba9876543210fedcba9876543210"), Err(Refused::BadToken));
+        assert_eq!(parse_hello(&encode_hello("", NONCE), TOKEN), Err(Refused::BadToken));
+        assert_eq!(parse_hello(&json!({ "pedeefe": VERSION, "nonce": NONCE }).to_string(), TOKEN), Err(Refused::BadToken));
+        let short = json!({ "pedeefe": VERSION, "nonce": "00", "mac": client_mac(TOKEN, "00") }).to_string();
+        assert_eq!(parse_hello(&short, TOKEN), Err(Refused::BadToken), "a weak nonce is refused");
+        // The old protocol (the token in the clear) is refused.
+        assert_eq!(parse_hello(&json!({ "pedeefe": 1, "token": TOKEN, "open": [] }).to_string(), TOKEN), Err(Refused::WrongVersion));
         let files = vec![abs("a.pdf"), abs("b c.pdf")];
-        let line = encode_request(TOKEN, &files);
-        assert_eq!(parse_request(&line, TOKEN), Ok(files.clone()));
-        assert_eq!(parse_request(&format!("{line}\n"), TOKEN), Ok(files.clone()), "the newline is part of the framing");
-        assert_eq!(parse_request(&line, "fedcba9876543210fedcba9876543210"), Err(Refused::BadToken));
-        assert_eq!(parse_request(&encode_request("", &files), TOKEN), Err(Refused::BadToken));
-        assert_eq!(parse_request(&json!({ "pedeefe": 1, "open": files }).to_string(), TOKEN), Err(Refused::BadToken));
+        assert_eq!(parse_open(&encode_open(&files)), Ok(files));
         // No files: just come to the front.
-        assert_eq!(parse_request(&encode_request(TOKEN, &[]), TOKEN), Ok(vec![]));
+        assert_eq!(parse_open(&encode_open(&[])), Ok(vec![]));
     }
 
     #[test]
     fn malformed_requests_are_refused() {
-        let token_only = |extra: Value| {
-            let mut v = json!({ "pedeefe": 1, "token": TOKEN });
-            if let (Some(o), Some(e)) = (v.as_object_mut(), extra.as_object()) {
-                o.extend(e.clone());
-            }
-            v.to_string()
-        };
-        assert!(matches!(parse_request("", TOKEN), Err(Refused::Malformed(_))));
-        assert!(matches!(parse_request("not json", TOKEN), Err(Refused::Malformed(_))));
-        assert!(matches!(parse_request("[1,2]", TOKEN), Err(Refused::Malformed(_))));
-        assert_eq!(parse_request(&json!({ "pedeefe": 2, "token": TOKEN }).to_string(), TOKEN), Err(Refused::WrongVersion));
-        assert!(matches!(parse_request(&token_only(json!({ "open": "a.pdf" })), TOKEN), Err(Refused::Malformed(_))));
-        assert!(matches!(parse_request(&token_only(json!({ "open": ["relative.pdf"] })), TOKEN), Err(Refused::BadPath(_))));
-        assert!(matches!(parse_request(&token_only(json!({ "open": [""] })), TOKEN), Err(Refused::BadPath(_))));
-        assert!(matches!(parse_request(&token_only(json!({ "open": [3] })), TOKEN), Err(Refused::BadPath(_))));
-        assert!(matches!(parse_request(&token_only(json!({ "open": [format!("{}\0x", abs("a"))] })), TOKEN), Err(Refused::BadPath(_))));
-        assert!(matches!(parse_request(&token_only(json!({ "open": [abs(&"x".repeat(5000))] })), TOKEN), Err(Refused::BadPath(_))));
+        let open = |list: Value| json!({ "open": list }).to_string();
+        assert!(matches!(parse_hello("", TOKEN), Err(Refused::Malformed(_))));
+        assert!(matches!(parse_hello("not json", TOKEN), Err(Refused::Malformed(_))));
+        assert!(matches!(parse_hello("[1,2]", TOKEN), Err(Refused::Malformed(_))));
+        assert!(matches!(parse_open("[1,2]"), Err(Refused::Malformed(_))));
+        assert!(matches!(parse_open(&json!({ "open": "a.pdf" }).to_string()), Err(Refused::Malformed(_))));
+        assert!(matches!(parse_open(&open(json!(["relative.pdf"]))), Err(Refused::BadPath(_))));
+        assert!(matches!(parse_open(&open(json!([""]))), Err(Refused::BadPath(_))));
+        assert!(matches!(parse_open(&open(json!([3]))), Err(Refused::BadPath(_))));
+        assert!(matches!(parse_open(&open(json!([format!("{}\0x", abs("a"))]))), Err(Refused::BadPath(_))));
+        assert!(matches!(parse_open(&open(json!([abs(&"x".repeat(5000))]))), Err(Refused::BadPath(_))));
         let many: Vec<String> = (0..300).map(|i| abs(&format!("{i}.pdf"))).collect();
-        assert!(matches!(parse_request(&token_only(json!({ "open": many })), TOKEN), Err(Refused::Malformed(_))));
+        assert!(matches!(parse_open(&open(json!(many))), Err(Refused::Malformed(_))));
     }
 
     #[test]
@@ -465,6 +577,57 @@ mod tests {
         let old = SystemTime::now() - Duration::from_secs(60);
         std::fs::File::options().write(true).open(dir.join(LOCK_FILE)).and_then(|f| f.set_modified(old)).map_err(|e| e.to_string())?;
         assert!(matches!(start(&dir, &[]), Outcome::Primary(_)), "a stale lock is ignored");
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// A crash left `instance.json` naming a port that another local process now holds and answers
+    /// `{"ok":true}` on: it can't prove it knows the token, so it learns no file names and the
+    /// launch runs as the primary itself.
+    #[test]
+    fn a_listener_that_cant_prove_the_token_gets_no_files() -> Result<(), String> {
+        let dir = temp_dir("impostor");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let impostor = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
+        let port = impostor.local_addr().map_err(|e| e.to_string())?.port();
+        impostor.set_nonblocking(true).map_err(|e| e.to_string())?;
+        let heard = std::thread::spawn(move || {
+            let mut heard = String::new();
+            let until = Instant::now() + Duration::from_secs(5);
+            // `start` tries twice: before and after taking the election lock.
+            let mut served = 0;
+            while served < 2 && Instant::now() < until {
+                served += 1;
+                let Ok((stream, _)) = impostor.accept() else {
+                    served -= 1;
+                    std::thread::sleep(Duration::from_millis(20));
+                    continue;
+                };
+                let _ = stream.set_nonblocking(false);
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+                let Ok(mut write) = stream.try_clone() else { break };
+                let mut read = BufReader::new(stream);
+                // Says yes to everything, with a made-up proof.
+                for _ in 0..2 {
+                    let mut line = String::new();
+                    if read.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    heard.push_str(&line);
+                    let _ = writeln!(write, "{}", json!({ "ok": true, "proof": "00".repeat(32) }));
+                }
+            }
+            heard
+        });
+        write_private(&dir.join(INFO_FILE), &InstanceInfo { port, token: TOKEN.into(), pid: 1 }.to_json()).map_err(|e| e.to_string())?;
+        let secret = abs("secret-plans.pdf");
+        let Outcome::Primary(server) = start(&dir, std::slice::from_ref(&secret)) else {
+            return Err("an impostor must not swallow the launch".into());
+        };
+        drop(server);
+        let heard = heard.join().map_err(|_| "impostor thread")?;
+        assert!(!heard.contains("secret-plans"), "no file names reached it: {heard}");
+        assert!(!heard.contains(TOKEN), "nor the token: {heard}");
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }

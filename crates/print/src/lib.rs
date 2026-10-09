@@ -35,6 +35,15 @@ pub use range::{Subset, select_pages};
 pub enum PrintError {
     #[error("there are no pages to print")]
     NoPages,
+    /// A page number in the range beyond the document (`count` pages).
+    #[error("page {page} is out of range (1–{count})")]
+    PageOutOfRange { page: usize, count: usize },
+    /// A range token that is neither a page number nor a page label.
+    #[error("{0:?} is not a page number or label")]
+    NotAPage(String),
+    /// The window to print misses this page (1-based) entirely.
+    #[error("the window to print is outside page {0}")]
+    WindowOutsidePage(usize),
     #[error("{0}")]
     Invalid(String),
     #[error("{0}")]
@@ -302,8 +311,7 @@ pub fn layout(sizes: &[(f64, f64)], settings: &Settings) -> Result<Vec<Sheet>, P
     // printed part's size and shift their placements by its origin.
     let mut views = vec![((0.0, 0.0), (0.0, 0.0)); sizes.len()];
     for &p in &pages {
-        views[p] =
-            page_view(sizes[p], settings.region).ok_or_else(|| PrintError::Invalid(format!("the window to print is outside page {}", p + 1)))?;
+        views[p] = page_view(sizes[p], settings.region).ok_or(PrintError::WindowOutsidePage(p + 1))?;
     }
     let sizes: Vec<(f64, f64)> = views.iter().map(|v| v.1).collect();
     let fix = |pl: Placement| {

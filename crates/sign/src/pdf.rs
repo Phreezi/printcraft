@@ -932,11 +932,50 @@ pub struct Appearance {
     pub location: bool,
     pub distinguished_name: bool,
     pub labels: bool,
+    /// The labels' words, in the signer's language.
+    pub words: AppearanceWords,
 }
 
 impl Default for Appearance {
     fn default() -> Self {
-        Self { name: true, date: true, reason: false, location: false, distinguished_name: false, labels: true }
+        Self { name: true, date: true, reason: false, location: false, distinguished_name: false, labels: true, words: AppearanceWords::default() }
+    }
+}
+
+/// The words the visible signature puts before its details when [`Appearance::labels`] is on
+/// (Acrobat writes them in the signer's language). Each label is followed by a space and the
+/// value. English by default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppearanceWords {
+    /// The line above the signer's name.
+    pub signed_by: String,
+    pub reason: String,
+    pub location: String,
+    pub date: String,
+}
+
+impl Default for AppearanceWords {
+    fn default() -> Self {
+        Self { signed_by: "Digitally signed by".into(), reason: "Reason:".into(), location: "Location:".into(), date: "Date:".into() }
+    }
+}
+
+impl AppearanceWords {
+    /// These words as the appearance writes them: it uses Helvetica with WinAnsiEncoding, so a
+    /// word it can't show (Chinese or Japanese labels) stays in English rather than turning
+    /// into question marks.
+    pub fn writable(&self) -> Self {
+        let english = Self::default();
+        let pick = |given: &str, fallback: String| {
+            let shown = pdfcraft_fonts::win_ansi(given).iter().filter(|b| **b == b'?').count() == given.matches('?').count();
+            if shown && !given.trim().is_empty() { given.to_string() } else { fallback }
+        };
+        Self {
+            signed_by: pick(&self.signed_by, english.signed_by),
+            reason: pick(&self.reason, english.reason),
+            location: pick(&self.location, english.location),
+            date: pick(&self.date, english.date),
+        }
     }
 }
 
@@ -1239,27 +1278,28 @@ fn appearance(rect: [f64; 4], name: &str, cert: &Certificate, opts: &SignOptions
     use pdfcraft_fonts::{helvetica_width, literal, win_ansi, wrap};
     let (w, h) = ((rect[2] - rect[0]).max(0.0), (rect[3] - rect[1]).max(0.0));
     let a = &opts.appearance;
+    let words = a.words.writable();
     let mut lines: Vec<String> = Vec::new();
-    let label = |l: &str, v: &str| if a.labels { format!("{l}{v}") } else { v.to_string() };
+    let label = |l: &str, v: &str| if a.labels { format!("{} {v}", l.trim_end()) } else { v.to_string() };
     if a.name {
-        lines.push(if a.labels { "Digitally signed by".into() } else { String::new() });
+        lines.push(if a.labels { words.signed_by.clone() } else { String::new() });
         lines.push(name.to_string());
     }
     if a.distinguished_name {
-        lines.push(label("DN: ", &cert.subject.display()));
+        lines.push(label("DN:", &cert.subject.display()));
     }
     if a.reason
         && let Some(r) = opts.reason.as_deref().filter(|r| !r.is_empty())
     {
-        lines.push(label("Reason: ", r));
+        lines.push(label(&words.reason, r));
     }
     if a.location
         && let Some(l) = opts.location.as_deref().filter(|l| !l.is_empty())
     {
-        lines.push(label("Location: ", l));
+        lines.push(label(&words.location, l));
     }
     if a.date {
-        lines.push(label("Date: ", &display_date(&opts.date)));
+        lines.push(label(&words.date, &display_date(&opts.date)));
     }
     lines.retain(|l| !l.is_empty());
     let mut out = Vec::new();

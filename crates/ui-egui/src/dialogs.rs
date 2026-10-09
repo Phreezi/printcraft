@@ -317,12 +317,13 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
                                 if let Some(e) = &f.encoding {
                                     detail.push_str(&format!(" · {e}"));
                                 }
+                                detail.push_str(" · ");
                                 detail.push_str(if f.subset {
-                                    " · Embedded subset"
+                                    tl!("Embedded subset")
                                 } else if f.embedded {
-                                    " · Embedded"
+                                    tl!("Embedded")
                                 } else {
-                                    " · Not embedded (substituted)"
+                                    tl!("Not embedded (substituted)")
                                 });
                                 row(ui, &f.name, detail);
                             }
@@ -332,7 +333,7 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
                             row(ui, "Location", doc.path.clone().unwrap_or_default());
                             row(ui, "File size", format!("{} ({} bytes)", human_size(i.file_size), i.file_size));
                             let p = &i.pages[0];
-                            row(ui, "Page size", format!("{:.2} × {:.2} in", p.width / 72.0, p.height / 72.0));
+                            row(ui, "Page size", page_size_text(f64::from(p.width), f64::from(p.height)));
                             row(ui, "Number of pages", i.pages.len().to_string());
                             row(ui, "Tagged PDF", yes(i.tagged));
                             row(ui, "Form fields", i.fields.len().to_string());
@@ -1098,11 +1099,12 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
                         );
                         ui.add_space(12.0);
                         // Plain-text credit only (NOTICE): PeDeeFe is not an ArtCraft product and
-                        // shows none of its marks, so no "Part of" ArtCraft logo here.
+                        // shows none of its marks, so no "Part of" ArtCraft logo here. The credit is
+                        // in the UI's language; the copyright line is legal text and stays as written.
                         ui.label(
                             egui::RichText::new(format!(
                                 "{}. Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors.",
-                                pdfcraft_engine::links::CREDIT
+                                crate::i18n::credit()
                             ))
                             .color(t.text_muted),
                         );
@@ -1512,6 +1514,20 @@ fn link_prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
     if let Some(open) = choice {
         app.resolve_pending_link(open);
     }
+}
+
+/// A page size (points) for Document Properties: inches in English, as Acrobat shows them;
+/// millimetres with the language's decimal separator otherwise (Portugal measures in mm).
+pub fn page_size_text(width: f64, height: f64) -> String {
+    let lang = crate::i18n::current();
+    if lang == crate::i18n::Lang::EN {
+        return format!("{:.2} × {:.2} in", width / 72.0, height / 72.0);
+    }
+    let mm = |pt: f64| {
+        let v = format!("{:.1}", pt / 72.0 * 25.4);
+        if crate::i18n::decimal_comma(lang) { v.replace('.', ",") } else { v }
+    };
+    format!("{} × {} mm", mm(width), mm(height))
 }
 
 fn yes(b: bool) -> String {

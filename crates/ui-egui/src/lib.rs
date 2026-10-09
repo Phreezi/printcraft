@@ -381,6 +381,10 @@ pub struct PdfCraftApp {
     pub inbox: Inbox,
     /// Requests from the operating system, polled every frame (macOS Apple events).
     pub os_events: Option<OsEventsFn>,
+    /// Files sent from outside (another launch, the Finder) while a dialog or prompt was open:
+    /// they open once it closes, so they don't change the document it acts on.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    held_open: Vec<String>,
     /// A pending "save changes?" question (closing a dirty tab or quitting).
     pub close_request: Option<CloseRequest>,
     /// Save to this path instead of asking (tests and automation).
@@ -615,6 +619,7 @@ impl PdfCraftApp {
             full_screen: false,
             inbox: Default::default(),
             os_events: None,
+            held_open: Vec::new(),
             close_request: None,
             save_override: None,
             props_draft: None,
@@ -782,14 +787,21 @@ impl PdfCraftApp {
         // Keep the window clear: only a document with several pages opens the page thumbnails
         // by itself. A panel the user picked stays; one opened automatically follows the new
         // document (closing for a one-page one).
-        if self.right.is_none() || self.right == self.auto_right {
+        let automatic = self.right.is_none() || self.right == self.auto_right;
+        if automatic {
             self.right = (pages >= 2).then_some(RightPanel::Pages);
             self.auto_right = self.right;
         }
         let initial = doc.initial_view();
         self.views.push(DocView::new(id, &doc.info, self.view_defaults));
         self.active = Some(self.views.len() - 1);
+        let before = self.right;
         self.apply_initial_view(self.views.len() - 1, &initial);
+        // A panel the document asked for (/PageMode, e.g. Bookmarks) was not the user's choice
+        // either: it follows the next document like the automatic Pages panel.
+        if automatic || self.right != before {
+            self.auto_right = self.right;
+        }
         if let Some(mode) = self.mode_override {
             // Explicit mode options do not reset independent --tool / --left choices.
             self.mode = mode;
@@ -1692,19 +1704,28 @@ impl eframe::App for PdfCraftApp {
         let os_events = self.os_events.as_mut().map(|poll| poll()).unwrap_or_default();
         for e in os_events {
             match e {
+                // A dialog or prompt that is open acts on the active document (Print prints it): the
+                // files wait until it closes rather than open underneath it. The window still
+                // comes forward.
                 #[cfg(not(target_arch = "wasm32"))]
                 OsEvent::Open(paths) => {
-                    paths.iter().for_each(|p| self.open_path(p));
-                    self.windows.request_focus(self.windows.focus());
+                    self.held_open.extend(paths);
+                    self.raise_window(ctx, self.windows.focus());
                 }
                 #[cfg(target_arch = "wasm32")]
                 OsEvent::Open(_) => {}
-                OsEvent::Activate => self.windows.request_focus(self.windows.focus()),
+                OsEvent::Activate => self.raise_window(ctx, self.windows.focus()),
                 // Like closing the window: `guard_quit` asks about unsaved changes, in every window.
                 OsEvent::Quit => {
                     self.windows.quitting = true;
                     ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
                 }
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.held_open.is_empty() && !self.modal_open() {
+            for p in std::mem::take(&mut self.held_open) {
+                self.open_path(&p);
             }
         }
         if let Some(mut control) = self.control.take() {

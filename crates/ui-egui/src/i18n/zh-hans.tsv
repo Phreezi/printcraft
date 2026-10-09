@@ -1973,6 +1973,21 @@
 	{n} contributors · {c} commits	{n} 位贡献者 · {c} 次提交
 	No contributor data was built into this copy.	此副本未内置贡献者数据。
 	No model credits were built into this copy.	此副本未内置模型致谢信息。
+	(the signing time)	（签名时间）
+	By name at time, date	姓名、时间、日期
+	Date:	日期：
+	Digitally signed by	数字签名者
+	Embedded	已嵌入
+	Embedded subset	已嵌入子集
+	Inserted text	插入的文本
+	Location:	位置：
+	Not embedded (substituted)	未嵌入（已替换）
+	Page {n}	第 {n} 页
+	Page {n} is out of range (1–{count})	第 {n} 页超出范围（1–{count}）
+	Reason:	原因：
+	The window to print is outside page {n}	要打印的窗口在第 {n} 页之外
+	There are no pages to print	没有可打印的页面
+	“{t}” is not a page number or label	“{t}”不是页码或页面标签
 
 @plural	{n} page|{n} pages	{n} 页
 @plural	{n} field|{n} fields	{n} 个字段

@@ -92,6 +92,15 @@ type Setup = Box<dyn FnOnce(&mut PdfCraftApp)>;
 
 /// Names that only the credit may show: upstream's wording (kept in its catalogs, so they stay
 /// shared) reaches the screen through `branded`, which puts PeDeeFe in their place.
+/// The credit as the UI shows it in `lang`.
+fn credit_in(lang: pdfcraft_ui_egui::i18n::Lang) -> String {
+    let before = pdfcraft_ui_egui::i18n::current();
+    pdfcraft_ui_egui::i18n::set_current(lang);
+    let credit = pdfcraft_ui_egui::i18n::credit();
+    pdfcraft_ui_egui::i18n::set_current(before);
+    credit
+}
+
 const UPSTREAM_NAMES: [&str; 4] = ["PdfCraft", "PrintCraft", "ArtCraft", "Discord"];
 
 /// Labels and values on screen that name the original project or its community, apart from the
@@ -106,7 +115,7 @@ fn upstream_names_on_screen(h: &Harness<'static, PdfCraftApp>, lang: pdfcraft_ui
         let n = n.accesskit_node();
         format!("{} {}", n.label().unwrap_or_default(), n.value().unwrap_or_default()).trim().to_string()
     })
-    .filter(|text| !text.contains(links::CREDIT) && *text != link)
+    .filter(|text| !text.contains(links::CREDIT) && !text.contains(&credit_in(lang)) && *text != link)
     .collect()
 }
 
@@ -184,8 +193,9 @@ fn people_see_pedeefe_in_every_language_and_the_original_only_in_the_credit() {
                 h.get_by_label_contains(&pdfcraft_ui_egui::i18n::menu_label("help.check_updates", "Check for updates…"));
             }
             // Each scene is on screen.
+            let credit = credit_in(lang);
             let marker = match scene {
-                "about" => links::CREDIT,
+                "about" => credit.as_str(),
                 "print" => "A4",
                 "preferences" => pdfcraft_ui_egui::i18n::tr(lang, "Interface language"),
                 "recovery" => "draft.pdf",

@@ -90,6 +90,17 @@ fn page_thumbnails_open_by_themselves_only_for_documents_with_several_pages() {
     let thumbs = String::from_utf8(one_page_fixture()).unwrap().replace("/Outlines 6 0 R >>", "/Outlines 6 0 R /PageMode /UseThumbs >>");
     app.open_bytes("thumbs.pdf", None, thumbs.into_bytes()).unwrap();
     assert_eq!(app.right, None);
+    // A panel the document asked for (/PageMode /UseOutlines, as Combine writes) opens for it,
+    // then follows the next document: a one-page one without bookmarks opens with nothing.
+    let mut app = PdfCraftApp::new();
+    let outlines = String::from_utf8(FIXTURE.to_vec()).unwrap().replace("/Outlines 6 0 R >>", "/Outlines 6 0 R /PageMode /UseOutlines >>");
+    app.open_bytes("outlines.pdf", None, outlines.into_bytes()).unwrap();
+    assert_eq!(app.right, Some(RightPanel::Bookmarks));
+    let plain = String::from_utf8(one_page_fixture()).unwrap().replace(" /Outlines 6 0 R", "");
+    app.open_bytes("plain.pdf", None, plain.into_bytes()).unwrap();
+    assert_eq!(app.right, None, "the document's panel doesn't stay for the next one");
+    app.open_bytes("two.pdf", None, FIXTURE.to_vec()).unwrap();
+    assert_eq!(app.right, Some(RightPanel::Pages));
 }
 
 #[test]

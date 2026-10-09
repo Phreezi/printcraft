@@ -288,7 +288,7 @@ impl PdfCraftApp {
             reason: some(&d.reason),
             location: some(&d.location),
             certify: d.certify,
-            appearance: d.appearance.clone(),
+            appearance: Appearance { words: appearance_words(), ..d.appearance.clone() },
             ..SignOptions::default()
         };
         // Signing saves, as in Acrobat: choose where (a cancelled save cancels signing). The
@@ -567,6 +567,18 @@ fn configure(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> bool {
     close
 }
 
+/// The visible signature's label words in the UI's language (written into the PDF, as Acrobat
+/// does, and shown in the preview), English where the appearance's font can't show them.
+fn appearance_words() -> sign::AppearanceWords {
+    sign::AppearanceWords {
+        signed_by: tl!("Digitally signed by").into(),
+        reason: tl!("Reason:").into(),
+        location: tl!("Location:").into(),
+        date: tl!("Date:").into(),
+    }
+    .writable()
+}
+
 /// The appearance preview: Acrobat's standard layout (name left, details right).
 fn preview(ui: &mut egui::Ui, t: &Tokens, name: &str, d: &SignDraft) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 96.0), egui::Sense::hover());
@@ -579,18 +591,20 @@ fn preview(ui: &mut egui::Ui, t: &Tokens, name: &str, d: &SignDraft) {
         let galley = ui.painter().layout(name.to_string(), theme::regular(22.0), Color32::BLACK, half.width());
         ui.painter().galley(half.left_center() - vec2(0.0, galley.size().y / 2.0), galley, Color32::BLACK);
     }
+    let words = appearance_words();
+    let label = |l: &str, v: &str| if a.labels { format!("{l} {v}") } else { v.to_string() };
     let mut lines = Vec::new();
     if a.name {
-        lines.push(if a.labels { format!("Digitally signed by {name}") } else { name.to_string() });
+        lines.push(label(&words.signed_by, name));
     }
     if a.reason && !d.reason.trim().is_empty() {
-        lines.push(format!("{}{}", if a.labels { "Reason: " } else { "" }, d.reason.trim()));
+        lines.push(label(&words.reason, d.reason.trim()));
     }
     if a.location && !d.location.trim().is_empty() {
-        lines.push(format!("{}{}", if a.labels { "Location: " } else { "" }, d.location.trim()));
+        lines.push(label(&words.location, d.location.trim()));
     }
     if a.date {
-        lines.push(format!("{}{}", if a.labels { "Date: " } else { "" }, "(the signing time)"));
+        lines.push(label(&words.date, tl!("(the signing time)")));
     }
     let x = if a.name { inner.center().x + 6.0 } else { inner.left() };
     let galley = ui.painter().layout(lines.join("\n"), theme::regular(11.0), Color32::from_gray(0x20), inner.right() - x);

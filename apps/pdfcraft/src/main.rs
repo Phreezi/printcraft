@@ -55,6 +55,23 @@ fn settings_dir() -> Option<std::path::PathBuf> {
     eframe::storage_dir(APP_NAME)
 }
 
+/// Where the single-instance files (`instance.json`, `instance.lock`) live: a folder of the
+/// user's on this machine. On Windows the settings folder is in the roaming profile, which folder
+/// redirection shares between the user's machines (each would read the other's port), so
+/// LocalAppData; on Linux and the BSDs the per-user runtime folder when there is one. The
+/// settings folder otherwise.
+fn instance_dir() -> Option<std::path::PathBuf> {
+    let local = |var: &str| std::env::var_os(var).map(std::path::PathBuf::from).filter(|p| p.is_absolute());
+    let machine = if cfg!(windows) {
+        local("LOCALAPPDATA").map(|d| d.join(APP_NAME))
+    } else if cfg!(all(unix, not(target_os = "macos"))) {
+        local("XDG_RUNTIME_DIR").map(|d| d.join(APP_NAME.to_lowercase()))
+    } else {
+        None
+    };
+    machine.or_else(settings_dir)
+}
+
 fn main() -> eframe::Result {
     // First, so the panic hook and every start-up warning are recorded (`logging`).
     let logger = logging::install();
@@ -92,7 +109,7 @@ fn main() -> eframe::Result {
     // comes to the front. Launches with options (`--control`, `--create-images`, view options)
     // and `--new-instance` run on their own.
     let plain = options.is_empty() && control_file.is_none() && !create_images && !new_instance;
-    let instance = match settings_dir().filter(|_| plain) {
+    let instance = match instance_dir().filter(|_| plain) {
         None => None,
         Some(dir) => match single_instance::start(&dir, &single_instance::absolute_paths(&files)) {
             single_instance::Outcome::Forwarded => return Ok(()),

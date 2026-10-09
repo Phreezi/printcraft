@@ -123,6 +123,9 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
                         && let Some((_, h)) = hits.first()
                     {
                         chosen = Some((h.command, h.group));
+                        // The key is used up here: a dialog the command opens this frame (Print)
+                        // must not take it as its own Enter.
+                        ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
                     }
                     r.request_focus();
                 });

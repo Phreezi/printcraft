@@ -382,6 +382,7 @@ impl PdfCraftApp {
         if self.windows.several() && !self.windows.quitting {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.close_current_window();
+            self.windows.root_closed_at = Some(crate::windows::close_stamp(ctx));
             return;
         }
         match self.window_with_dirty() {

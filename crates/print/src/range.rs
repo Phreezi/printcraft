@@ -19,8 +19,8 @@ fn page_of(tok: &str, count: usize, labels: &[String]) -> Result<usize, PrintErr
     }
     match t.parse::<usize>() {
         Ok(n) if n >= 1 && n <= count => Ok(n - 1),
-        Ok(n) => Err(PrintError::Invalid(format!("page {n} is out of range (1–{count})"))),
-        Err(_) => Err(PrintError::Invalid(format!("{t:?} is not a page number or label"))),
+        Ok(n) => Err(PrintError::PageOutOfRange { page: n, count }),
+        Err(_) => Err(PrintError::NotAPage(t.to_string())),
     }
 }
 

@@ -1011,12 +1011,12 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
     let mut cancel = false;
     let c = view.comments.composer.as_mut()?;
     let title = match c.kind {
-        ComposerKind::Note => "Sticky note",
-        ComposerKind::TextBox => "Text box",
-        ComposerKind::Callout { .. } => "Callout",
-        ComposerKind::Caret => "Inserted text",
-        ComposerKind::Replace => "Replacement text",
-        ComposerKind::Edit(_) => "Edit comment",
+        ComposerKind::Note => tl!("Sticky note"),
+        ComposerKind::TextBox => tl!("Text box"),
+        ComposerKind::Callout { .. } => tl!("Callout"),
+        ComposerKind::Caret => tl!("Inserted text"),
+        ComposerKind::Replace => tl!("Replacement text"),
+        ComposerKind::Edit(_) => tl!("Edit comment"),
     };
     let pos = pos2(anchor.x + 12.0, anchor.y);
     egui::Area::new(egui::Id::new(("comment-composer", view.id.0))).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {

@@ -701,6 +701,57 @@ fn enter_prints_with_nothing_focused_and_commits_a_typed_number() {
     let _ = std::fs::remove_file(out);
 }
 
+/// The Enter that opens the dialog (the command palette's "print" + Enter) must not also print:
+/// the user sees the dialog first, and the next Enter prints.
+#[test]
+fn the_enter_that_opens_the_dialog_does_not_print() {
+    let out = std::env::temp_dir().join(format!("pdfcraft-enter-palette-{}.pdf", std::process::id()));
+    let _ = std::fs::remove_file(&out);
+    let mut h = harness();
+    h.state_mut().save_override = Some(out.to_string_lossy().into_owned());
+    h.state_mut().print_draft.printer = None;
+    h.state_mut().print_draft.printer_chosen = true;
+    h.state_mut().set_option("palette", "print").unwrap();
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, Some(Dialog::Print), "the palette opened the dialog");
+    assert!(!out.exists(), "nothing printed before the dialog was seen");
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, None, "the second Enter prints");
+    assert!(out.exists());
+    let _ = std::fs::remove_file(&out);
+}
+
+/// R4: page-range errors read in the UI's language, under the preview and in the toast.
+#[test]
+fn page_range_errors_are_translated() {
+    use pdfcraft_ui_egui::PrintWhich;
+    let out = std::env::temp_dir().join(format!("pdfcraft-range-pt-{}.pdf", std::process::id()));
+    let _ = std::fs::remove_file(&out);
+    let mut h = saving_dialog(&out);
+    h.state_mut().set_option("language", "pt-pt").unwrap();
+    for (range, subset, message) in [
+        ("5", print::Subset::All, "A página 5 está fora do intervalo (1–1)"),
+        ("a", print::Subset::All, "«a» não é um número nem uma etiqueta de página"),
+        ("1", print::Subset::Even, "Não há páginas para imprimir"),
+    ] {
+        h.state_mut().print_draft.which = PrintWhich::Range;
+        h.state_mut().print_draft.range = range.into();
+        h.state_mut().print_draft.subset = subset;
+        h.run_steps(2);
+        h.get_by_label_contains(message);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(2);
+        assert_eq!(h.state().dialog, Some(Dialog::Print), "nothing to print: the dialog stays");
+        assert!(!h.state_mut().print_now());
+        let toast = h.state().toast.as_ref().map(|(m, _)| m.clone()).unwrap_or_default();
+        assert_eq!(toast, message);
+    }
+    assert!(!out.exists());
+}
+
 #[test]
 fn enter_does_not_print_while_a_menu_or_the_picker_is_open() {
     let out = std::env::temp_dir().join(format!("pdfcraft-enter-menu-{}.pdf", std::process::id()));

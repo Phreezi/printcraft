@@ -637,3 +637,49 @@ fn a_timestamp_token_may_sign_with_a_different_digest_than_its_imprint() {
     let token = pdfcraft_sign::timestamp::parse_response(&resp, &q).unwrap();
     assert_eq!((token.digest, token.imprint, token.gen_time), (pdfcraft_sign::DigestAlg::Sha1, imprint, time));
 }
+
+/// The visible signature's labels are written in the words the signer's UI gives (Acrobat writes
+/// them in its language); English by default.
+#[test]
+fn the_appearance_labels_use_the_given_words() {
+    let id = pkcs12::open(&data("ec-p256.p12"), "test").unwrap();
+    let streams = |signed: &[u8]| -> String {
+        let doc = open(signed);
+        doc.object_numbers()
+            .into_iter()
+            .filter_map(|n| match &*doc.try_get(n).ok()? {
+                Object::Stream(s) => s.decoded().ok().map(|b| String::from_utf8_lossy(&b).into_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut o = opts();
+    o.appearance = pdfcraft_sign::Appearance { reason: true, location: true, ..Default::default() };
+    let english = streams(&pdfcraft_sign::sign(&open(&fixture()), &id, &o).unwrap());
+    for word in ["(Digitally", "(Reason:", "(Location:", "(Date:"] {
+        assert!(english.contains(word), "{word} in {english}");
+    }
+    let words = pdfcraft_sign::AppearanceWords {
+        signed_by: "Assinado digitalmente por".into(),
+        reason: "Motivo:".into(),
+        location: "Local:".into(),
+        date: "Data:".into(),
+    };
+    o.appearance.words = words;
+    let portuguese = streams(&pdfcraft_sign::sign(&open(&fixture()), &id, &o).unwrap());
+    for word in ["(Assinado", "(Motivo:", "(Local:", "(Data:"] {
+        assert!(portuguese.contains(word), "{word} in {portuguese}");
+    }
+    for word in ["Reason", "Location", "Date:", "Digitally"] {
+        assert!(!portuguese.contains(word), "no {word}");
+    }
+    // Words Helvetica can't show stay in English.
+    let chinese =
+        pdfcraft_sign::AppearanceWords {
+            signed_by: "数字签名者".into(), reason: "原因：".into(), location: "Local:".into(), date: "".into()
+        };
+    let written = chinese.writable();
+    assert_eq!((written.signed_by.as_str(), written.reason.as_str()), ("Digitally signed by", "Reason:"));
+    assert_eq!((written.location.as_str(), written.date.as_str()), ("Local:", "Date:"));
+}

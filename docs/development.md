@@ -32,8 +32,12 @@ covers every target starting with it (`pdfcraft*=debug`). The logger is
 A launch while the app runs (a double-clicked PDF, Open With, a shortcut) hands its files to the
 running app, which opens them as tabs in the window used last and brings it to the front, and
 exits. The running app listens on a random loopback port and writes the port and a random token to
-`instance.json` in the settings folder (readable by the user only); a launch that can't reach it
-(the app crashed and left the file behind) replaces it and runs normally. `--new-instance`, and any
+`instance.json` in a folder of the user's on this machine (readable by the user only):
+`%LOCALAPPDATA%\PeDeeFe` on Windows (not the roaming profile), `$XDG_RUNTIME_DIR/pedeefe` on
+Linux and the BSDs when set, the settings folder otherwise. Each side proves it knows the token
+(HMAC over a fresh nonce) before any file name is sent, so a launch that can't reach the app, or
+reaches something else on that port (the app crashed and left the file behind), replaces the file
+and runs normally. `--new-instance`, and any
 launch with options (`--control`, `--create-images`, view options), runs a separate app. The code
 and the protocol are in `apps/pdfcraft/src/single_instance.rs`.
 
