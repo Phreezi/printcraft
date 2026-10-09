@@ -231,6 +231,23 @@ pub(crate) fn document_js_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
 /// Preferences: interface language, identity and JavaScript. Returns `true` to close.
 pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> bool {
     ui.label(egui::RichText::new(tl!("Preferences")).font(theme::semibold(18.0)));
+    // Scrolls only when the window is too short for every section (a scroll area takes a few
+    // frames to settle on its height, so it isn't used when there is room).
+    let height = ui.ctx().content_rect().height();
+    if height < 820.0 {
+        egui::ScrollArea::vertical()
+            .max_height((height - 180.0).max(200.0))
+            .auto_shrink([false, true])
+            .show(ui, |ui| preferences_sections(ui, app, t));
+    } else {
+        preferences_sections(ui, app, t);
+    }
+    ui.add_space(10.0);
+    buttons(ui, tl!("OK"), &[]).is_some()
+}
+
+/// Every section of Preferences.
+fn preferences_sections(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) {
     ui.horizontal(|ui| {
         ui.label(tl!("Interface language"));
         // Only the offered languages (English, European Portuguese); a setting from elsewhere
@@ -317,6 +334,6 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
                 .color(t.text_muted),
         );
     });
-    ui.add_space(10.0);
-    buttons(ui, tl!("OK"), &[]).is_some()
+    ui.add_space(8.0);
+    crate::updates::preferences_section(ui, app, t);
 }

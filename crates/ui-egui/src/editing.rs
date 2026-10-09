@@ -324,8 +324,11 @@ impl PdfCraftApp {
             },
         };
         match choice {
-            // Cancelled: nothing closes, and a quit stops here.
-            None => self.windows.quitting = false,
+            // Cancelled: nothing closes, and a quit (and the update it would install) stops here.
+            None => {
+                self.windows.quitting = false;
+                self.cancel_pending_update();
+            }
             Some(false) => self.close_and_continue(ctx, index, req),
             Some(true) => {
                 let Some(id) = self.views.get(index).map(|v| v.id) else { return };
@@ -375,8 +378,10 @@ impl PdfCraftApp {
             return;
         }
         if self.allow_quit {
-            // A clean quit: nothing is left to recover.
-            self.shutdown_recovery();
+            // A clean quit: nothing is left to recover. A downloaded update installs now.
+            if self.launch_pending_update(ctx) {
+                self.shutdown_recovery();
+            }
             return;
         }
         if self.windows.several() && !self.windows.quitting {
@@ -391,8 +396,12 @@ impl PdfCraftApp {
                 self.close_request = Some(CloseRequest::Quit);
                 self.windows.request_focus(key);
             }
-            // A clean quit: nothing is left to recover.
-            None => self.shutdown_recovery(),
+            // A clean quit: nothing is left to recover. A downloaded update installs now.
+            None => {
+                if self.launch_pending_update(ctx) {
+                    self.shutdown_recovery();
+                }
+            }
         }
     }
 }

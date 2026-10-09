@@ -367,6 +367,9 @@ pub struct PdfCraftApp {
     pub dialog: Option<Dialog>,
     /// How to ask for the latest release (the desktop app sets it; see `updates`).
     pub update_source: Option<updates::UpdateSource>,
+    /// How to download and install an update (the desktop app on Windows sets it; elsewhere a
+    /// newer release is offered on its release page).
+    pub update_installer: Option<updates::UpdateInstaller>,
     pub(crate) updates: updates::Updates,
     pub palette_open: bool,
     pub palette_query: String,
@@ -608,6 +611,7 @@ impl PdfCraftApp {
             save_requested: false,
             dialog: None,
             update_source: None,
+            update_installer: None,
             updates: updates::Updates::default(),
             palette_open: false,
             palette_query: String::new(),
@@ -1117,6 +1121,7 @@ impl PdfCraftApp {
             "print": self.print_draft.prefs(),
             "window": self.window_state,
             "left_open": self.left_open,
+            "updates": self.updates.prefs(),
         })
         .to_string()
     }
@@ -1195,6 +1200,7 @@ impl PdfCraftApp {
         if let Some(on) = v["javascript"].as_bool() {
             self.session.set_javascript(on);
         }
+        self.updates.restore_prefs(&v["updates"]);
         if let Ok(pems) = serde_json::from_value::<Vec<String>>(v["trusted"].clone()) {
             let certs = pems.iter().filter_map(|p| pdfcraft_engine::sign::x509::load_certificates(p.as_bytes()).ok()).flatten().collect();
             self.session.set_trusted_certificates(certs);
@@ -1334,6 +1340,8 @@ impl PdfCraftApp {
                 self.print_draft.region_page = self.print_draft.current_page;
             }
             ("home", _) => self.active = None,
+            // The Updates status (screenshots, the control channel).
+            ("update-state", _) => self.set_update_state(value)?,
             ("dialog", _) => {
                 self.dialog = match value {
                     "properties" => Some(Dialog::Properties(PropsTab::Description)),
@@ -1647,6 +1655,7 @@ impl PdfCraftApp {
         if overlays {
             palette::show(self, &ctx);
             dialogs::show(self, &ctx);
+            updates::notice(self, &ctx);
             widgets::toast(self, &ctx);
         }
     }

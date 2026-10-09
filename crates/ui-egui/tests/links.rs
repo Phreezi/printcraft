@@ -166,7 +166,11 @@ fn people_see_pedeefe_in_every_language_and_the_original_only_in_the_credit() {
                 Box::new(move |app: &mut PdfCraftApp| {
                     in_lang(app);
                     app.update_source = Some(std::sync::Arc::new(|| {
-                        Ok(pdfcraft_ui_egui::updates::Release { version: "v99.0.0".into(), url: format!("{}/tag/v99.0.0", links::RELEASES) })
+                        Ok(pdfcraft_ui_egui::updates::Release {
+                            version: "v99.0.0".into(),
+                            url: format!("{}/tag/v99.0.0", links::RELEASES),
+                            ..Default::default()
+                        })
                     }));
                 }),
             ),

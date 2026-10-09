@@ -2089,3 +2089,33 @@
 	Location:	Local:
 	Date:	Data:
 	(the signing time)	(a hora da assinatura)
+
+# Updates: Preferences ▸ Updates, downloading and installing (issue #28).
+	The download didn't finish. Check that you're connected to the internet and try again.	A transferência não terminou. Verifique se está ligado à Internet e tente novamente.
+	This release has no installer for this computer. Download it from its release page.	Esta versão não tem instalador para este computador. Transfira-a a partir da página da versão.
+	The download can't be verified: the release has no checksum for it. Nothing was installed.	Não é possível verificar a transferência: a versão não tem soma de verificação para ela. Nada foi instalado.
+	The downloaded file is damaged or was changed: its checksum doesn't match. Nothing was installed.	O ficheiro transferido está danificado ou foi alterado: a soma de verificação não corresponde. Nada foi instalado.
+	The download is much larger than expected. Nothing was installed.	A transferência é muito maior do que o esperado. Nada foi instalado.
+	The download isn't one of PdfCraft's release files on GitHub. Nothing was installed.	A transferência não é um dos ficheiros de versão do PeDeeFe no GitHub. Nada foi instalado.
+	The update couldn't be saved on this computer. Check that there is free disk space.	Não foi possível guardar a atualização neste computador. Verifique se há espaço livre no disco.
+	The installer couldn't be started.	Não foi possível iniciar o instalador.
+	The download was cancelled.	A transferência foi cancelada.
+	The update wasn't installed. Install it from Preferences ▸ Updates when you're ready.	A atualização não foi instalada. Instale-a em Preferências ▸ Atualizações quando quiser.
+	Downloading PdfCraft {v}…	A transferir o PeDeeFe {v}…
+	{done} of {total}	{done} de {total}
+	The file is checked against the release's checksum before anything is installed.	O ficheiro é comparado com a soma de verificação da versão antes de qualquer instalação.
+	PdfCraft {v} is downloaded and verified.	O PeDeeFe {v} foi transferido e verificado.
+	PdfCraft will close (asking about unsaved changes first), install it and open again.	O PeDeeFe vai fechar (perguntando primeiro sobre as alterações não guardadas), instalar a atualização e abrir novamente.
+	Install and restart	Instalar e reiniciar
+	You have version {c}.	Tem a versão {c}.
+	Try again	Tentar novamente
+	Download and install	Transferir e instalar
+	Release page	Página da versão
+	You're using the latest version ({c}).	Está a usar a versão mais recente ({c}).
+	Couldn't check for updates. Check that you're connected to the internet and try again.	Não foi possível procurar atualizações. Verifique se está ligado à Internet e tente novamente.
+	Check for updates automatically	Procurar atualizações automaticamente
+	At most once a day, in the background, when PdfCraft starts. It only tells you about a new version: nothing is installed until you choose.	No máximo uma vez por dia, em segundo plano, quando o PeDeeFe inicia. Apenas avisa quando há uma nova versão: nada é instalado sem que o escolha.
+	Updates	Atualizações
+	Current version	Versão atual
+	Check now	Procurar agora
+	See update	Ver atualização

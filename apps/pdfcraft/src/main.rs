@@ -175,6 +175,10 @@ fn main() -> eframe::Result {
             app.restore_window();
             app.integrated_titlebar = integrated;
             app.update_source = Some(std::sync::Arc::new(updates::latest_release));
+            // Download and install from the app: Windows (elsewhere the release page opens).
+            if cfg!(windows) {
+                app.update_installer = Some(updates::installer());
+            }
             app.keychain_ids = cfg!(target_os = "macos");
             app.window_template = template;
             // Files from Finder (macOS) and from later launches of the app.
@@ -223,6 +227,12 @@ fn main() -> eframe::Result {
             // Fonts and theme now, so the first frame (the one the window appears with) is the
             // interface rather than an empty window.
             app.prepare(&cc.egui_ctx);
+            // At most once a day, in the background, unless turned off in Preferences ▸ Updates;
+            // it only tells the user. Not for sessions an agent drives (`--control`).
+            if control_file.is_none() {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                app.start_automatic_update_check(now);
+            }
             Ok(Box::new(app))
         }),
     );

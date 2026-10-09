@@ -1,7 +1,9 @@
 # PeDeeFe test builds: every push to main or to a claude/** branch builds the Windows x64
 # installer (and the portable zip) and publishes them as a GitHub Release of this repository, so
-# each change can be installed and tried on a PC. Help ▸ Check for updates in the app reads these
-# releases (crates/ui-egui/src/updates.rs).
+# each change can be installed and tried on a PC. Help ▸ Check for updates and Preferences ▸ Updates
+# in the app read these releases (crates/ui-egui/src/updates.rs) and, on Windows, download the MSI
+# and install it, after checking it against the release's SHA256SUMS (apps/pdfcraft/src/updates.rs):
+# every release must carry that file, or the app refuses to install from it.
 #
 # Builds are versioned <version from Cargo.toml>-test.<run number> (0.3.0-test.N for 0.3.0, newer
 # than every 0.2.x-test build). Cargo.toml itself is left alone (Cargo won't match a pre-release
@@ -99,11 +101,16 @@ jobs:
       - name: Create the release (or replace its files on a re-run)
         working-directory: artifacts
         run: |
-          sha256sum -- * | tee SHA256SUMS.txt
+          # `sha256sum` lines ("<hex>  <file>") for every file. The app downloads only files listed
+          # here and refuses one whose checksum differs. Written outside the folder first, so the
+          # list never lists itself (or a half-written copy of itself).
+          sha256sum -- * >../SHA256SUMS
+          mv ../SHA256SUMS SHA256SUMS
+          cat SHA256SUMS
           tag="v$VERSION"
           notes="Test build of \`$GITHUB_REF_NAME\` at $GITHUB_SHA.
 
-          Download \`pedeefe-$VERSION-windows-x64.msi\` and run it: it installs PeDeeFe (or replaces an earlier test build) next to any official PdfCraft. The build is unsigned, so Windows SmartScreen may ask: choose *More info ▸ Run anyway*. The portable zip needs no installation."
+          Download \`pedeefe-$VERSION-windows-x64.msi\` and run it: it installs PeDeeFe (or replaces an earlier test build) next to any official PdfCraft. The build is unsigned, so Windows SmartScreen may ask: choose *More info ▸ Run anyway*. The portable zip needs no installation. An installed PeDeeFe can also update itself: *Preferences ▸ Updates ▸ Download and install* (it checks the file against \`SHA256SUMS\`)."
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" --clobber -- *
           else

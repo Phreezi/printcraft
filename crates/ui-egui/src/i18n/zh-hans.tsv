@@ -1991,3 +1991,33 @@
 
 @plural	{n} page|{n} pages	{n} 页
 @plural	{n} field|{n} fields	{n} 个字段
+
+# Updates: Preferences ▸ Updates, downloading and installing (issue #28).
+	The download didn't finish. Check that you're connected to the internet and try again.	下载未完成。请检查网络连接后重试。
+	This release has no installer for this computer. Download it from its release page.	此版本没有适用于这台电脑的安装程序。请从发布页面下载。
+	The download can't be verified: the release has no checksum for it. Nothing was installed.	无法验证下载：该版本没有提供它的校验和。未安装任何内容。
+	The downloaded file is damaged or was changed: its checksum doesn't match. Nothing was installed.	下载的文件已损坏或被更改：校验和不匹配。未安装任何内容。
+	The download is much larger than expected. Nothing was installed.	下载文件远大于预期。未安装任何内容。
+	The download isn't one of PdfCraft's release files on GitHub. Nothing was installed.	该下载不是 PdfCraft 在 GitHub 上的发布文件。未安装任何内容。
+	The update couldn't be saved on this computer. Check that there is free disk space.	无法在这台电脑上保存更新。请检查磁盘空间是否充足。
+	The installer couldn't be started.	无法启动安装程序。
+	The download was cancelled.	下载已取消。
+	The update wasn't installed. Install it from Preferences ▸ Updates when you're ready.	更新未安装。准备好后，请在“首选项 ▸ 更新”中安装。
+	Downloading PdfCraft {v}…	正在下载 PdfCraft {v}…
+	{done} of {total}	{done} / {total}
+	The file is checked against the release's checksum before anything is installed.	安装前会用该版本的校验和核对文件。
+	PdfCraft {v} is downloaded and verified.	PdfCraft {v} 已下载并通过验证。
+	PdfCraft will close (asking about unsaved changes first), install it and open again.	PdfCraft 将关闭（会先询问未保存的更改），安装更新后重新打开。
+	Install and restart	安装并重启
+	You have version {c}.	您当前的版本是 {c}。
+	Try again	重试
+	Download and install	下载并安装
+	Release page	发布页面
+	You're using the latest version ({c}).	您正在使用最新版本（{c}）。
+	Couldn't check for updates. Check that you're connected to the internet and try again.	无法检查更新。请检查网络连接后重试。
+	Check for updates automatically	自动检查更新
+	At most once a day, in the background, when PdfCraft starts. It only tells you about a new version: nothing is installed until you choose.	每天最多一次，在 PdfCraft 启动时于后台进行。它只会提示有新版本：在您选择之前不会安装任何内容。
+	Updates	更新
+	Current version	当前版本
+	Check now	立即检查
+	See update	查看更新
