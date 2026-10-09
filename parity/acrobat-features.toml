@@ -842,8 +842,8 @@ milestone = "M3"
 status = "shipped"
 commands = ["view.layout.single"]
 tools = []
-evidence = ["crates/ui-egui/tests/view.rs::single_page_layout_shows_one_page_at_a_time", "crates/ui-egui/tests/view.rs::single_page_wheel_pans_instead_when_zoomed_in", "crates/ui-egui/tests/view.rs::wheel_turns_one_page_per_notch_and_per_trackpad_swipe", "crates/ui-egui/tests/view.rs::rail_page_display_button_switches_layouts", "crates/ui-egui/tests/view.rs::view_menu_page_display_uses_the_same_commands"]
-notes = "when the whole page fits, each wheel notch turns a page and each trackpad swipe turns one, momentum included; zoomed in, the wheel pans and never turns the page. Switched from the View menu, the rail's Page display button or the palette"
+evidence = ["crates/ui-egui/tests/view.rs::single_page_view_opens_with_one_whole_page_per_window", "crates/ui-egui/tests/view.rs::single_page_view_refits_when_the_window_changes_size", "crates/ui-egui/tests/view.rs::single_page_view_scrolls_continuously_and_space_lands_on_page_tops", "crates/ui-egui/tests/view.rs::zooming_leaves_one_page_per_window_until_single_page_is_chosen_again", "crates/ui-egui/tests/view.rs::rail_page_display_button_switches_layouts", "crates/ui-egui/tests/view.rs::view_menu_page_display_uses_the_same_commands"]
+notes = "PeDeeFe's single page (the owner's choice, unlike Acrobat's page-at-a-time view): one whole page per window (Fit page against the largest page, refitted when the window changes size, until zoomed by hand), the wheel and scrollbar scroll continuously, and Space / Page Down and Shift+Space / Page Up go to the top of the next / previous page so it fills the window. Switched from the View menu, the rail's Page display button or the palette. Missing: Acrobat's non-continuous single page (no wheel page turning any more)"
 
 [[feature]]
 id = "view.layout-two-up"
@@ -950,8 +950,8 @@ milestone = "M3"
 status = "shipped"
 commands = ["view.fit_one_page"]
 tools = []
-evidence = ["crates/ui-egui/tests/view.rs::actual_size_fit_width_and_fit_page", "crates/ui-egui/tests/view.rs::rail_page_display_menu_offers_acrobats_view_choices", "crates/ui-egui/tests/view.rs::fit_page_holds_zoom_across_mixed_page_sizes", "crates/ui-egui/tests/view.rs::single_page_fit_page_fits_the_shown_page"]
-notes = "View ▸ Zoom to page level (⌘0) and the rail's Page display menu, which also offers Fit one full page (single-page view at Fit page). Scrolling views fit their largest page so mixed sizes never jump the zoom; single-page view fits the shown page"
+evidence = ["crates/ui-egui/tests/view.rs::actual_size_fit_width_and_fit_page", "crates/ui-egui/tests/view.rs::rail_page_display_menu_offers_acrobats_view_choices", "crates/ui-egui/tests/view.rs::fit_page_holds_zoom_across_mixed_page_sizes", "crates/ui-egui/tests/view.rs::single_page_fit_page_fits_the_largest_page"]
+notes = "View ▸ Zoom to page level (⌘0) and the rail's Page display menu, which also offers Fit one full page (single-page view at Fit page). Every layout fits its largest page so mixed sizes never jump the zoom; single-page view fits one whole page per window and refits as the window changes size"
 
 [[feature]]
 id = "view.zoom-fit-width"

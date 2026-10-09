@@ -49,6 +49,9 @@ pub enum Fit {
 pub enum PageLayout {
     Continuous,
     TwoUp,
+    /// One page per window: the pages scroll continuously, but the zoom fits one whole page
+    /// in the window (refitting as the window changes size, until zoomed by hand), and Space
+    /// and Page Down / Page Up go to the top of the next / previous page (`DocView::flip_page`).
     Single,
 }
 
@@ -244,8 +247,6 @@ pub struct DocView {
     viewport_screen: Rect,
     /// Pending zoom anchor: page, position within it (0..1), and offset from the viewport corner.
     zoom_anchor: Option<(usize, f32, f32, Vec2)>,
-    /// Turns wheel input into page turns in single-page view.
-    wheel: crate::wheel_pager::WheelPager,
     pub(crate) auto_scroll: crate::autoscroll::AutoScroll,
     /// Pages selected in the organize grid (0-based). Empty means "the current page".
     pub selected: BTreeSet<usize>,
@@ -342,7 +343,8 @@ impl DocView {
         Self {
             id,
             zoom: defaults.zoom,
-            fit: defaults.fit,
+            // Single-page view always opens fitting one page per window.
+            fit: if defaults.layout == PageLayout::Single { Fit::Page } else { defaults.fit },
             layout: defaults.layout,
             rotation: 0,
             current: 0,
@@ -353,7 +355,8 @@ impl DocView {
             cover: false,
             back: Vec::new(),
             forward: Vec::new(),
-            goto: None,
+            // Single-page view starts with the first page filling the window.
+            goto: (defaults.layout == PageLayout::Single).then_some((0, 0.0)),
             key_scroll: 0.0,
             flash: None,
             compare_marks: Vec::new(),
@@ -379,7 +382,6 @@ impl DocView {
             screen_xforms: Vec::new(),
             viewport_screen: Rect::NOTHING,
             zoom_anchor: None,
-            wheel: Default::default(),
             auto_scroll: Default::default(),
             selected: BTreeSet::new(),
             select_anchor: None,
@@ -686,8 +688,6 @@ impl DocView {
             }
             self.forward.clear();
         }
-        // Partial wheel motion belongs to the old place.
-        self.wheel.clear_motion();
         self.goto = Some((page, 0.0));
         self.current = page;
         self.page_input = (page + 1).to_string();
@@ -772,13 +772,18 @@ impl DocView {
         self.goto = Some((self.current, 0.0));
     }
 
-    /// Switch the page display. A no-op when the layout is already current, so re-selecting
-    /// it never yanks a scrolled view back to the top.
+    /// Switch the page display. Re-selecting the current layout never yanks a scrolled view
+    /// back to the top, except that re-selecting single-page view after zooming fits one page
+    /// per window again. Single-page view always fits one page per window (Fit page); zooming
+    /// by hand leaves that until it is chosen again.
     pub fn set_layout(&mut self, layout: PageLayout) {
-        if self.layout == layout {
+        if self.layout == layout && (layout != PageLayout::Single || self.fit == Fit::Page) {
             return;
         }
         self.layout = layout;
+        if layout == PageLayout::Single {
+            self.fit = Fit::Page;
+        }
         self.goto = Some((self.current, 0.0));
     }
 
@@ -795,17 +800,24 @@ impl DocView {
         self.layout == PageLayout::TwoUp
     }
 
-    /// One wheel event in single-page view (the rules are in `wheel_pager`): `dy` is its
-    /// vertical delta (negative scrolls down) and `now` is egui time. With `can_turn` false
-    /// the gesture is followed but the page stays. Returns whether the page turned.
-    pub fn single_page_wheel(&mut self, unit: egui::MouseWheelUnit, dy: f32, phase: egui::TouchPhase, now: f64, can_turn: bool) -> bool {
-        if self.layout != PageLayout::Single {
-            return false;
+    /// Single-page view: Space and Page Down (`forward`), Shift+Space and Page Up. Forward goes to
+    /// the first page whose top is below the top of the view (the next page); back goes to the
+    /// page whose top is above it, so a page scrolled part way comes back to its top, else to the
+    /// previous page. Either way the page lands filling the window ([`Self::go_to_page`]).
+    pub fn flip_page(&mut self, forward: bool) {
+        let view = self.viewport_screen;
+        let top = view.top() + GAP;
+        let shown = |r: &Rect| r.bottom() > view.top() + 1.0 && r.top() < view.bottom() - 1.0;
+        let pages = self.screen_rects.iter().filter(|(_, r)| shown(r));
+        let target = if forward {
+            pages.filter(|(_, r)| r.top() > top + 1.0).map(|(p, _)| *p).min()
+        } else {
+            pages.filter(|(_, r)| r.top() < top - 1.0).map(|(p, _)| *p).max()
+        };
+        match target {
+            Some(page) => self.go_to_page(page),
+            None => self.step_page(forward),
         }
-        let Some(forward) = self.wheel.feed(unit, dy, phase, now, can_turn) else { return false };
-        let before = self.current;
-        self.step_page(forward);
-        self.current != before
     }
 
     /// Displayed page size in points for this view rotation.
@@ -927,26 +939,30 @@ impl DocView {
 
     fn fit_zoom(&mut self, info: &DocInfo) {
         let largest = |side: fn((f32, f32)) -> f32| info.pages.iter().map(|p| side(self.display_size(p))).fold(1.0, f32::max);
-        let max_w = largest(|s| s.0);
-        // Single-page view fits the page it shows. The scrolling views fit their largest page,
-        // so the zoom holds still while pages of other sizes scroll past.
-        let (w, h) = match self.layout {
-            PageLayout::Single => info.pages.get(self.current).map_or_else(|| (max_w, largest(|s| s.1)), |p| self.display_size(p)),
-            PageLayout::Continuous | PageLayout::TwoUp => (max_w, largest(|s| s.1)),
-        };
+        // Every layout fits its largest page, so the zoom holds still while pages of other sizes
+        // scroll past.
+        let (w, h) = (largest(|s| s.0), largest(|s| s.1));
         let avail_w = (self.viewport_w - 2.0 * SIDE).max(100.0);
         let per_row = if self.layout == PageLayout::TwoUp { 2.0 } else { 1.0 };
+        // Single-page view shows exactly one page per window: the page and a gap above and below
+        // it, so the neighbouring pages start right at the window's edges.
+        let single = self.layout == PageLayout::Single;
+        let avail_h = (self.viewport_h - 2.0 * if single { GAP } else { MARGIN }).max(50.0);
+        let before = self.zoom;
         match self.fit {
-            Fit::Width => self.zoom = (avail_w - GAP * (per_row - 1.0)) / (max_w * PT * per_row),
+            Fit::Width => self.zoom = (avail_w - GAP * (per_row - 1.0)) / (w * PT * per_row),
             Fit::Page => {
                 let zw = (avail_w - GAP * (per_row - 1.0)) / (w * PT * per_row);
-                let zh = (self.viewport_h - 2.0 * MARGIN) / (h * PT);
-                self.zoom = zw.min(zh);
+                self.zoom = zw.min(avail_h / (h * PT));
             }
-            Fit::Height => self.zoom = (self.viewport_h - 2.0 * MARGIN) / (h * PT),
+            Fit::Height => self.zoom = avail_h / (h * PT),
             Fit::None => {}
         }
         self.zoom = self.zoom.clamp(0.08, 64.0);
+        // The window changed size: the page refits and still fills it.
+        if single && self.fit != Fit::None && (self.zoom - before).abs() > before * 1e-4 && self.zoom_anchor.is_none() {
+            self.goto.get_or_insert((self.current, 0.0));
+        }
     }
 
     /// Page rects in content coordinates (origin at the scroll content's top-left).
@@ -1143,22 +1159,31 @@ pub fn shortcuts(view: &mut DocView, ctx: &egui::Context, space: bool) {
     // As in Acrobat: → / ← go to the next / previous page in every layout (#185), and so do
     // ⌘Page Down / ⌘Page Up, or plain Page Down / Page Up in single-page view.
     let command = ctx.input(|i| i.modifiers.command);
+    // In single-page view, plain Page Down / Page Up flip a page like Space.
     let scrolls = view.layout != PageLayout::Single;
-    if key(Key::ArrowRight) || (key(Key::PageDown) && (command || !scrolls)) {
+    if key(Key::ArrowRight) || (key(Key::PageDown) && command) {
         view.step_page(true);
     }
-    if key(Key::ArrowLeft) || (key(Key::PageUp) && (command || !scrolls)) {
+    if key(Key::ArrowLeft) || (key(Key::PageUp) && command) {
         view.step_page(false);
     }
+    if !scrolls && !command {
+        if key(Key::PageDown) {
+            view.flip_page(true);
+        }
+        if key(Key::PageUp) {
+            view.flip_page(false);
+        }
+    }
     // Space / Shift+Space, as in Acrobat: where the pages scroll, a whole screen down / up, so the
-    // new view starts exactly where the previous one ended; in single-page view, the next /
-    // previous page. Held down, it repeats.
+    // new view starts exactly where the previous one ended; in single-page view, the top of the
+    // next / previous page, which then fills the window. Held down, it repeats.
     if space && !command && key(Key::Space) {
         let back = ctx.input(|i| i.modifiers.shift);
         if scrolls {
             view.key_scroll += if back { -view.viewport_h } else { view.viewport_h };
         } else {
-            view.step_page(!back);
+            view.flip_page(!back);
         }
     }
     // ↓ / ↑ scroll a line, and Page Down / Page Up a screen where the pages scroll.
@@ -1252,42 +1277,9 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     };
     let rects = view.layout(info, content_w);
     let middle_gesture = view.auto_scroll.blocks_input();
-    // Single page: when the whole page fits, the wheel would do nothing, so it turns pages
-    // instead; zoomed in far enough to pan, it pans. Touch drags are untouched: with nothing
-    // to pan, touch users turn pages with the rail buttons, the page box and the arrow keys.
-    // Runs before `visible_pages` so the frame that turns the page draws it.
-    if view.layout == PageLayout::Single {
-        // Within a point, so layout rounding can't stop a fitting page from turning.
-        let fits = rects.get(view.current.min(rects.len().saturating_sub(1))).is_some_and(|r| r.height() + 2.0 * MARGIN <= avail.height() + 1.0);
-        let can_turn = fits && !middle_gesture && unobstructed && ui.rect_contains_pointer(avail);
-        // Every wheel event goes to the pager, so it follows each trackpad touch to its end
-        // even while the page can't turn.
-        ui.input(|i| {
-            for e in &i.events {
-                if let egui::Event::MouseWheel { unit, delta, phase, modifiers } = e {
-                    // Zooming (⌘ or Ctrl) and sideways scrolling (Shift) never turn pages.
-                    let dy = if modifiers.command || modifiers.ctrl || modifiers.shift { 0.0 } else { delta.y };
-                    view.single_page_wheel(*unit, dy, *phase, i.time, can_turn);
-                }
-            }
-        });
-        if can_turn {
-            // Paging owns vertical wheel motion here. A diagonal gesture keeps its sideways
-            // part, as `ScrollArea` itself handles each axis.
-            ui.input_mut(|i| i.smooth_scroll_delta.y = 0.0);
-        }
-    }
-    let visible_pages: Vec<usize> = match view.layout {
-        PageLayout::Single => vec![view.current.min(rects.len() - 1)],
-        _ => (0..rects.len()).collect(),
-    };
-    let (y_shift, content_h) = match view.layout {
-        PageLayout::Single => {
-            let r = rects[visible_pages[0]];
-            (r.top() - MARGIN, r.height() + 2.0 * MARGIN)
-        }
-        _ => (0.0, rects.last().map(|r| r.bottom() + MARGIN).unwrap_or(0.0)),
-    };
+    // Every layout scrolls through all the pages; single-page view differs in its zoom (one page
+    // per window) and in how Space and Page Down move (`flip_page`).
+    let content_h = rects.last().map(|r| r.bottom() + MARGIN).unwrap_or(0.0);
 
     let mut scroll = egui::ScrollArea::both().auto_shrink([false, false]).scroll_source(egui::scroll_area::ScrollSource {
         drag: if middle_gesture {
@@ -1303,12 +1295,12 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     scroll = scroll.id_salt(("page-view", view.id));
     if let Some((page, fx, fy, rel)) = view.zoom_anchor.take() {
         let r = rects[page.min(rects.len() - 1)];
-        let point = pos2(r.left() + fx * r.width(), r.top() - y_shift + fy * r.height());
+        let point = pos2(r.left() + fx * r.width(), r.top() + fy * r.height());
         scroll = scroll.scroll_offset(vec2((point.x - rel.x).max(0.0), (point.y - rel.y).max(0.0)));
     } else if let Some((page, frac)) = view.goto.take() {
         let page = page.min(rects.len() - 1);
         let r = rects[page];
-        scroll = scroll.vertical_scroll_offset((r.top() - y_shift - GAP + frac * r.height()).max(0.0));
+        scroll = scroll.vertical_scroll_offset((r.top() - GAP + frac * r.height()).max(0.0));
     }
     let ppp = ui.ctx().pixels_per_point();
     let scale = view.render_scale(ppp);
@@ -1399,7 +1391,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
             }
         }
-        let origin = resp_rect.min - vec2(0.0, y_shift);
+        let origin = resp_rect.min;
         let painter = ui.painter();
         let visible = viewport.translate(resp_rect.min.to_vec2());
         let mut wanted = Vec::new();
@@ -1413,8 +1405,8 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         let mut best_overlap = -1.0f32;
         let mut current_overlap = -1.0f32;
         let pointer = ui.input(|i| i.pointer.hover_pos());
-        for &i in &visible_pages {
-            let r = rects[i].translate(origin.to_vec2());
+        for (i, r) in rects.iter().enumerate() {
+            let r = r.translate(origin.to_vec2());
             if !r.intersects(visible.expand(400.0)) {
                 continue;
             }
@@ -1800,11 +1792,9 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         if current_overlap >= best_overlap - TIE {
             current = view.current;
         }
-        if view.layout != PageLayout::Single {
-            view.current = current;
-            if !ui.memory(|m| m.has_focus(egui::Id::new("page-input"))) {
-                view.page_input = (current + 1).to_string();
-            }
+        view.current = current;
+        if !ui.memory(|m| m.has_focus(egui::Id::new("page-input"))) {
+            view.page_input = (current + 1).to_string();
         }
         resp.context_menu(|ui| {
             // Preparing a form: the selected field's menu.
@@ -2797,43 +2787,6 @@ mod tests {
         DocView::new(DocId(1), &info, ViewDefaults { layout, ..Default::default() })
     }
 
-    /// One mouse-wheel notch (a line) at `at` seconds.
-    fn notch(v: &mut DocView, dy: f32, at: f64) -> bool {
-        v.single_page_wheel(egui::MouseWheelUnit::Line, dy, egui::TouchPhase::Move, at, true)
-    }
-
-    #[test]
-    fn notches_turn_pages_and_stop_at_the_ends() {
-        let mut v = view(3, PageLayout::Single);
-        assert!(notch(&mut v, -1.0, 1.0) && notch(&mut v, -1.0, 1.05));
-        assert_eq!(v.current, 2);
-        assert!(!notch(&mut v, -1.0, 1.1), "nothing turns past the last page");
-        assert!(notch(&mut v, 1.0, 1.2));
-        assert_eq!(v.current, 1);
-    }
-
-    #[test]
-    fn wheel_is_single_page_only() {
-        for layout in [PageLayout::Continuous, PageLayout::TwoUp] {
-            let mut v = view(3, layout);
-            assert!(!notch(&mut v, -1.0, 1.0), "{layout:?} ignores the wheel");
-            assert_eq!(v.current, 0);
-        }
-    }
-
-    #[test]
-    fn navigation_drops_partial_wheel_motion() {
-        use egui::{MouseWheelUnit::Point, TouchPhase::Move, TouchPhase::Start};
-        let mut v = view(3, PageLayout::Single);
-        assert!(!v.single_page_wheel(Point, 0.0, Start, 1.0, true));
-        assert!(!v.single_page_wheel(Point, -30.0, Move, 1.02, true));
-        v.go_to_page(1);
-        // The same touch has to move a full notch's worth again before it turns.
-        assert!(!v.single_page_wheel(Point, -30.0, Move, 1.04, true));
-        assert!(v.single_page_wheel(Point, -30.0, Move, 1.06, true));
-        assert_eq!(v.current, 2);
-    }
-
     #[test]
     fn reselecting_the_layout_does_not_scroll_to_top() {
         let mut v = view(3, PageLayout::Continuous);
@@ -2842,6 +2795,14 @@ mod tests {
         assert!(v.goto.is_none(), "re-selecting the current layout is a no-op");
         v.set_layout(PageLayout::Single);
         assert_eq!(v.goto, Some((0, 0.0)));
+        assert_eq!(v.fit, Fit::Page, "single-page view fits one page per window");
+        // Zooming by hand leaves that; choosing single-page view again fits again.
+        v.goto = None;
+        v.set_layout(PageLayout::Single);
+        assert!(v.goto.is_none(), "already fitting: nothing moves");
+        v.fit = Fit::None;
+        v.set_layout(PageLayout::Single);
+        assert_eq!((v.fit, v.goto), (Fit::Page, Some((0, 0.0))));
     }
 
     #[test]
@@ -2857,13 +2818,15 @@ mod tests {
             v.current = 1;
             v.fit_zoom(&info);
             assert_eq!(v.zoom, zoom, "{fit:?}: scrolling onto a bigger page keeps the zoom");
-            // Single-page view shows one page at a time, so it fits each one.
+            // Single-page view scrolls too: it holds still the same way, one largest page per
+            // window.
             v.layout = PageLayout::Single;
             v.fit_zoom(&info);
-            let big = v.zoom;
+            let single = v.zoom;
             v.current = 0;
             v.fit_zoom(&info);
-            assert!(v.zoom > big, "{fit:?}: single-page view fits the page it shows");
+            assert_eq!(v.zoom, single, "{fit:?}: single-page view keeps its zoom too");
+            assert!((800.0 * PT * single - (800.0 - 2.0 * GAP)).abs() < 0.5, "{fit:?}: the page and two gaps fill the window");
         }
     }
 

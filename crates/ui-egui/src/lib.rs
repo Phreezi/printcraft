@@ -79,7 +79,6 @@ mod protect;
 mod recovery;
 pub mod theme;
 pub mod updates;
-mod wheel_pager;
 pub mod window_state;
 pub mod windows;
 /// The app's name as people see it (window title, About, installer).
@@ -742,7 +741,7 @@ impl PdfCraftApp {
         match v.layout {
             // The view opened in Default page display already.
             L::Default => {}
-            L::SinglePage => view.layout = canvas::PageLayout::Single,
+            L::SinglePage => view.set_layout(canvas::PageLayout::Single),
             L::SinglePageContinuous => view.layout = canvas::PageLayout::Continuous,
             L::TwoUp | L::TwoUpContinuous => view.layout = canvas::PageLayout::TwoUp,
             L::TwoUpCoverPage | L::TwoUpContinuousCoverPage => {

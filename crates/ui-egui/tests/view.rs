@@ -136,63 +136,6 @@ fn two_up_layout_places_pages_side_by_side() {
 }
 
 #[test]
-fn single_page_layout_shows_one_page_at_a_time() {
-    let mut h = harness(&[("layout", "single"), ("zoom", "50")]);
-    h.run_steps(4);
-    assert!(rect(&h, 0).is_some() && rect(&h, 1).is_none(), "only page 1");
-    h.state_mut().set_option("page", "2").unwrap();
-    h.run_steps(4);
-    assert!(rect(&h, 0).is_none() && rect(&h, 1).is_some(), "only page 2");
-}
-
-#[test]
-fn single_page_wheel_pans_instead_when_zoomed_in() {
-    // The zoomed-in guard: with room to pan, the wheel pans and must not turn pages.
-    let mut h = harness(&[("layout", "single"), ("zoom", "200")]);
-    h.run_steps(4);
-    let at = h.state().views[0].viewport_rect().center();
-    h.hover_at(at);
-    h.run_steps(1);
-    h.event(wheel(MouseWheelUnit::Point, -60.0, TouchPhase::Move));
-    h.run_steps(4);
-    assert_eq!(h.state().views[0].current, 0, "zoomed-in wheel pans, it does not turn the page");
-}
-
-#[test]
-fn wheel_turns_one_page_per_notch_and_per_trackpad_swipe() {
-    // At a real frame rate: brisk notches each turn a page, and one trackpad swipe turns one
-    // page, its momentum included (macOS sends the momentum as a second Start…End).
-    let mut h = harness_stepping(1.0 / 60.0, &[("layout", "single"), ("zoom", "50")]);
-    let at = h.state().views[0].viewport_rect().center();
-    h.hover_at(at);
-    h.run_steps(2);
-    for _ in 0..2 {
-        h.event(wheel(MouseWheelUnit::Line, -1.0, TouchPhase::Move));
-        h.run_steps(5);
-    }
-    h.run_steps(30);
-    assert_eq!(h.state().views[0].current, 2, "two notches 80 ms apart turn two pages");
-    let mut send = |phase, dy| {
-        h.event(wheel(MouseWheelUnit::Point, dy, phase));
-        h.step();
-    };
-    send(TouchPhase::Start, 0.0);
-    for _ in 0..6 {
-        send(TouchPhase::Move, 25.0);
-    }
-    send(TouchPhase::End, 0.0);
-    send(TouchPhase::Start, 0.0);
-    let mut d = 25.0;
-    while d > 0.5 {
-        send(TouchPhase::Move, d);
-        d *= 0.92;
-    }
-    send(TouchPhase::End, 0.0);
-    h.run_steps(30);
-    assert_eq!(h.state().views[0].current, 1, "one swipe back turns one page back");
-}
-
-#[test]
 fn page_display_commands_switch_layouts() {
     let mut h = harness(&[]);
     h.state_mut().execute("view.layout.single");
@@ -320,13 +263,6 @@ fn rail_page_display_menu_offers_acrobats_view_choices() {
     let shown = |h: &Harness<'static, PdfCraftApp>| (h.state().views[0].layout, h.state().views[0].fit);
     pick(&mut h, "Fit one full page");
     assert_eq!(shown(&h), (PageLayout::Single, Fit::Page));
-    // The whole page fits at once, so the wheel turns pages without zooming out first.
-    let at = h.state().views[0].viewport_rect().center();
-    h.hover_at(at);
-    h.run_steps(1);
-    h.event(wheel(MouseWheelUnit::Line, -1.0, TouchPhase::Move));
-    h.run_steps(4);
-    assert_eq!(h.state().views[0].current, 1);
     pick(&mut h, "Actual size");
     assert_eq!((h.state().views[0].fit, h.state().views[0].zoom), (Fit::None, 1.0));
     pick(&mut h, "Zoom to page level");
@@ -411,20 +347,19 @@ fn fit_page_holds_zoom_across_mixed_page_sizes() {
 }
 
 #[test]
-fn single_page_fit_page_fits_the_shown_page() {
-    // Single-page view fits the page it shows: each page fills the viewport on its own.
+fn single_page_fit_page_fits_the_largest_page() {
+    // Single-page view scrolls through every page, so it fits the largest one and keeps that
+    // zoom: each page fits the window on its own.
     let mut h = mixed_harness(&[("layout", "single")]);
-    h.key_press_modifiers(Modifiers::COMMAND, Key::Num0); // fit page
-    h.run_steps(4);
     let vp = h.state().views[0].viewport_rect();
+    let z1 = h.state().views[0].zoom;
     let r1 = rect(&h, 0).expect("page 1");
     assert!(r1.width() <= vp.width() && r1.height() <= vp.height(), "page 1 fits: {r1:?} in {vp:?}");
-    let z1 = h.state().views[0].zoom;
     h.state_mut().set_option("page", "2").unwrap();
     h.run_steps(4);
     let r2 = rect(&h, 1).expect("page 2");
     assert!(r2.width() <= vp.width() && r2.height() <= vp.height(), "page 2 fits: {r2:?} in {vp:?}");
-    assert_ne!(h.state().views[0].zoom, z1, "the wider page refits instead of keeping page 1's zoom");
+    assert_eq!(h.state().views[0].zoom, z1, "the zoom holds");
 }
 
 #[test]
@@ -628,4 +563,141 @@ fn space_is_left_alone_while_something_else_has_the_keyboard() {
         h.run_steps(3);
         assert_eq!(h.state().views[0].current, 0, "blocker {n}: Space didn't page");
     }
+}
+
+/// One A4 page after another (the user's invoices).
+const A4: &[u8] = b"%PDF-1.7
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 /MediaBox [0 0 595 842] >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R >> endobj
+5 0 obj << /Type /Page /Parent 2 0 R >> endobj
+trailer << /Root 1 0 R >>
+%%EOF";
+
+/// The gap single-page view leaves above and below the page (canvas.rs `GAP`).
+const GAP: f32 = 14.0;
+
+fn a4_harness(size: egui::Vec2, setup: fn(&mut PdfCraftApp)) -> Harness<'static, PdfCraftApp> {
+    let mut h = Harness::builder().with_size(size).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("left", "closed").unwrap();
+        setup(&mut app);
+        app.open_bytes("invoice.pdf", None, A4.to_vec()).expect("opens");
+        app.set_option("panel", "none").unwrap();
+        app
+    });
+    h.run_steps(8);
+    h
+}
+
+/// Page `page` fills the document area exactly: whole, with one gap above and below.
+#[track_caller]
+fn fills_the_window(h: &Harness<'static, PdfCraftApp>, page: usize) {
+    let vp = h.state().views[0].viewport_rect();
+    let r = rect(h, page).expect("page on screen");
+    assert!((r.top() - (vp.top() + GAP)).abs() < 1.0, "page {} starts a gap below the top: {r:?} in {vp:?}", page + 1);
+    assert!((r.bottom() - (vp.bottom() - GAP)).abs() < 1.0, "page {} ends a gap above the bottom, not cut: {r:?} in {vp:?}", page + 1);
+}
+
+#[test]
+fn single_page_view_opens_with_one_whole_page_per_window() {
+    // The default zoom is Fit to width, which cut the bottom of an A4 page off (97%): the
+    // default page display Single page fits the page instead.
+    let mut h = a4_harness(egui::vec2(1440.0, 900.0), |app| app.set_option("default-layout", "single").unwrap());
+    use pdfcraft_ui_egui::canvas::{Fit, PageLayout};
+    assert_eq!((h.state().views[0].layout, h.state().views[0].fit), (PageLayout::Single, Fit::Page));
+    fills_the_window(&h, 0);
+    // The same through the page display command, from a scrolled continuous view.
+    let mut c = a4_harness(egui::vec2(1440.0, 900.0), |_| {});
+    c.key_press(Key::Space);
+    c.run_steps(3);
+    c.state_mut().execute("view.layout.single");
+    c.run_steps(4);
+    let page = c.state().views[0].current;
+    fills_the_window(&c, page);
+    h.run_steps(2);
+}
+
+#[test]
+fn single_page_view_refits_when_the_window_changes_size() {
+    let mut h = a4_harness(egui::vec2(1440.0, 900.0), |app| app.set_option("default-layout", "single").unwrap());
+    fills_the_window(&h, 0);
+    let mut heights = vec![h.state().views[0].viewport_rect().height()];
+    for size in [egui::vec2(1200.0, 640.0), egui::vec2(1600.0, 1100.0), egui::vec2(900.0, 600.0)] {
+        h.set_size(size);
+        h.run_steps(6);
+        fills_the_window(&h, 0);
+        heights.push(h.state().views[0].viewport_rect().height());
+    }
+    assert!(heights.windows(2).all(|w| (w[0] - w[1]).abs() > 100.0), "the window really changed size: {heights:?}");
+    // On a later page too.
+    h.key_press(Key::Space);
+    h.run_steps(3);
+    h.set_size(egui::vec2(1300.0, 800.0));
+    h.run_steps(6);
+    fills_the_window(&h, 1);
+}
+
+#[test]
+fn single_page_view_scrolls_continuously_and_space_lands_on_page_tops() {
+    let mut h = a4_harness(egui::vec2(1440.0, 900.0), |app| app.set_option("default-layout", "single").unwrap());
+    fills_the_window(&h, 0);
+    // The wheel scrolls smoothly, without turning a page.
+    let at = h.state().views[0].viewport_rect().center();
+    h.hover_at(at);
+    h.run_steps(1);
+    let before = top(&h, 0);
+    h.event(wheel(MouseWheelUnit::Point, -120.0, TouchPhase::Move));
+    h.run_steps(6);
+    let moved = before - top(&h, 0);
+    assert!(moved > 20.0 && moved < 300.0, "the wheel scrolled {moved} points, not a page");
+    assert!(rect(&h, 1).is_some(), "the next page shows below as the view scrolls");
+    // Space goes to the top of the next page, which fills the window.
+    h.key_press(Key::Space);
+    h.run_steps(4);
+    assert_eq!(h.state().views[0].current, 1);
+    fills_the_window(&h, 1);
+    h.key_press(Key::PageDown);
+    h.run_steps(4);
+    fills_the_window(&h, 2);
+    h.key_press(Key::Space);
+    h.run_steps(4);
+    fills_the_window(&h, 2);
+    h.key_press(Key::PageUp);
+    h.run_steps(4);
+    fills_the_window(&h, 1);
+    // Scrolled part way into page 2, Shift+Space returns to its top, then to page 1.
+    h.hover_at(at);
+    h.event(wheel(MouseWheelUnit::Point, -120.0, TouchPhase::Move));
+    h.run_steps(6);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Space);
+    h.run_steps(4);
+    fills_the_window(&h, 1);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Space);
+    h.run_steps(4);
+    fills_the_window(&h, 0);
+}
+
+#[test]
+fn zooming_leaves_one_page_per_window_until_single_page_is_chosen_again() {
+    use pdfcraft_ui_egui::canvas::Fit;
+    let mut h = a4_harness(egui::vec2(1440.0, 900.0), |app| app.set_option("default-layout", "single").unwrap());
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Plus);
+    h.run_steps(4);
+    assert_eq!(h.state().views[0].fit, Fit::None, "zooming by hand leaves the fit");
+    let zoomed = h.state().views[0].zoom;
+    h.set_size(egui::vec2(1200.0, 700.0));
+    h.run_steps(6);
+    assert_eq!(h.state().views[0].zoom, zoomed, "a hand-set zoom stays when the window changes");
+    // Space still lands on the next page's top.
+    h.key_press(Key::Space);
+    h.run_steps(4);
+    assert_eq!(h.state().views[0].current, 1);
+    let (r, vp) = (rect(&h, 1).expect("page 2"), h.state().views[0].viewport_rect());
+    assert!((r.top() - (vp.top() + GAP)).abs() < 1.0, "{r:?} in {vp:?}");
+    h.state_mut().execute("view.layout.single");
+    h.run_steps(4);
+    assert_eq!(h.state().views[0].fit, Fit::Page);
+    fills_the_window(&h, 1);
 }
