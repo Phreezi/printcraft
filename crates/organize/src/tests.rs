@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use printcraft_cos::{Document, Object, SaveOptions, write_full, write_incremental};
+use pdfcraft_cos::{Document, Object, SaveOptions, write_full, write_incremental};
 
 use super::*;
 
@@ -181,11 +181,11 @@ fn inserts_blank_page() {
 fn document_info_edits_round_trip_with_unicode() {
     let mut doc = open(fixture());
     set_info(&mut doc, "Title", "Résumé — 履歴書").unwrap();
-    set_info(&mut doc, "Author", "PrintCraft").unwrap();
+    set_info(&mut doc, "Author", "PdfCraft").unwrap();
     set_info(&mut doc, "Producer", "").unwrap(); // clearing removes the key
     let doc = save_and_reopen(&doc);
     assert_eq!(info(&doc, "Title").as_deref(), Some("Résumé — 履歴書"));
-    assert_eq!(info(&doc, "Author").as_deref(), Some("PrintCraft"));
+    assert_eq!(info(&doc, "Author").as_deref(), Some("PdfCraft"));
     assert_eq!(info(&doc, "Producer"), None);
 }
 
@@ -705,11 +705,102 @@ fn initial_view_round_trips_and_keeps_scripts() {
     // A script opening action survives a change that needs no destination.
     let mut doc = doc;
     let root = doc.root().unwrap();
-    let mut js = printcraft_cos::Dict::new();
+    let mut js = pdfcraft_cos::Dict::new();
     js.set(b"S".to_vec(), Object::name("JavaScript"));
-    js.set(b"JS".to_vec(), printcraft_cos::PdfString::text("app.alert('hi')"));
+    js.set(b"JS".to_vec(), pdfcraft_cos::PdfString::text("app.alert('hi')"));
     doc.update_dict(root, |c| c.set(b"OpenAction".to_vec(), Object::Dict(js))).unwrap();
     crate::set_initial_view(&mut doc, &crate::InitialView { layout: Layout::SinglePage, ..Default::default() }).unwrap();
     assert!(doc.get(root).as_dict().unwrap().get(b"OpenAction").and_then(|o| o.as_dict()).is_some_and(|d| d.name(b"S") == Some(b"JavaScript")));
     assert!(crate::set_initial_view(&mut doc, &crate::InitialView { page: 9, ..Default::default() }).is_err());
+}
+
+// ── Split / Extract keep only the resources the part draws (#204) ──────────────────────────────
+
+/// A content stream with no text operators (an image draw).
+fn raw(content: &str) -> String {
+    format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len())
+}
+
+fn image(width: u32, height: u32, payload: usize) -> String {
+    let data = "x".repeat(payload);
+    format!(
+        "<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Length {payload} >>\nstream\n{data}\nendstream"
+    )
+}
+
+/// Document D: two pages sharing one resources dictionary with two image XObjects; each page
+/// draws a different one — the shared-dictionary shape of #204.
+fn doc_images() -> Document {
+    let b: Vec<String> = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".into(),                                                        // 1
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 200] /Resources 7 0 R >>".into(), // 2
+        "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>".into(),                                          // 3
+        "<< /Type /Page /Parent 2 0 R /Contents 6 0 R >>".into(),                                          // 4
+        raw("/ImA Do"),                                                                                    // 5
+        raw("/ImB Do"),                                                                                    // 6
+        "<< /XObject << /ImA 8 0 R /ImB 9 0 R >> >>".into(),                                               // 7
+        image(1, 1, 1),                                                                                    // 8
+        image(1, 1, 2000),                                                                                 // 9
+    ];
+    open(build(&b, "/Root 1 0 R"))
+}
+
+fn xobject_names(doc: &Document, page: usize) -> Vec<Vec<u8>> {
+    let resources = page_dict(doc, page).get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).expect("page resources");
+    let xobjects = resources.get(b"XObject").map(|x| doc.resolve(x)).and_then(|x| x.as_dict().cloned()).expect("xobject dict");
+    xobjects.iter().map(|(k, _)| k.clone()).collect()
+}
+
+#[test]
+fn extract_keeps_only_the_images_the_part_draws() {
+    let src = doc_images();
+    let whole = write_full(&src, &SaveOptions::default()).expect("writes").len();
+    let part = full_roundtrip(&extract_pages(&src, &[0]).unwrap());
+    let names = xobject_names(&part, 0);
+    assert!(names.iter().any(|n| n.as_slice() == b"ImA"), "the drawn image stays");
+    assert!(!names.iter().any(|n| n.as_slice() == b"ImB"), "an image no page of the part draws must go");
+    let part_bytes = write_full(&part, &SaveOptions::default()).expect("writes").len();
+    assert!(part_bytes + 1000 < whole, "the part must not carry the other page's image: {part_bytes} vs {whole}");
+}
+
+#[test]
+fn extract_keeps_the_union_when_the_part_has_both_pages() {
+    let part = full_roundtrip(&extract_pages(&doc_images(), &[0, 1]).unwrap());
+    let names = xobject_names(&part, 0);
+    assert!(names.iter().any(|n| n.as_slice() == b"ImA"));
+    assert!(names.iter().any(|n| n.as_slice() == b"ImB"));
+}
+
+/// Like `doc_images`, but the second page's content can't be decoded and the first page also
+/// lists a font: pruning must not guess what the unreadable page draws.
+fn doc_images_with(page2_content: &str, font: &str) -> Document {
+    let b: Vec<String> = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 200] /Resources 7 0 R >>".into(),
+        "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>".into(),
+        "<< /Type /Page /Parent 2 0 R /Contents 6 0 R >>".into(),
+        raw("/ImA Do"),
+        page2_content.into(),
+        format!("<< /XObject << /ImA 8 0 R /ImB 9 0 R >> {font} >>"),
+        image(1, 1, 1),
+        image(1, 1, 2000),
+    ];
+    open(build(&b, "/Root 1 0 R"))
+}
+
+#[test]
+fn extract_keeps_images_an_undecodable_page_might_draw() {
+    let bogus = "<< /Length 7 /Filter /NoSuchFilter >>\nstream\n/ImB Do\nendstream";
+    let part = full_roundtrip(&extract_pages(&doc_images_with(bogus, ""), &[0, 1]).unwrap());
+    let names = xobject_names(&part, 0);
+    assert!(names.iter().any(|n| n.as_slice() == b"ImB"), "an image the unreadable page may draw must stay");
+}
+
+#[test]
+fn extract_keeps_images_type3_glyphs_may_draw() {
+    // A Type 3 font without its own /Resources draws through the page's: its glyphs could `Do`.
+    let font = "/Font << /T3 << /Type /Font /Subtype /Type3 /FontBBox [0 0 1 1] /FontMatrix [1 0 0 1 0 0] /CharProcs << >> /Encoding << /Differences [] >> /FirstChar 0 /LastChar 0 /Widths [0] >> >>";
+    let part = full_roundtrip(&extract_pages(&doc_images_with(&raw("/ImB Do"), font), &[0]).unwrap());
+    let names = xobject_names(&part, 0);
+    assert!(names.iter().any(|n| n.as_slice() == b"ImB"), "pruning must not run through Type 3 resources");
 }

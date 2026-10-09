@@ -1,0 +1,58 @@
+# Developing PeDeeFe
+
+PeDeeFe is based on [PdfCraft](https://github.com/storytold/pdfcraft); its crates keep PdfCraft's
+`pdfcraft*` names.
+
+Working instructions for agents and contributors are in `AGENTS.md` and `CLAUDE.md`. This page
+collects what the desktop app reads from its environment and where it writes its diagnostics.
+
+## Logs
+
+The desktop app writes its `log` records to standard error and to `logs/pdfcraft.log` in its
+settings folder, next to `app.ron`: Linux and FreeBSD `~/.local/share/pedeefe/logs/` (or
+`$XDG_DATA_HOME/pedeefe/logs/`), macOS `~/Library/Application Support/PeDeeFe/logs/`, Windows
+`%APPDATA%\PeDeeFe\data\logs\`. PeDeeFe never reads or moves the folders of an installed
+PrintCraft or PdfCraft. A start from a desktop menu, Finder or the Start menu has no
+terminal, so this file is what to attach to a bug report: a failed autosave, a page that would not
+render, a render worker that could not start and the report of an internal error all land there.
+Each launch moves the previous log to `pdfcraft.1.log` (and that one to `pdfcraft.2.log`), so the
+log of a run that crashed survives the next start. The file stops growing at 16 MiB. `--version`
+writes no file. Quick Print (`--print`, `--print-to`: the shell's print and printto verbs) runs
+next to the app, often several at once, so it appends to `logs/quick-print.log` instead and
+leaves `pdfcraft.log` alone; that file starts over once it passes 1 MiB.
+
+By default the app's own crates (`pdfcraft*`) log at `info` and everything else at `warn`.
+`RUST_LOG` replaces that with env_logger-style directives, for example `RUST_LOG=debug`,
+`RUST_LOG=warn,pdfcraft_render=trace` or `RUST_LOG=info,wgpu_core=warn`; a directive ending in `*`
+covers every target starting with it (`pdfcraft*=debug`). The logger is
+`apps/pdfcraft/src/logging.rs`. It never records the control-channel token or document passwords.
+
+## One app per user
+
+A launch while the app runs (a double-clicked PDF, Open With, a shortcut) hands its files to the
+running app, which opens them as tabs in the window used last and brings it to the front, and
+exits. The running app listens on a random loopback port and writes the port and a random token to
+`instance.json` in a folder of the user's on this machine (readable by the user only):
+`%LOCALAPPDATA%\PeDeeFe` on Windows (not the roaming profile), `$XDG_RUNTIME_DIR/pedeefe` on
+Linux and the BSDs when set, the settings folder otherwise. Each side proves it knows the token
+(HMAC over a fresh nonce) before any file name is sent, so a launch that can't reach the app, or
+reaches something else on that port (the app crashed and left the file behind), replaces the file
+and runs normally. `--new-instance`, and any
+launch with options (`--control`, `--create-images`, view options), runs a separate app. The code
+and the protocol are in `apps/pdfcraft/src/single_instance.rs`.
+
+Quick Print (`--print FILE…`, `--print-to PRINTER FILE…`) never involves the running app: it
+prints in its own process with no window and exits (`apps/pdfcraft/src/quick_print.rs`). Outlook
+may delete the attachment's temporary file once the verb's process exits, so the file is read and
+spooled before that.
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `RUST_LOG` | Log levels for standard error and the log file (see [Logs](#logs)) |
+| `RUST_BACKTRACE` | `1` adds a backtrace to the report of an internal error |
+| `XDG_DATA_HOME` | Linux/FreeBSD: base of the settings folder (`pedeefe/`), the log folder and crash recovery |
+| `WGPU_POWER_PREF` | GPU choice; by default PeDeeFe prefers the low-power (integrated) GPU |
+| `WGPU_BACKEND` | Graphics backend; by default Windows uses Direct3D 12, falling back to OpenGL |
+| `CRAFT_FONTS_DIR` | Build time: a [craft-fonts](https://github.com/storytold/craft-fonts) checkout to embed (Japanese fonts) |

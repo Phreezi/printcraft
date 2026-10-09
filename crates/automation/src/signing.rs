@@ -2,8 +2,8 @@
 //! document, and manage trusted certificates. Rectangles are points from the top-left of the
 //! displayed page.
 
-use printcraft_engine::sign::{self, Certificate, DigitalId, Modification, Name, PrivateKey};
-use printcraft_engine::{SignOptions, SignatureInfo, SignatureStatus};
+use pdfcraft_engine::sign::{self, Certificate, DigitalId, Modification, Name, PrivateKey};
+use pdfcraft_engine::{SignOptions, SignatureInfo, SignatureStatus};
 use serde_json::{Value, json};
 
 use crate::{Args, Automation, Result, ToolError, failed, write_atomic};
@@ -67,6 +67,7 @@ impl Automation {
             "sub_filter": s.sub_filter,
             "algorithm": s.algorithm,
             "timestamp": s.timestamp,
+            "timestamp_time": s.timestamp_time.map(|t| t.to_string()),
             "modification": modification,
             "changes": changes,
             "details": s.details,

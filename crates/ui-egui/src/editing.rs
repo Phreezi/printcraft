@@ -1,15 +1,16 @@
 //! Editing glue: apply engine edits from the UI, undo/redo, save/save-as, and the
 //! "save changes?" prompt when closing a tab or quitting with unsaved edits.
 
-use printcraft_engine::Edit;
+use pdfcraft_engine::Edit;
 
-use crate::PrintCraftApp;
+use crate::PdfCraftApp;
 
 /// What the user was doing when we asked whether to save.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseRequest {
-    /// Close this tab (index into `views`).
-    Tab(usize),
+    /// Close this document's tab. By id, not tab index: tabs can close and shift while a save
+    /// panel is open.
+    Tab(pdfcraft_engine::DocId),
     /// Quit the application once every dirty document is resolved.
     Quit,
     /// File ▸ Close all: like Quit, but the application stays open.
@@ -25,7 +26,7 @@ pub enum SaveTarget {
     As,
 }
 
-impl PrintCraftApp {
+impl PdfCraftApp {
     /// Apply an edit to the active document. Returns `true` on success; failures are shown.
     pub fn apply_edit(&mut self, edit: Edit) -> bool {
         let Some((i, id)) = self.active_ids() else { return false };
@@ -66,7 +67,7 @@ impl PrintCraftApp {
                 true
             }
             Err(e) => {
-                self.notify(format!("{label} failed: {e}"));
+                self.notify_fmt("{label} failed: {e}", &[("label", &crate::i18n::action_label(&label)), ("e", &e.to_string())]);
                 false
             }
         }
@@ -89,9 +90,14 @@ impl PrintCraftApp {
                     self.views[i].document_changed(&doc.info);
                 }
                 self.views[i].comments.selected = None;
-                self.notify(format!("{} {label}", if undo { "Undid" } else { "Redid" }));
+                let label = crate::i18n::action_label(&label);
+                if undo {
+                    self.notify_fmt("Undid {label}", &[("label", &label)]);
+                } else {
+                    self.notify_fmt("Redid {label}", &[("label", &label)]);
+                }
             }
-            Err(e) => self.notify(e.to_string()),
+            Err(e) => self.notify_error(e),
         }
     }
 
@@ -119,21 +125,25 @@ impl PrintCraftApp {
         let pages = self.views[i].target_pages();
         let n = doc.info.pages.len();
         if cut && pages.len() >= n {
-            self.notify("A document needs at least one page: copy instead");
+            self.notify_tr("A document needs at least one page: copy instead");
             return;
         }
         self.page_clipboard = Some(crate::PageClip { name: doc.name.clone(), bytes: doc.bytes.clone(), pages: pages.clone() });
         if cut {
             self.apply_edit(Edit::DeletePages { pages: pages.clone() });
         }
-        let what = if pages.len() == 1 { "1 page".to_string() } else { format!("{} pages", pages.len()) };
-        self.notify(format!("{} {what}", if cut { "Cut" } else { "Copied" }));
+        let what = if pages.len() == 1 { tl!("1 page").to_string() } else { crate::i18n::fmt(tl!("{n} pages"), &[("n", &pages.len().to_string())]) };
+        if cut {
+            self.notify_fmt("Cut {what}", &[("what", &what)]);
+        } else {
+            self.notify_fmt("Copied {what}", &[("what", &what)]);
+        }
     }
 
     /// Organize ▸ Paste: insert the copied pages after the selection (or the current page).
     pub fn paste_pages(&mut self) {
         let Some(clip) = self.page_clipboard.clone() else {
-            self.notify("Copy or cut pages first");
+            self.notify_tr("Copy or cut pages first");
             return;
         };
         let Some(i) = self.active else { return };
@@ -152,81 +162,111 @@ impl PrintCraftApp {
         }
     }
 
-    /// Save the document shown in tab `index`. Returns `true` if it was written.
+    /// Save the document shown in tab `index`. Returns `true` if it was written now. When it has
+    /// to ask where (a new document, or Save As) it returns `false` and saves on a later frame,
+    /// once the user has chosen.
     pub fn save_view(&mut self, index: usize, target: SaveTarget) -> bool {
+        self.save_then(index, target, |_| {})
+    }
+
+    /// [`Self::save_view`], then `after` once the document is written: now, or on a later frame
+    /// when the user had to choose where. `after` never runs when the save fails or is cancelled.
+    pub(crate) fn save_then(&mut self, index: usize, target: SaveTarget, after: impl FnOnce(&mut Self) + Send + 'static) -> bool {
         let Some(id) = self.views.get(index).map(|v| v.id) else { return false };
         let Some(doc) = self.session.get(id) else { return false };
         let (name, path) = (doc.name.clone(), doc.path.clone());
-        let bytes = match self.session.save_bytes(id) {
-            Ok(b) => b,
-            Err(e) => {
-                self.notify(format!("Couldn't save {name}: {e}"));
-                return false;
-            }
-        };
-        let destination = match (target, path, &self.save_override) {
-            (_, _, Some(p)) => Some(p.clone()),
-            (SaveTarget::InPlace, Some(p), _) => Some(p),
-            _ => self.ask_save_path(&name),
-        };
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let Some(dest) = destination else { return false };
-            if let Err(e) = write_atomically(&dest, &bytes) {
-                self.notify(format!("Couldn't save {dest}: {e}"));
-                return false;
-            }
-            match self.session.mark_saved(id, bytes, Some(dest.clone())) {
-                Ok(()) => {
-                    self.forget_recovery(id);
-                    if let Some(doc) = self.session.get(id) {
-                        self.views[index].document_changed(&doc.info);
-                    }
-                    self.notify(format!("Saved {}", short_name(&dest)));
-                    true
+            let destination = match (target, path, &self.save_override) {
+                (_, _, Some(p)) => p.clone(),
+                (SaveTarget::InPlace, Some(p), _) => p,
+                _ => {
+                    let name = if name.to_ascii_lowercase().ends_with(".pdf") { name } else { format!("{name}.pdf") };
+                    let dialog = rfd::AsyncFileDialog::new().add_filter("PDF", &["pdf"]).set_file_name(name);
+                    // The bytes are taken once the user has chosen, so edits made meanwhile are saved too.
+                    self.ask_one(crate::pickers::Ask::Save(dialog), None, move |app, dest| {
+                        if app.save_doc_to(id, &dest.to_string_lossy()) {
+                            after(app);
+                        }
+                    });
+                    return false;
                 }
-                Err(e) => {
-                    self.notify(format!("Saved, but reopening failed: {e}"));
-                    false
-                }
+            };
+            let saved = self.save_doc_to(id, &destination);
+            if saved {
+                after(self);
             }
+            saved
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = destination;
+            let _ = (target, path);
+            let bytes = match self.session.save_bytes(id) {
+                Ok(b) => b,
+                Err(e) => {
+                    self.notify_fmt("Couldn't save {name}: {e}", &[("name", &name), ("e", &e.to_string())]);
+                    return false;
+                }
+            };
             match download(&name, &bytes) {
                 Ok(()) => {
                     let _ = self.session.mark_saved(id, bytes, None);
                     if let Some(doc) = self.session.get(id) {
                         self.views[index].document_changed(&doc.info);
                     }
-                    self.notify(format!("Downloaded {name}"));
+                    self.notify_fmt("Downloaded {name}", &[("name", &name)]);
+                    after(self);
                     true
                 }
                 Err(e) => {
-                    self.notify(format!("Couldn't download {name}: {e}"));
+                    self.notify_fmt("Couldn't download {name}: {e}", &[("name", &name), ("e", &e.to_string())]);
                     false
                 }
             }
         }
     }
 
+    /// Write document `id` to `dest` and make it the document's file. Returns `true` if written.
     #[cfg(not(target_arch = "wasm32"))]
-    fn ask_save_path(&self, name: &str) -> Option<String> {
-        let name = if name.to_ascii_lowercase().ends_with(".pdf") { name.to_string() } else { format!("{name}.pdf") };
-        rfd::FileDialog::new().add_filter("PDF", &["pdf"]).set_file_name(name).save_file().map(|p| p.to_string_lossy().into_owned())
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn ask_save_path(&self, _name: &str) -> Option<String> {
-        None // browsers download instead
+    fn save_doc_to(&mut self, id: pdfcraft_engine::DocId, dest: &str) -> bool {
+        let Some(name) = self.session.get(id).map(|d| d.name.clone()) else {
+            self.notify_tr("The document was closed before it could be saved.");
+            return false;
+        };
+        let bytes = match self.session.save_bytes(id) {
+            Ok(b) => b,
+            Err(e) => {
+                self.notify_fmt("Couldn't save {name}: {e}", &[("name", &name), ("e", &e.to_string())]);
+                return false;
+            }
+        };
+        if let Err(e) = write_atomically(dest, &bytes) {
+            self.notify_fmt("Couldn't save {name}: {e}", &[("name", dest), ("e", &e.to_string())]);
+            return false;
+        }
+        match self.session.mark_saved(id, bytes, Some(dest.to_string())) {
+            Ok(()) => {
+                self.forget_recovery(id);
+                if let Some(info) = self.session.get(id).map(|d| d.info.clone())
+                    && let Some(view) = self.view_of_mut(id)
+                {
+                    view.document_changed(&info);
+                }
+                self.notify_fmt("Saved {name}", &[("name", &short_name(dest))]);
+                true
+            }
+            Err(e) => {
+                self.notify_fmt("Saved, but reopening failed: {e}", &[("e", &e.to_string())]);
+                false
+            }
+        }
     }
 
     /// Close a tab, asking first if it has unsaved changes.
     pub fn request_close_tab(&mut self, index: usize) {
         let dirty = self.views.get(index).and_then(|v| self.session.get(v.id)).is_some_and(|d| d.dirty);
-        if dirty {
-            self.close_request = Some(CloseRequest::Tab(index));
+        if dirty && let Some(id) = self.views.get(index).map(|v| v.id) {
+            self.close_request = Some(CloseRequest::Tab(id));
         } else {
             self.close_tab(index);
         }
@@ -254,9 +294,9 @@ impl PrintCraftApp {
                 {
                     self.views[i].document_changed(&d.info);
                 }
-                self.notify("Reverted to the last saved version");
+                self.notify_tr("Reverted to the last saved version");
             }
-            Err(e) => self.notify(e.to_string()),
+            Err(e) => self.notify_error(e),
         }
     }
 
@@ -269,7 +309,10 @@ impl PrintCraftApp {
     pub fn resolve_close(&mut self, ctx: &egui::Context, choice: Option<bool>) {
         let Some(req) = self.close_request.take() else { return };
         let index = match req {
-            CloseRequest::Tab(i) => i,
+            CloseRequest::Tab(id) => match self.views.iter().position(|v| v.id == id) {
+                Some(i) => i,
+                None => return, // already closed
+            },
             CloseRequest::Quit | CloseRequest::All => match self.first_dirty() {
                 Some(i) => i,
                 None => {
@@ -281,40 +324,84 @@ impl PrintCraftApp {
             },
         };
         match choice {
-            None => {} // cancelled: nothing closes
-            Some(save) => {
-                if save && !self.save_view(index, SaveTarget::InPlace) {
-                    return; // save failed or was cancelled: keep the document open
-                }
-                self.close_tab(index);
-                if req == CloseRequest::Quit || req == CloseRequest::All {
-                    // Ask about the next dirty document, or quit.
-                    match self.first_dirty() {
-                        Some(_) => self.close_request = Some(req),
-                        None if req == CloseRequest::Quit => self.quit(ctx),
-                        None => {}
+            // Cancelled: nothing closes, and a quit (and the update it would install) stops here.
+            None => {
+                self.windows.quitting = false;
+                self.cancel_pending_update();
+            }
+            Some(false) => self.close_and_continue(ctx, index, req),
+            Some(true) => {
+                let Some(id) = self.views.get(index).map(|v| v.id) else { return };
+                // Close only once the save has actually been written, which may be on a later
+                // frame when the user has to choose where. A failed or cancelled save keeps the
+                // document open.
+                let ctx = ctx.clone();
+                self.save_then(index, SaveTarget::InPlace, move |app| {
+                    if let Some(i) = app.views.iter().position(|v| v.id == id) {
+                        app.close_and_continue(&ctx, i, req);
                     }
-                }
+                });
             }
         }
     }
 
-    fn quit(&mut self, ctx: &egui::Context) {
-        self.allow_quit = true;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    /// Close tab `index` for a close request, then ask about the next dirty document, or quit.
+    fn close_and_continue(&mut self, ctx: &egui::Context, index: usize, req: CloseRequest) {
+        self.close_tab(index);
+        // A newer prompt wins: the user may have started another close while a save was pending.
+        if (req == CloseRequest::Quit || req == CloseRequest::All) && self.close_request.is_none() {
+            match self.first_dirty() {
+                Some(_) => self.close_request = Some(req),
+                None if req == CloseRequest::Quit => self.quit(ctx),
+                None => {}
+            }
+        }
     }
 
-    /// Intercept window close while documents have unsaved changes.
+    /// Quit, once no window has unsaved changes left: otherwise ask about the next one, in its
+    /// window, which comes to the front.
+    fn quit(&mut self, ctx: &egui::Context) {
+        if let Some(key) = self.window_with_dirty() {
+            self.close_request = Some(CloseRequest::Quit);
+            self.windows.request_focus(key);
+            return;
+        }
+        self.allow_quit = true;
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
+    }
+
+    /// Intercept the root window's close while documents have unsaved changes. With other windows
+    /// open, closing the root window only closes its tabs (see [`crate::windows`]); the system's
+    /// Quit closes them all.
     pub(crate) fn guard_quit(&mut self, ctx: &egui::Context) {
         if !ctx.input(|i| i.viewport().close_requested()) {
             return;
         }
-        if !self.allow_quit && self.first_dirty().is_some() {
+        if self.allow_quit {
+            // A clean quit: nothing is left to recover. A downloaded update installs now.
+            if self.launch_pending_update(ctx) {
+                self.shutdown_recovery();
+            }
+            return;
+        }
+        if self.windows.several() && !self.windows.quitting {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.close_request = Some(CloseRequest::Quit);
-        } else {
-            // A clean quit: nothing is left to recover.
-            self.shutdown_recovery();
+            self.close_current_window();
+            self.windows.root_closed_at = Some(crate::windows::close_stamp(ctx));
+            return;
+        }
+        match self.window_with_dirty() {
+            Some(key) => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.close_request = Some(CloseRequest::Quit);
+                self.windows.request_focus(key);
+            }
+            // A clean quit: nothing is left to recover. A downloaded update installs now.
+            None => {
+                if self.launch_pending_update(ctx) {
+                    self.shutdown_recovery();
+                }
+            }
         }
     }
 }
@@ -341,7 +428,7 @@ pub fn write_atomically(path: &str, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let target = std::path::Path::new(path);
     let dir = target.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
-    let tmp = dir.join(format!(".{}.printcraft-{}.tmp", target.file_name().and_then(|n| n.to_str()).unwrap_or("save"), std::process::id()));
+    let tmp = dir.join(format!(".{}.pdfcraft-{}.tmp", target.file_name().and_then(|n| n.to_str()).unwrap_or("save"), std::process::id()));
     let result = (|| {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(bytes)?;
@@ -379,7 +466,7 @@ pub(crate) fn download(name: &str, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-impl PrintCraftApp {
+impl PdfCraftApp {
     /// Carry out a Bookmarks-panel action as an undoable edit.
     pub fn bookmark_action(&mut self, action: crate::panels::BmAction) {
         use crate::panels::BmAction as A;
@@ -389,9 +476,11 @@ impl PrintCraftApp {
         let edit = match action {
             A::New => {
                 let n = self.session.get(id).map_or(0, |d| d.info.outline.len());
-                self.apply_edit(Edit::AddBookmark { parent: vec![], index: n, title: "Untitled".into(), page: current });
+                // The placeholder title is in the UI language, like Acrobat's.
+                let title = tl!("Untitled").to_string();
+                self.apply_edit(Edit::AddBookmark { parent: vec![], index: n, title: title.clone(), page: current });
                 // Like Acrobat: the new bookmark starts in rename mode.
-                self.bookmark_rename = Some((vec![n], "Untitled".into()));
+                self.bookmark_rename = Some((vec![n], title));
                 self.right = Some(crate::RightPanel::Bookmarks);
                 return;
             }
@@ -427,7 +516,7 @@ impl PrintCraftApp {
     }
 }
 
-fn bookmark_at<'a>(items: &'a [printcraft_render::OutlineItem], path: &[usize]) -> Option<&'a printcraft_render::OutlineItem> {
+fn bookmark_at<'a>(items: &'a [pdfcraft_render::OutlineItem], path: &[usize]) -> Option<&'a pdfcraft_render::OutlineItem> {
     let (first, rest) = path.split_first()?;
     let item = items.get(*first)?;
     if rest.is_empty() { Some(item) } else { bookmark_at(&item.children, rest) }

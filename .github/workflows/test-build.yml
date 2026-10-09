@@ -1,0 +1,125 @@
+# PeDeeFe test builds: every push to main or to a claude/** branch builds the Windows x64
+# installer (and the portable zip) and publishes them as a GitHub Release of this repository, so
+# each change can be installed and tried on a PC. Help ▸ Check for updates and Preferences ▸ Updates
+# in the app read these releases (crates/ui-egui/src/updates.rs) and, on Windows, download the MSI
+# and install it, after checking it against the release's SHA256SUMS (apps/pdfcraft/src/updates.rs):
+# every release must carry that file, or the app refuses to install from it.
+#
+# Builds are versioned <version from Cargo.toml>-test.<run number> (0.3.0-test.N for 0.3.0, newer
+# than every 0.2.x-test build). Cargo.toml itself is left alone (Cargo won't match a pre-release
+# against the crates' `^0.3.0`-style requirements): the version reaches the build as
+# PDFCRAFT_VERSION, which names the files and is what the app shows and compares
+# (crates/ui-egui/src/updates.rs). The MSI keeps the numeric part, and same-version upgrades are
+# allowed, so each build replaces the previous one. Builds are unsigned (Windows SmartScreen asks
+# once per download). The newest 10 test releases are kept.
+name: Test build (Windows)
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths-ignore: ["**/*.md", "parity/**", "docs/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  PDFCRAFT_BUILD_SHA: ${{ github.sha }}
+
+jobs:
+  windows:
+    name: Windows x64 installer
+    # The PeDeeFe fork only: PdfCraft itself has its own release pipeline (release.yml).
+    if: github.repository != 'storytold/pdfcraft'
+    runs-on: windows-latest
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      # The craft-fonts build input (Japanese fonts), as in every PdfCraft release.
+      - name: Check out craft-fonts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: storytold/craft-fonts
+          ref: abb83316d96aa59c1cf64784289e378fe9fa5695
+          path: craft-fonts
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-build-windows-x64
+      - id: v
+        name: Version this build
+        shell: bash
+        run: |
+          # [workspace.package] version, as packaging/env.sh reads it.
+          base="$(awk '{ sub(/\r$/, "") } /^\[/ { p = ($0 == "[workspace.package]"); next } p && $1 == "version" { gsub(/[" ]/, "", $3); print $3; exit }' Cargo.toml)"
+          if [ -z "$base" ]; then echo "::error::no [workspace.package] version in Cargo.toml"; exit 1; fi
+          v="${base%%-*}-test.${{ github.run_number }}"
+          echo "version=$v" >>"$GITHUB_OUTPUT"
+          echo "### PeDeeFe $v (\`${GITHUB_REF_NAME}\` at \`${GITHUB_SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool install --global wix --version 5.0.2
+      - name: Build and package (unsigned)
+        shell: pwsh
+        env:
+          PDFCRAFT_VERSION: ${{ steps.v.outputs.version }}
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
+        run: ./packaging/windows/package.ps1 -Arch x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pedeefe-windows-x64
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish the test release
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.windows.outputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pedeefe-windows-x64
+          path: artifacts
+      - name: Create the release (or replace its files on a re-run)
+        working-directory: artifacts
+        run: |
+          # `sha256sum` lines ("<hex>  <file>") for every file. The app downloads only files listed
+          # here and refuses one whose checksum differs. Written outside the folder first, so the
+          # list never lists itself (or a half-written copy of itself).
+          sha256sum -- * >../SHA256SUMS
+          mv ../SHA256SUMS SHA256SUMS
+          cat SHA256SUMS
+          tag="v$VERSION"
+          notes="Test build of \`$GITHUB_REF_NAME\` at $GITHUB_SHA.
+
+          Download \`pedeefe-$VERSION-windows-x64.msi\` and run it: it installs PeDeeFe (or replaces an earlier test build) next to any official PdfCraft. The build is unsigned, so Windows SmartScreen may ask: choose *More info ▸ Run anyway*. The portable zip needs no installation. An installed PeDeeFe can also update itself: *Preferences ▸ Updates ▸ Download and install* (it checks the file against \`SHA256SUMS\`)."
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" --clobber -- *
+          else
+            gh release create "$tag" --title "PeDeeFe $VERSION" --notes "$notes" --target "$GITHUB_SHA" --latest -- *
+          fi
+          echo "Published [$tag](https://github.com/$GH_REPO/releases/tag/$tag)" >>"$GITHUB_STEP_SUMMARY"
+      - name: Keep the newest 10 test releases
+        run: |
+          gh release list --limit 100 --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[].tagName' \
+            | grep -E -- '-test\.[0-9]+$' | tail -n +11 | while read -r old; do
+              gh release delete "$old" --yes --cleanup-tag
+            done

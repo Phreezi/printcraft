@@ -3,7 +3,9 @@
 //! [`impose`] turns the pages to print into a print-ready PDF of *sheets*, laid out the way
 //! Acrobat's Print dialog describes them:
 //! - **Size**: one page per sheet, Fit, Actual size, Shrink oversized pages or a custom scale,
-//!   centred;
+//!   centred. Fit fills the sheet edge to edge (keeping the page's proportions) and adds no
+//!   margin, as SumatraPDF does: a page the sheet's size prints at 100 %, an A4 page on A3 fills
+//!   the A3 sheet;
 //! - **Multiple**: pages per sheet in a grid (2, 4, 6, 9, 16 or custom), four page orders,
 //!   optional page borders and auto-rotation;
 //! - **Booklet**: saddle-stitched spreads (both sides, front or back only; left or right
@@ -13,14 +15,16 @@
 //!   with stamps, or form fields only; annotations print only with their Print flag).
 //!
 //! The sheets are written as a new, unencrypted, garbage-collected PDF; [`spool`] hands it to
-//! the system's print spooler (CUPS on macOS and Linux).
+//! the system's print spooler (CUPS on macOS and Linux; on Windows, Windows' own printing, with
+//! the sheets drawn as images by [`raster`]).
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use printcraft_content::Matrix;
-use printcraft_cos::{Dict, Document, ObjRef, Object, SaveOptions, Stream, write_full};
+use pdfcraft_content::Matrix;
+use pdfcraft_cos::{Dict, Document, ObjRef, Object, SaveOptions, Stream, write_full};
 
 pub mod range;
+pub mod raster;
 pub mod spool;
 #[cfg(test)]
 mod tests;
@@ -31,12 +35,21 @@ pub use range::{Subset, select_pages};
 pub enum PrintError {
     #[error("there are no pages to print")]
     NoPages,
+    /// A page number in the range beyond the document (`count` pages).
+    #[error("page {page} is out of range (1–{count})")]
+    PageOutOfRange { page: usize, count: usize },
+    /// A range token that is neither a page number nor a page label.
+    #[error("{0:?} is not a page number or label")]
+    NotAPage(String),
+    /// The window to print misses this page (1-based) entirely.
+    #[error("the window to print is outside page {0}")]
+    WindowOutsidePage(usize),
     #[error("{0}")]
     Invalid(String),
     #[error("{0}")]
     Spool(String),
     #[error(transparent)]
-    Cos(#[from] printcraft_cos::CosError),
+    Cos(#[from] pdfcraft_cos::CosError),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -64,6 +77,8 @@ pub enum PageOrder {
     HorizontalReversed,
     Vertical,
     VerticalReversed,
+    /// Single-sided sheets: cut into cell piles, then stack them in row-major order.
+    CutStack,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -150,25 +165,36 @@ pub struct Settings {
     pub orientation: Orientation,
     pub layout: Layout,
     pub content: Content,
+    /// Window: print only this area of each page, `[x0, y0, x1, y1]` in display space (points
+    /// from the bottom-left corner of the page as shown). Every layout treats the area as the
+    /// page: Fit fills the sheet with it, Poster tiles it. `None` prints whole pages.
+    pub region: Option<[f64; 4]>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { pages: Vec::new(), paper: PAPERS[0].1, orientation: Orientation::Auto, layout: Layout::default(), content: Content::default() }
+        Settings {
+            pages: Vec::new(),
+            paper: A4,
+            orientation: Orientation::Auto,
+            layout: Layout::default(),
+            content: Content::default(),
+            region: None,
+        }
     }
 }
 
-/// Common paper sizes (points, portrait).
-pub const PAPERS: [(&str, (f64, f64)); 6] = [
-    ("US Letter", (612.0, 792.0)),
-    ("US Legal", (612.0, 1008.0)),
-    ("Tabloid", (792.0, 1224.0)),
-    ("A3", (841.89, 1190.55)),
-    ("A4", (595.28, 841.89)),
-    ("A5", (419.53, 595.28)),
-];
+/// ISO A4 and A3 (points, portrait): the papers PeDeeFe's Print dialog offers, A4 first.
+pub const A4: (f64, f64) = (595.28, 841.89);
+pub const A3: (f64, f64) = (841.89, 1190.55);
 
-/// The unprintable margin assumed around the sheet for Fit, Multiple and Booklet.
+/// Common paper sizes (points, portrait).
+pub const PAPERS: [(&str, (f64, f64)); 6] =
+    [("US Letter", (612.0, 792.0)), ("US Legal", (612.0, 1008.0)), ("Tabloid", (792.0, 1224.0)), ("A3", A3), ("A4", A4), ("A5", (419.53, 595.28))];
+
+/// The margin kept around the sheet by Multiple, Booklet and Poster (their gutters, cut marks
+/// and tile overlap live in it). The Size layouts (Fit, Actual size, Shrink, Custom) never add
+/// one: Fit fills the sheet edge to edge.
 pub const MARGIN: f64 = 18.0;
 
 /// One page as placed on a sheet: the source page, the matrix from its *display space* to the
@@ -180,14 +206,45 @@ pub struct Placement {
     pub clip: [f64; 4],
 }
 
+impl Placement {
+    /// The scale the page prints at (1 = 100 %), whatever its rotation: √|det| of the matrix.
+    /// Every layout scales uniformly, so this is exact. 0 for a degenerate matrix.
+    pub fn scale(&self) -> f64 {
+        let [a, b, c, d, _, _] = self.matrix.0;
+        let s = (a * d - b * c).abs().sqrt();
+        if s.is_finite() { s } else { 0.0 }
+    }
+}
+
+/// The printed size (points) of a page of display size `size` under the window `region` (or
+/// the whole page) at `scale`: what the preview reports next to the sheet. `None` when the
+/// window misses the page or the numbers aren't finite.
+pub fn printed_size(size: (f64, f64), region: Option<[f64; 4]>, scale: f64) -> Option<(f64, f64)> {
+    let (_, (w, h)) = page_view(size, region)?;
+    let p = (w * scale, h * scale);
+    (p.0.is_finite() && p.1.is_finite()).then_some(p)
+}
+
+/// A poster sheet's place in its page's grid of tiles (numbered row by row from the top-left).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tile {
+    pub col: usize,
+    pub row: usize,
+    pub cols: usize,
+    pub rows: usize,
+}
+
 /// One output sheet.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Sheet {
     pub size: (f64, f64),
     pub placed: Vec<Placement>,
-    /// Page borders (Multiple) and cut marks (Poster), in sheet space: rectangles and lines.
+    /// Page borders (Multiple) and cut marks (Poster, and Multiple's cut and stack), in sheet
+    /// space: rectangles and lines.
     pub borders: Vec<[f64; 4]>,
     pub lines: Vec<[f64; 4]>,
+    /// Poster: this sheet's tile in its page's grid. `None` in the other layouts.
+    pub tile: Option<Tile>,
 }
 
 fn oriented(paper: (f64, f64), o: Orientation, landscape_wanted: bool) -> (f64, f64) {
@@ -219,12 +276,48 @@ fn fit_scale((dw, dh): (f64, f64), (cw, ch): (f64, f64)) -> f64 {
     if dw <= 0.0 || dh <= 0.0 { 1.0 } else { (cw / dw).min(ch / dh) }
 }
 
+/// The smallest window side, in points: anything thinner is a slip of the mouse.
+pub const MIN_REGION: f64 = 1.0;
+
+/// The part of a page of display size `size` that prints under `region`: its origin and size in
+/// display space. `None` when the window misses the page (or is degenerate).
+pub fn page_view(size: (f64, f64), region: Option<[f64; 4]>) -> Option<((f64, f64), (f64, f64))> {
+    let Some(r) = region else { return Some(((0.0, 0.0), size)) };
+    if !r.iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    let (x0, x1) = (r[0].min(r[2]).max(0.0), r[0].max(r[2]).min(size.0));
+    let (y0, y1) = (r[1].min(r[3]).max(0.0), r[1].max(r[3]).min(size.1));
+    (x1 - x0 >= MIN_REGION && y1 - y0 >= MIN_REGION).then_some(((x0, y0), (x1 - x0, y1 - y0)))
+}
+
+/// `pl`, laid out for a page whose display space starts at `origin`: the matrix shifts by it, and
+/// the clip moves with it (and stays inside the window `win`).
+fn shifted(mut pl: Placement, (ox, oy): (f64, f64), win: [f64; 4]) -> Placement {
+    let [a, b, c, d, e, f] = pl.matrix.0;
+    pl.matrix = Matrix([a, b, c, d, e - (a * ox + c * oy), f - (b * ox + d * oy)]);
+    let [x0, y0, x1, y1] = pl.clip;
+    pl.clip = [(x0 + ox).max(win[0]), (y0 + oy).max(win[1]), (x1 + ox).min(win[2]), (y1 + oy).min(win[3])];
+    pl
+}
+
 /// Lay out the sheets for `settings` given each source page's display size.
 pub fn layout(sizes: &[(f64, f64)], settings: &Settings) -> Result<Vec<Sheet>, PrintError> {
     let pages: Vec<usize> = settings.pages.iter().copied().filter(|p| *p < sizes.len()).collect();
     if pages.is_empty() {
         return Err(PrintError::NoPages);
     }
+    // Each page's printed part: the whole page, or the window. Layouts below see `sizes` as the
+    // printed part's size and shift their placements by its origin.
+    let mut views = vec![((0.0, 0.0), (0.0, 0.0)); sizes.len()];
+    for &p in &pages {
+        views[p] = page_view(sizes[p], settings.region).ok_or(PrintError::WindowOutsidePage(p + 1))?;
+    }
+    let sizes: Vec<(f64, f64)> = views.iter().map(|v| v.1).collect();
+    let fix = |pl: Placement| {
+        let ((ox, oy), (w, h)) = views[pl.page];
+        shifted(pl, (ox, oy), [ox, oy, ox + w, oy + h])
+    };
     let paper = settings.paper;
     if !(paper.0 >= 72.0 && paper.1 >= 72.0 && paper.0.is_finite() && paper.1.is_finite()) {
         return Err(PrintError::Invalid("invalid paper size".into()));
@@ -235,7 +328,8 @@ pub fn layout(sizes: &[(f64, f64)], settings: &Settings) -> Result<Vec<Sheet>, P
             for &p in &pages {
                 let d = sizes[p];
                 let size = oriented(paper, settings.orientation, d.0 > d.1);
-                let fit = fit_scale(d, (size.0 - 2.0 * MARGIN, size.1 - 2.0 * MARGIN));
+                // The whole sheet, no margin: a page the sheet's size prints at exactly 100 %.
+                let fit = fit_scale(d, size);
                 let s = match mode {
                     SizeMode::Fit => fit,
                     SizeMode::Actual => 1.0,
@@ -243,15 +337,16 @@ pub fn layout(sizes: &[(f64, f64)], settings: &Settings) -> Result<Vec<Sheet>, P
                     SizeMode::Custom(pct) if pct.is_finite() && pct > 0.0 => pct / 100.0,
                     SizeMode::Custom(_) => return Err(PrintError::Invalid("the scale must be more than 0%".into())),
                 };
-                sheets.push(Sheet { size, placed: vec![place_in(p, d, [0.0, 0.0, size.0, size.1], s, false)], ..Sheet::default() });
+                sheets.push(Sheet { size, placed: vec![fix(place_in(p, d, [0.0, 0.0, size.0, size.1], s, false))], ..Sheet::default() });
             }
         }
         Layout::Multiple { cols, rows, order, border, auto_rotate } => {
-            if cols == 0 || rows == 0 || cols * rows > 256 {
+            let cells = cols.checked_mul(rows).filter(|&n| n > 0 && n <= 256);
+            let Some(cells) = cells else {
                 return Err(PrintError::Invalid("invalid number of pages per sheet".into()));
-            }
+            };
             // A grid with more columns than rows wants a landscape sheet, and the reverse.
-            let first = sizes[pages[0]];
+            let first = pages.first().and_then(|&p| sizes.get(p)).copied().ok_or(PrintError::NoPages)?;
             let page_landscape = first.0 > first.1;
             let (gc, gr, sheet_landscape) = if cols == rows {
                 (cols, rows, page_landscape)
@@ -265,11 +360,36 @@ pub fn layout(sizes: &[(f64, f64)], settings: &Settings) -> Result<Vec<Sheet>, P
             let gap = 6.0;
             let (aw, ah) = (size.0 - 2.0 * MARGIN, size.1 - 2.0 * MARGIN);
             let (cw, ch) = ((aw - gap * (gc - 1) as f64) / gc as f64, (ah - gap * (gr - 1) as f64) / gr as f64);
-            for chunk in pages.chunks(gc * gr) {
+            if cw <= 0.0 || ch <= 0.0 {
+                return Err(PrintError::Invalid("the page grid does not fit on the paper".into()));
+            }
+            let sheet_count = pages.len().div_ceil(cells);
+            for sheet_index in 0..sheet_count {
                 let mut sheet = Sheet { size, ..Sheet::default() };
-                for (k, &p) in chunk.iter().enumerate() {
+                if order == PageOrder::CutStack {
+                    // Marks align across every sheet, including unoccupied cells. Cut in the
+                    // middle of each gutter; marks stay in the printable area, clear of cells.
+                    for col in 1..gc {
+                        let x = MARGIN + col as f64 * (cw + gap) - gap / 2.0;
+                        sheet.lines.extend([[x, MARGIN, x, MARGIN + 8.0], [x, size.1 - MARGIN - 8.0, x, size.1 - MARGIN]]);
+                    }
+                    for row in 1..gr {
+                        let y = size.1 - MARGIN - row as f64 * (ch + gap) + gap / 2.0;
+                        sheet.lines.extend([[MARGIN, y, MARGIN + 8.0, y], [size.0 - MARGIN - 8.0, y, size.0 - MARGIN, y]]);
+                    }
+                }
+                for k in 0..cells {
+                    // A cell's pile gets consecutive pages. Missing pages leave blank cells,
+                    // rather than shifting later piles left on the final sheets.
+                    let index = if order == PageOrder::CutStack {
+                        k.checked_mul(sheet_count).and_then(|n| n.checked_add(sheet_index))
+                    } else {
+                        sheet_index.checked_mul(cells).and_then(|n| n.checked_add(k))
+                    };
+                    let Some(p) = index.and_then(|i| pages.get(i)).copied() else { continue };
+
                     let (col, row) = match order {
-                        PageOrder::Horizontal => (k % gc, k / gc),
+                        PageOrder::Horizontal | PageOrder::CutStack => (k % gc, k / gc),
                         PageOrder::HorizontalReversed => (gc - 1 - k % gc, k / gc),
                         PageOrder::Vertical => (k / gr, k % gr),
                         PageOrder::VerticalReversed => (gc - 1 - k / gr, k % gr),
@@ -277,10 +397,16 @@ pub fn layout(sizes: &[(f64, f64)], settings: &Settings) -> Result<Vec<Sheet>, P
                     let x0 = MARGIN + col as f64 * (cw + gap);
                     let y1 = size.1 - MARGIN - row as f64 * (ch + gap);
                     let cell = [x0, y1 - ch, x0 + cw, y1];
-                    let d = sizes[p];
+                    let d = sizes.get(p).copied().ok_or_else(|| PrintError::Invalid("page size is missing".into()))?;
+                    if !(d.0.is_finite() && d.1.is_finite() && d.0 > 0.0 && d.1 > 0.0) {
+                        return Err(PrintError::Invalid("invalid page size".into()));
+                    }
                     let rotate = auto_rotate && (d.0 > d.1) != (cw > ch) && (d.0 - d.1).abs() > 1.0;
                     let s = fit_scale(if rotate { (d.1, d.0) } else { d }, (cw, ch));
-                    let pl = place_in(p, d, cell, s, rotate);
+                    if !s.is_finite() || s <= 0.0 {
+                        return Err(PrintError::Invalid("page size cannot be scaled to the grid".into()));
+                    }
+                    let pl = fix(place_in(p, d, cell, s, rotate));
                     if border {
                         let b = pl.matrix.bbox(pl.clip);
                         sheet.borders.push(b);
@@ -314,7 +440,7 @@ pub fn layout(sizes: &[(f64, f64)], settings: &Settings) -> Result<Vec<Sheet>, P
                         if let Some(p) = p {
                             let d = sizes[p];
                             let s = fit_scale(d, (cell[2] - cell[0], cell[3] - cell[1]));
-                            sheet.placed.push(place_in(p, d, cell, s, false));
+                            sheet.placed.push(fix(place_in(p, d, cell, s, false)));
                         }
                     }
                     sheets.push(sheet);
@@ -349,7 +475,12 @@ pub fn layout(sizes: &[(f64, f64)], settings: &Settings) -> Result<Vec<Sheet>, P
                         let wy1 = sh - ty as f64 * stepy;
                         let matrix = Matrix([s, 0.0, 0.0, s, MARGIN - wx0, size.1 - MARGIN - wy1]);
                         let clip = [wx0 / s, (wy1 - th) / s, (wx0 + tw) / s, wy1 / s];
-                        let mut sheet = Sheet { size, placed: vec![Placement { page: p, matrix, clip }], ..Sheet::default() };
+                        let mut sheet = Sheet {
+                            size,
+                            placed: vec![fix(Placement { page: p, matrix, clip })],
+                            tile: Some(Tile { col: tx, row: ty, cols: nx, rows: ny }),
+                            ..Sheet::default()
+                        };
                         if cut_marks {
                             let (x0, y0, x1, y1) = (MARGIN, MARGIN, size.0 - MARGIN, size.1 - MARGIN);
                             for (x, y) in [(x0, y0), (x1, y0), (x0, y1), (x1, y1)] {
@@ -449,7 +580,7 @@ fn appearance_matrix(doc: &Document, form: &Dict, rect: [f64; 4]) -> Option<Matr
 
 /// A Form XObject holding page `index` as it prints (user space; BBox = crop box).
 fn page_form(doc: &mut Document, index: usize, content: Content) -> Result<ObjRef, PrintError> {
-    let page = printcraft_model::pages(doc).swap_remove(index);
+    let page = pdfcraft_model::pages(doc).swap_remove(index);
     let crop = page.crop(doc);
     let mut res = page.dict.get(b"Resources").and_then(|r| doc.resolve(r).as_dict().cloned()).unwrap_or_default();
     let mut body = if content == Content::FormFieldsOnly { Vec::new() } else { decoded_contents(doc, &page.dict) };
@@ -500,7 +631,7 @@ fn page_form(doc: &mut Document, index: usize, content: Content) -> Result<ObjRe
 /// Build the print-ready PDF for `settings`. Encryption is not carried over (the file goes to a
 /// printer or is the user's own copy); callers must check the print permission first.
 pub fn impose(src: &Document, settings: &Settings) -> Result<Vec<u8>, PrintError> {
-    let pages = printcraft_model::pages(src);
+    let pages = pdfcraft_model::pages(src);
     let sizes: Vec<(f64, f64)> = pages.iter().map(|p| p.display_size(src)).collect();
     let sheets = layout(&sizes, settings)?;
     let mut doc = src.clone();

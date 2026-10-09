@@ -1,4 +1,4 @@
-# PrintCraft parity checklist vs Acrobat Pro (offline feature set). Generated from plan docs; maintained by hand.
+# PdfCraft parity checklist vs Acrobat Pro (offline feature set). Generated from plan docs; maintained by hand.
 # Validated and reported by `cargo xtask parity`. Schema: see the [schema] table.
 # Status rules: `shipped` = usable today with at least one cited test; `partial` = part exists (notes say what is
 # missing); `planned` = not started; `na` = Adobe-cloud-only (notes name the local or pluggable alternative).
@@ -22,8 +22,8 @@ milestone = "M1"
 status = "shipped"
 commands = ["file.open"]
 tools = ["doc_open"]
-evidence = ["crates/automation/tests/automation.rs::open_inspect_render_and_find", "crates/ui-egui/tests/ui.rs::opening_a_pdf_shows_comments_and_bookmarks", "crates/ui-egui/tests/ui.rs::files_and_quit_from_the_operating_system"]
-notes = "File ▸ Open, the command line (Linux and Windows file associations), and on macOS Finder, Open With and the Dock (Apple events; the bundle declares PDF as a document type)"
+evidence = ["crates/automation/tests/automation.rs::open_inspect_render_and_find", "crates/ui-egui/tests/ui.rs::opening_a_pdf_shows_comments_and_bookmarks", "crates/ui-egui/tests/ui.rs::files_and_quit_from_the_operating_system", "apps/pdfcraft/src/single_instance.rs::the_second_launch_hands_its_files_to_the_first", "apps/pdfcraft/src/single_instance.rs::a_wrong_token_or_a_stale_file_is_not_trusted", "apps/pdfcraft/src/single_instance.rs::a_listener_that_cant_prove_the_token_gets_no_files", "crates/ui-egui/tests/windows.rs::a_forwarded_file_or_a_relaunch_restores_a_minimized_window_from_logic_alone", "crates/ui-egui/tests/windows.rs::a_forwarded_file_waits_for_an_open_dialog_or_prompt"]
+notes = "File ▸ Open, the command line (Linux and Windows file associations), and on macOS Finder, Open With and the Dock (Apple events; the bundle declares PDF as a document type). One app per user: a later launch hands its files to the running app over a loopback socket, using a per-user, per-machine token file (LocalAppData on Windows); both sides prove they know the token (HMAC over a fresh nonce) before any file name is sent, so a stale file naming a port another process holds makes the launch run on its own. The files open as tabs in the window used last, which is un-minimized and brought to the front even while every window is minimized; files arriving while a dialog or prompt is open wait until it closes. `--new-instance` and launches with options run on their own. Checked on Linux (unit tests, and by hand under Xvfb/X11, which has no window manager to minimize with); not yet run on Windows or macOS, where bringing the window to the front may be limited by the system's focus rules (the forwarding process doesn't call AllowSetForegroundWindow)."
 
 [[feature]]
 id = "core.repair-broken-files"
@@ -574,7 +574,7 @@ milestone = "M4"
 status = "shipped"
 commands = ["file.close"]
 tools = ["doc_close"]
-evidence = ["crates/ui-egui/tests/editing.rs::closing_a_dirty_tab_asks_and_cancel_keeps_it", "crates/ui-egui/tests/editing.rs::closing_a_dirty_tab_can_save_first", "crates/ui-egui/tests/editing.rs::quitting_with_unsaved_changes_asks_for_each_document"]
+evidence = ["crates/ui-egui/tests/editing.rs::closing_a_dirty_tab_asks_and_cancel_keeps_it", "crates/ui-egui/tests/editing.rs::closing_a_dirty_tab_can_save_first", "crates/ui-egui/tests/editing.rs::quitting_with_unsaved_changes_asks_for_each_document", "crates/ui-egui/tests/editing.rs::save_prompt_stays_inside_the_screen_for_a_long_filename"]
 notes = ""
 
 [[feature]]
@@ -600,6 +600,18 @@ commands = ["file.close"]
 tools = ["doc_close"]
 evidence = ["crates/ui-egui/tests/editing.rs::clean_tabs_close_without_asking"]
 notes = ""
+
+[[feature]]
+id = "core.multi-window-tabs"
+title = "Several windows with document tabs; drag tabs out to a new window or onto another window's tabs"
+area = "A"
+tier = "P1"
+milestone = "M3"
+status = "shipped"
+commands = []
+tools = []
+evidence = ["crates/ui-egui/tests/windows.rs::tabs_move_to_a_new_window_and_back_and_an_empty_window_closes", "crates/ui-egui/tests/windows.rs::the_root_window_takes_over_another_when_its_last_tab_leaves", "crates/ui-egui/tests/windows.rs::closing_a_window_asks_about_its_unsaved_documents_there", "crates/ui-egui/tests/windows.rs::quitting_asks_about_unsaved_documents_in_every_window", "crates/ui-egui/tests/windows.rs::dragging_a_tab_along_the_strip_reorders_and_never_tears_off_where_windows_are_embedded", "crates/ui-egui/src/windows.rs::a_drop_on_another_windows_strip_goes_there_and_elsewhere_opens_a_new_window", "crates/ui-egui/tests/windows.rs::closing_every_window_together_quits_but_closing_the_root_alone_hands_it_another_windows_tabs"]
+notes = "Native windows through egui viewports, each with its own ordered tabs. Drag a tab along the strip to reorder it; release it over another window's tab strip (an insertion marker shows where) to move it there; release it elsewhere to open it in a new window at that place (a window's only tab moves its window). A window left without tabs closes; closing a window closes its tabs, asking about unsaved changes there; the system's Quit asks in every window. Closes reaching the first window and the others together (the Windows taskbar's Close all windows) quit; the first window waits a moment (0.2 s, at least two frames) before taking another window's tabs over, so it shows its empty Home screen that long when closed on its own. Checked headlessly (model tests; other windows embedded in kittest) and by hand on Linux X11 under Xvfb with real windows. Not yet run on Windows or macOS; mixed-DPI monitors may misplace drops (window positions are compared in points); on Wayland, which reports no window positions, tabs tear off but can't be dropped onto another window; on the web tabs don't tear off. Panels, mode and tool choices are shared by all windows rather than kept per window."
 
 [[feature]]
 id = "core.close-all"
@@ -816,10 +828,10 @@ area = "B"
 tier = "P0"
 milestone = "M3"
 status = "shipped"
-commands = []
+commands = ["view.layout.continuous"]
 tools = []
-evidence = ["crates/ui-egui/tests/view.rs::continuous_layout_stacks_pages_vertically"]
-notes = ""
+evidence = ["crates/ui-egui/tests/view.rs::continuous_layout_stacks_pages_vertically", "crates/ui-egui/tests/view.rs::page_display_commands_switch_layouts", "crates/ui-egui/tests/view.rs::default_page_display_is_used_for_new_documents", "crates/ui-egui/src/canvas.rs::fit_page_and_height_hold_still_while_mixed_page_sizes_scroll_past"]
+notes = "the default for PDFs that don't ask for a layout (Preferences ▸ Default page display); pages stack with no snapping. Fit page and Fit height fit the largest page, so the zoom holds still across mixed page sizes"
 
 [[feature]]
 id = "view.layout-single-page"
@@ -828,10 +840,10 @@ area = "B"
 tier = "P0"
 milestone = "M3"
 status = "shipped"
-commands = []
+commands = ["view.layout.single"]
 tools = []
-evidence = ["crates/ui-egui/tests/view.rs::single_page_layout_shows_one_page_at_a_time"]
-notes = ""
+evidence = ["crates/ui-egui/tests/view.rs::single_page_view_opens_with_one_whole_page_per_window", "crates/ui-egui/tests/view.rs::single_page_view_refits_when_the_window_changes_size", "crates/ui-egui/tests/view.rs::single_page_view_scrolls_continuously_and_space_lands_on_page_tops", "crates/ui-egui/tests/view.rs::zooming_leaves_one_page_per_window_until_single_page_is_chosen_again", "crates/ui-egui/tests/view.rs::rail_page_display_button_switches_layouts", "crates/ui-egui/tests/view.rs::view_menu_page_display_uses_the_same_commands"]
+notes = "PeDeeFe's single page (the owner's choice, unlike Acrobat's page-at-a-time view): one whole page per window (Fit page against the largest page, refitted when the window changes size, until zoomed by hand), the wheel and scrollbar scroll continuously, and Space / Page Down and Shift+Space / Page Up go to the top of the next / previous page so it fills the window. Switched from the View menu, the rail's Page display button or the palette. Missing: Acrobat's non-continuous single page (no wheel page turning any more)"
 
 [[feature]]
 id = "view.layout-two-up"
@@ -840,7 +852,7 @@ area = "B"
 tier = "P0"
 milestone = "M3"
 status = "shipped"
-commands = []
+commands = ["view.layout.two_up"]
 tools = []
 evidence = ["crates/ui-egui/tests/view.rs::two_up_layout_places_pages_side_by_side", "crates/ui-egui/tests/viewer.rs::two_page_view_steps_a_spread_at_a_time"]
 notes = "next/previous page step a spread at a time"
@@ -864,10 +876,10 @@ area = "B"
 tier = "P1"
 milestone = "M3"
 status = "shipped"
-commands = []
+commands = ["view.layout.cover"]
 tools = []
-evidence = ["crates/ui-egui/tests/viewer.rs::layouts_fit_height_labels_and_system_theme"]
-notes = "View ▸ Show cover page in two-page view"
+evidence = ["crates/ui-egui/tests/viewer.rs::layouts_fit_height_labels_and_system_theme", "crates/ui-egui/tests/view.rs::page_display_commands_switch_layouts", "crates/ui-egui/tests/viewer.rs::page_down_steps_every_spread_when_several_fit_on_screen"]
+notes = "View ▸ Page display, the rail's Page display button or the palette; disabled outside two-page view; next / previous page step one spread at a time even when several spreads fit on screen"
 
 [[feature]]
 id = "view.page-gaps"
@@ -887,11 +899,11 @@ title = "Automatic scrolling"
 area = "B"
 tier = "P2"
 milestone = "M3"
-status = "planned"
+status = "partial"
 commands = []
 tools = []
-evidence = []
-notes = ""
+evidence = ["crates/ui-egui/tests/control.rs::middle_click_autoscroll_latches_has_a_dead_zone_and_scrolls_both_directions", "crates/ui-egui/tests/control.rs::organize_pages_supports_autoscroll_without_selecting_or_reordering_pages", "crates/ui-egui/tests/control.rs::press_drag_release_scrolls_while_held_and_stops_on_release_without_starting_page_tools", "crates/ui-egui/tests/control.rs::zoomed_in_autoscroll_also_moves_sideways_like_a_joystick", "crates/ui-egui/tests/control.rs::middle_button_never_selects_text", "crates/ui-egui/tests/control.rs::farther_from_the_click_scrolls_faster_in_the_viewer_and_page_grid", "crates/ui-egui/tests/control.rs::autoscroll_uses_the_initial_click_position_when_input_arrives_in_one_frame", "crates/ui-egui/tests/control.rs::autoscroll_uses_elapsed_frame_time_and_preserves_fractional_motion_in_both_views"]
+notes = "Middle-button autoscroll on every platform, in the document and Organize Pages, like Acrobat and SumatraPDF on Windows: an original marker at the press point (two arrows, four when the pages are wider than the view and it can also scroll sideways; the page grid is vertical only) and a cursor pointing where the view moves. A click latches it on until the next click; press, drag and release scrolls while held and stops on release. A Chromium-style nonlinear curve increases speed with the distance from the press, per axis, with a 15-point dead zone that pauses immediately. Continuous redraws use elapsed frame time and preserve fractional movement, tested at 30/60/120/144 fps. The middle button never selects text, draws or drags pages. Cancels on another middle click, Escape, other pointer/wheel input, focus loss, tab changes and dialogs. Driven headlessly through the opt-in UI control channel (ui.click/ui.move/ui.drag); tested headlessly on Linux only, not yet on a real Windows or macOS mouse. Keyboard-started timed scrolling is not implemented."
 
 [[feature]]
 id = "view.zoom-in-out"
@@ -936,10 +948,10 @@ area = "B"
 tier = "P0"
 milestone = "M3"
 status = "shipped"
-commands = []
+commands = ["view.fit_one_page"]
 tools = []
-evidence = ["crates/ui-egui/tests/view.rs::actual_size_fit_width_and_fit_page"]
-notes = ""
+evidence = ["crates/ui-egui/tests/view.rs::actual_size_fit_width_and_fit_page", "crates/ui-egui/tests/view.rs::rail_page_display_menu_offers_acrobats_view_choices", "crates/ui-egui/tests/view.rs::fit_page_holds_zoom_across_mixed_page_sizes", "crates/ui-egui/tests/view.rs::single_page_fit_page_fits_the_largest_page"]
+notes = "View ▸ Zoom to page level (⌘0) and the rail's Page display menu, which also offers Fit one full page (single-page view at Fit page). Every layout fits its largest page so mixed sizes never jump the zoom; single-page view fits one whole page per window and refits as the window changes size"
 
 [[feature]]
 id = "view.zoom-fit-width"
@@ -948,10 +960,10 @@ area = "B"
 tier = "P0"
 milestone = "M3"
 status = "shipped"
-commands = []
+commands = ["view.fit_width_scrolling"]
 tools = []
-evidence = ["crates/ui-egui/tests/view.rs::actual_size_fit_width_and_fit_page"]
-notes = ""
+evidence = ["crates/ui-egui/tests/view.rs::actual_size_fit_width_and_fit_page", "crates/ui-egui/tests/view.rs::rail_page_display_menu_offers_acrobats_view_choices"]
+notes = "View ▸ Fit to width (⌘2) and the rail's Page display menu's Fit to width scrolling (continuous scrolling at Fit width)"
 
 [[feature]]
 id = "view.zoom-fit-height"
@@ -1106,8 +1118,8 @@ milestone = "M3"
 status = "shipped"
 commands = []
 tools = []
-evidence = ["crates/ui-egui/tests/control.rs::state_and_view_options", "crates/ui-egui/tests/ui.rs::theme_and_view_options_apply", "crates/ui-egui/tests/viewer.rs::two_page_view_steps_a_spread_at_a_time"]
-notes = "in two-page view, next and previous page move a whole spread (with or without a cover page)"
+evidence = ["crates/ui-egui/tests/control.rs::state_and_view_options", "crates/ui-egui/tests/ui.rs::theme_and_view_options_apply", "crates/ui-egui/tests/viewer.rs::two_page_view_steps_a_spread_at_a_time", "crates/ui-egui/tests/viewer.rs::arrow_and_page_keys_move_through_a_scrolling_document"]
+notes = "in two-page view, next and previous page move a whole spread (with or without a cover page); → / ← turn pages in every layout, ↓ / ↑ scroll a line and Page Down / Page Up a screen (the page in single-page view), as in Acrobat"
 
 [[feature]]
 id = "view.goto-page-label"
@@ -1166,8 +1178,8 @@ milestone = "M3"
 status = "shipped"
 commands = []
 tools = ["doc_list"]
-evidence = ["crates/ui-egui/tests/editing.rs::combining_files_opens_a_new_unsaved_tab", "crates/ui-egui/tests/control.rs::state_and_view_options"]
-notes = ""
+evidence = ["crates/ui-egui/tests/editing.rs::combining_files_opens_a_new_unsaved_tab", "crates/ui-egui/tests/control.rs::state_and_view_options", "crates/ui-egui/tests/viewer.rs::each_document_keeps_its_own_scroll_position"]
+notes = "each tab keeps its own scroll position (#189)"
 
 [[feature]]
 id = "view.multiple-windows"
@@ -1214,8 +1226,8 @@ milestone = "M3"
 status = "shipped"
 commands = []
 tools = []
-evidence = ["crates/ui-egui/tests/ui.rs::theme_and_view_options_apply"]
-notes = ""
+evidence = ["crates/ui-egui/tests/ui.rs::theme_and_view_options_apply", "crates/ui-egui/tests/ui.rs::page_thumbnails_open_by_themselves_only_for_documents_with_several_pages", "crates/ui-egui/tests/ui.rs::page_thumbnails_panel_shows_for_a_multi_page_document_and_not_for_one_page"]
+notes = "PeDeeFe opens the thumbnails by itself only for documents with 2+ pages (a one-page document opens with no right panel, also when its /PageMode asks for thumbnails); a panel the user picked stays across opens, one opened automatically follows the next document. A PDF's own /PageMode for bookmarks, attachments or layers is still honoured. Unlike upstream, Comments and Bookmarks no longer open by themselves."
 
 [[feature]]
 id = "view.thumbnail-context-ops"
@@ -1584,10 +1596,10 @@ area = "B"
 tier = "P1"
 milestone = "M3"
 status = "shipped"
-commands = ["view.theme"]
+commands = ["view.theme", "view.theme.light", "view.theme.dark"]
 tools = []
-evidence = ["crates/ui-egui/tests/ui.rs::theme_and_view_options_apply", "crates/ui-egui/src/theme.rs::text_is_readable_on_every_surface"]
-notes = "every text colour meets WCAG AA (4.5:1) on every surface in both themes; glyphs are pixel-aligned for sharper text at 100–150 % scaling"
+evidence = ["crates/ui-egui/tests/theme.rs::toolbar_and_view_menu_share_three_state_preferences", "crates/ui-egui/src/theme.rs::text_is_readable_on_every_surface", "crates/ui-egui/src/theme.rs::the_app_theme_holds_whatever_theme_the_system_reports"]
+notes = "Toolbar and Display theme share three choices and a preference setter; manual choices exit system mode. Every text colour meets WCAG AA (4.5:1) on every surface in both themes; glyphs are pixel-aligned for sharper text at 100–150 % scaling. The chosen theme holds whether the system is in light or dark mode, from the first frame (egui's light and dark styles both carry it)."
 
 [[feature]]
 id = "view.theme-system"
@@ -1596,10 +1608,10 @@ area = "B"
 tier = "P1"
 milestone = "M3"
 status = "shipped"
-commands = ["view.theme"]
+commands = ["view.theme.system"]
 tools = []
-evidence = ["crates/ui-egui/tests/viewer.rs::layouts_fit_height_labels_and_system_theme"]
-notes = "Display theme ▸ Use system setting (and --theme system)"
+evidence = ["crates/ui-egui/tests/theme.rs::toolbar_and_view_menu_share_three_state_preferences", "crates/ui-egui/tests/theme.rs::saved_preferences_restore_with_legacy_light_dark_settings", "crates/ui-egui/tests/control.rs::theme_commands_and_options_report_preference_and_effective_colours"]
+notes = "Toolbar, Display theme and --theme system share a persisted System preference that follows OS changes without losing the selected mode; ui.state reports preference and resolved colours separately."
 
 [[feature]]
 id = "view.home-view"
@@ -1622,8 +1634,8 @@ milestone = "M4"
 status = "shipped"
 commands = []
 tools = []
-evidence = ["crates/ui-egui/tests/ui.rs::every_catalog_tool_is_listed_after_view_more", "crates/engine/src/commands.rs::every_ready_catalogue_item_is_a_registered_command"]
-notes = ""
+evidence = ["crates/ui-egui/tests/ui.rs::every_catalog_tool_is_listed_after_view_more", "crates/engine/src/commands.rs::every_ready_catalogue_item_is_a_registered_command", "crates/ui-egui/tests/ui.rs::the_all_tools_panel_starts_closed_and_its_state_is_remembered"]
+notes = "The left tool panel starts closed on a first run and its open/closed state is remembered across sessions (settings key left_open)."
 
 [[feature]]
 id = "view.command-palette"
@@ -1687,15 +1699,15 @@ notes = ""
 
 [[feature]]
 id = "view.check-for-updates"
-title = "Help ▸ Check for updates"
+title = "Check for updates, download and install (Help, Preferences ▸ Updates)"
 area = "B"
 tier = "P2"
 milestone = "M3"
 status = "partial"
 commands = ["help.check_updates"]
 tools = []
-evidence = ["crates/ui-egui/tests/updates.rs::a_newer_release_is_offered_for_download", "crates/ui-egui/tests/updates.rs::nothing_is_asked_until_the_user_checks", "apps/printcraft/src/updates.rs::answers_are_read_and_only_our_release_pages_are_offered"]
-notes = "asks GitHub Releases on request and offers the release page. By the owner's decision there is no check at start and no in-place install (Acrobat has both)"
+evidence = ["crates/ui-egui/tests/updates.rs::a_newer_release_is_offered_for_download", "crates/ui-egui/tests/updates.rs::the_automatic_check_only_notifies_and_is_remembered", "crates/ui-egui/tests/updates.rs::a_verified_download_installs_after_the_app_closes", "crates/ui-egui/tests/updates.rs::unsaved_changes_are_asked_about_and_cancelling_keeps_the_update_ready", "apps/pdfcraft/src/updates.rs::answers_are_read_and_only_our_release_pages_are_offered", "apps/pdfcraft/src/updates.rs::downloads_are_verified_capped_and_cancellable", "apps/pdfcraft/src/updates.rs::the_installer_gets_its_values_through_the_environment"]
+notes = "Help ▸ Check for updates and Preferences ▸ Updates ask GitHub Releases; an optional automatic check (on by default, at most once a day at start) only notifies. On Windows, Download and install fetches the MSI for the running architecture from this repository's release files, verifies it against the release's SHA256SUMS, closes through the unsaved-changes prompt and runs msiexec /passive, then reopens the app. Missing: the download/install/relaunch has only been tested with stand-ins (no Windows CI run of the real path yet); builds are unsigned, so there is no signature check beyond SHA-256 from the same release; no delta updates or background download; macOS/Linux/web still open the release page"
 
 [[feature]]
 id = "view.single-key-accelerators"
@@ -1794,8 +1806,8 @@ milestone = "M7"
 status = "partial"
 commands = ["edit.edit_text"]
 tools = ["text_lines", "text_paragraphs", "text_edit"]
-evidence = ["crates/edit/src/tests.rs::paragraphs_are_found_and_rewrapped", "crates/edit/src/tests.rs::text_lines_are_found_and_replaced_in_place", "crates/ui-egui/tests/editing.rs::editing_existing_text_in_place", "crates/automation/tests/automation.rs::editing_existing_text_through_tools"]
-notes = "click a paragraph box and retype it in place (font reused or Helvetica substituted, colour and spacing kept, rewrapped); drag a box to move it or its right-edge handle to rewrap it (edit.text-move-resize); per-character formatting changes are next"
+evidence = ["crates/edit/src/tests.rs::paragraphs_are_found_and_rewrapped", "crates/edit/src/tests.rs::text_lines_are_found_and_replaced_in_place", "crates/ui-egui/tests/editing.rs::editing_existing_text_in_place", "crates/ui-egui/tests/editing.rs::escape_applies_the_typed_text_and_leaves_edit_mode", "crates/automation/tests/automation.rs::editing_existing_text_through_tools"]
+notes = "click a paragraph box and retype it in place (font reused or Helvetica substituted, colour and spacing kept, rewrapped); ⌘Enter, clicking away or Esc applies it (Esc also leaves the tool; ⌘Z takes it back); drag a box to move it or its right-edge handle to rewrap it (edit.text-move-resize); several boxes are selected and deleted together (edit.select-delete-objects); per-character formatting changes are next"
 
 [[feature]]
 id = "edit.text-reflow"
@@ -2047,7 +2059,19 @@ status = "shipped"
 commands = ["edit.edit_text"]
 tools = ["image_edit"]
 evidence = ["crates/edit/src/tests.rs::page_images_move_turn_replace_and_delete", "crates/ui-egui/tests/editing.rs::editing_existing_images_on_the_page", "crates/automation/tests/automation.rs::editing_page_images_through_tools"]
-notes = "existing page images: select, drag to move, drag a corner to resize keeping proportions; Delete removes; added images too"
+notes = "existing page images: select, drag to move, drag a corner to resize keeping proportions; Delete removes (with other selected boxes in one step, edit.select-delete-objects); added images too"
+
+[[feature]]
+id = "edit.select-delete-objects"
+title = "Select several text boxes and images and delete them"
+area = "C"
+tier = "P0"
+milestone = "M7"
+status = "shipped"
+commands = ["edit.edit_text"]
+tools = ["text_delete"]
+evidence = ["crates/ui-egui/tests/editing.rs::a_marquee_selects_boxes_and_delete_removes_them_in_one_step", "crates/edit/src/tests.rs::deleting_a_run_in_vertical_writing_writes_no_horizontal_skip", "crates/ui-egui/tests/editing.rs::ctrl_a_selects_every_box_and_backspace_deletes_them", "crates/ui-egui/tests/editing.rs::delete_while_typing_edits_the_text_not_the_boxes", "crates/ui-egui/tests/editing.rs::delete_deletes_the_added_item_clicked_after_a_marquee_not_the_boxes", "crates/ui-egui/tests/editing.rs::delete_deletes_the_comment_selected_after_the_boxes_not_the_boxes", "crates/ui-egui/tests/editing.rs::delete_under_the_print_dialog_leaves_the_selected_boxes", "crates/edit/src/tests.rs::deleting_paragraphs_takes_them_out_in_one_pass", "crates/edit/src/tests.rs::deleting_a_run_keeps_the_next_run_on_its_line_in_place", "crates/edit/src/tests.rs::deleting_a_box_keeps_overlapping_text_that_is_not_a_copy_of_it", "crates/edit/src/tests.rs::deleting_a_box_takes_its_copies_and_the_invisible_text_over_it", "crates/engine/src/tests.rs::deleting_paragraphs_is_one_undoable_edit", "crates/engine/src/tests.rs::deleting_boxes_takes_paragraphs_in_one_pass_then_images_from_the_last", "crates/automation/tests/automation.rs::deleting_paragraphs_through_tools"]
+notes = "Edit text & images: drag on empty page space to select every paragraph and image the rectangle touches (touching is enough, as in Acrobat), ⇧/⌘-click adds or removes a box, ⌘A selects every box on the page; Delete or Backspace deletes them as one undo step (paragraphs in one pass, so neighbours never regroup); text after a deleted run on the same line keeps its place (in horizontal writing; in vertical writing it closes the gap, as advances are only known horizontally); other drawings of a deleted line go with it (the same words in nearly the same box, as fake bold draws them, and invisible OCR text over it), while other overlapping text such as a rotated watermark stays; one selection at a time (picking an added item or a comment drops the boxes, so Delete deletes what was picked last); Delete waits while a dialog, the command palette or a menu is open; Esc leaves the tool. Missing: copies are recognised only by those two rules (a shadow offset by more than a fraction of the box, or a copy split into lines differently, stays); after a run in a zero font size or zero horizontal scaling the rest of its line can still move; no group move, align or copy of a selection; items added with Add content and vector paths are not part of the rectangle; a selection is on one page; no auto-scroll while dragging near the window's edge. Agents delete with the text_delete tool"
 
 [[feature]]
 id = "edit.image-extract"
@@ -2202,8 +2226,8 @@ milestone = "M7"
 status = "shipped"
 commands = ["edit.link"]
 tools = ["link_add"]
-evidence = ["crates/annot/src/tests.rs::links_are_added_edited_listed_and_removed", "crates/automation/tests/automation.rs::links_through_tools"]
-notes = ""
+evidence = ["crates/annot/src/tests.rs::links_are_added_edited_listed_and_removed", "crates/automation/tests/automation.rs::links_through_tools", "crates/ui-egui/tests/document_links.rs::a_link_asks_first_and_opens_when_allowed", "crates/ui-egui/tests/document_links.rs::a_button_uri_action_asks_first"]
+notes = "Opening a document's link or button URI asks first; only http, https and mailto addresses are offered (#90, #91)."
 
 [[feature]]
 id = "edit.action-launch"
@@ -2247,11 +2271,11 @@ title = "Show/hide-a-field action"
 area = "C"
 tier = "P1"
 milestone = "M6"
-status = "planned"
+status = "shipped"
 commands = []
 tools = []
-evidence = []
-notes = ""
+evidence = ["crates/ui-egui/tests/buttons.rs::hide_actions_hide_and_show_fields", "crates/forms/src/tests.rs::push_buttons_read_hide_actions"]
+notes = "A push button's Hide action (/T names, field or widget references, arrays; /H) hides or shows the fields and their kids; hidden widgets take no clicks, tab stops or highlights. A widget reference acts on its whole field, and only form fields are hidden, not other annotations."
 
 [[feature]]
 id = "edit.action-javascript"
@@ -2323,7 +2347,7 @@ status = "shipped"
 commands = ["edit.header_footer.update", "edit.header_footer.remove"]
 tools = ["doc_header_footer", "doc_remove_marks"]
 evidence = ["crates/edit/src/tests.rs::replace_and_remove_restore_the_original_content", "crates/ui-egui/tests/marks.rs::header_and_footer_dialog_inserts_tokens_and_applies_to_a_subset"]
-notes = "recognises PrintCraft marks; Acrobat-made headers are not detected yet"
+notes = "recognises PdfCraft marks; Acrobat-made headers are not detected yet"
 
 [[feature]]
 id = "edit.header-footer-tokens"
@@ -2554,8 +2578,8 @@ milestone = "M4"
 status = "shipped"
 commands = ["page.organize"]
 tools = []
-evidence = ["crates/ui-egui/tests/editing.rs::command_click_toggles_and_rotation_applies_to_selection", "crates/ui-egui/tests/editing.rs::shift_click_selects_a_range_and_moves_it"]
-notes = ""
+evidence = ["crates/ui-egui/tests/editing.rs::command_click_toggles_and_rotation_applies_to_selection", "crates/ui-egui/tests/editing.rs::shift_click_selects_a_range_and_moves_it", "crates/ui-egui/tests/editing.rs::organize_select_all_shortcut_preserves_current_page_and_sets_range_anchor", "crates/ui-egui/tests/control.rs::select_all_key_selects_every_page_in_organize"]
+notes = "Ctrl+A / ⌘A selects every page in the Organize grid, preserving the current page; text inputs and dialogs keep their own keyboard input."
 
 [[feature]]
 id = "organize.rotate-pages"
@@ -3471,7 +3495,7 @@ status = "partial"
 commands = []
 tools = ["comment_add"]
 evidence = ["crates/annot/src/tests.rs::every_tool_creates_a_drawable_comment", "crates/engine/src/tests.rs::highlight_multiplies_over_text", "crates/annot/src/tests.rs::polygons_clouds_connected_lines_callouts_and_carets_are_drawn"]
-notes = "appearances for every type PrintCraft creates (highlight multiplies; clouds, callouts, stamps, polygons, carets); rich text not yet"
+notes = "appearances for every type PdfCraft creates (highlight multiplies; clouds, callouts, stamps, polygons, carets); rich text not yet"
 
 [[feature]]
 id = "comment.sticky-note"
@@ -3987,7 +4011,7 @@ status = "shipped"
 commands = ["comment.stamp"]
 tools = ["comment_add"]
 evidence = ["crates/annot/src/tests.rs::stamps_draw_their_label_and_by_line", "crates/ui-egui/tests/stamps.rs::choosing_and_placing_stamps", "crates/automation/tests/automation.rs::stamps_through_tools"]
-notes = "12 standard business stamps in PrintCraft's own design; ISO 32000 stamp names where defined"
+notes = "12 standard business stamps in PdfCraft's own design; ISO 32000 stamp names where defined"
 
 [[feature]]
 id = "comment.stamps-sign-here"
@@ -4139,11 +4163,11 @@ title = "Distance measuring tool"
 area = "E"
 tier = "P2"
 milestone = "M12"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = ""
+status = "partial"
+commands = ["measure.distance"]
+tools = ["measure_distance"]
+evidence = ["crates/automation/tests/automation.rs::measurements_calibrate_draw_save_reopen_and_export", "crates/measure/src/tests.rs::calibrated_lengths_concave_areas_and_axis_scales", "crates/ui-egui/tests/control.rs::measurement_tools_draw_live_calibrate_save_and_export"]
+notes = "Two-point distance annotations with saved numeric captions and rectilinear scales. Partial: only single-unit decimal formats; compound (ft-in) and fractional formats are not supported (listed as unsupported, data kept), no leader lines or caption placement options, geospatial scales unsupported, and interop with Acrobat-authored measurements (reading theirs, Acrobat reading ours) is untested."
 
 [[feature]]
 id = "comment.measure-perimeter"
@@ -4151,11 +4175,11 @@ title = "Perimeter measuring tool"
 area = "E"
 tier = "P2"
 milestone = "M12"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = ""
+status = "shipped"
+commands = ["measure.perimeter"]
+tools = ["measure_perimeter"]
+evidence = ["crates/automation/tests/automation.rs::measurements_calibrate_draw_save_reopen_and_export", "crates/measure/src/tests.rs::calibrated_lengths_concave_areas_and_axis_scales", "crates/ui-egui/tests/control.rs::measurement_tools_draw_live_calibrate_save_and_export"]
+notes = "Connected-line lengths with click vertices and double-click/Enter finish. Repeat the first point to include a closing edge. Saved standard PolyLineDimension annotations."
 
 [[feature]]
 id = "comment.measure-area"
@@ -4163,11 +4187,11 @@ title = "Area measuring tool"
 area = "E"
 tier = "P2"
 milestone = "M12"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = ""
+status = "shipped"
+commands = ["measure.area"]
+tools = ["measure_area"]
+evidence = ["crates/automation/tests/automation.rs::measurements_calibrate_draw_save_reopen_and_export", "crates/measure/src/tests.rs::calibrated_lengths_concave_areas_and_axis_scales", "crates/ui-egui/tests/control.rs::measurement_tools_draw_live_calibrate_save_and_export"]
+notes = "Simple polygon areas, including concave boundaries and either winding. Self-intersecting boundaries are refused. Saved PolygonDimension annotations; no 3D surface measurement."
 
 [[feature]]
 id = "comment.measure-scale"
@@ -4175,11 +4199,11 @@ title = "Scale ratio and calibration per viewport"
 area = "E"
 tier = "P2"
 milestone = "M12"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = ""
+status = "partial"
+commands = ["measure.scale"]
+tools = ["measure_scale"]
+evidence = ["crates/measure/src/tests.rs::viewport_precedence_first_point_user_unit_and_roundtrip", "crates/measure/src/tests.rs::coordinates_roundtrip_for_crop_rotation_and_user_unit", "crates/automation/tests/automation.rs::measurements_calibrate_draw_save_reopen_and_export", "crates/ui-egui/tests/control.rs::measurement_tools_draw_live_calibrate_save_and_export"]
+notes = "Persistent rectangular viewports with last-containing-viewport precedence, numeric scale and two-point calibration. First vertex selects the scale; prior annotations retain theirs. Partial: single-unit decimal rectilinear scales only; compound (ft-in), fractional and differing distance units can't be authored or imported, no viewport editing/removal UI, and interop with Acrobat's scale ratio dialog and its saved viewports is untested."
 
 [[feature]]
 id = "comment.measure-snap"
@@ -4187,11 +4211,11 @@ title = "Snap to paths, endpoints, midpoints and intersections"
 area = "E"
 tier = "P2"
 milestone = "M12"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = ""
+status = "shipped"
+commands = ["measure.snap"]
+tools = ["measure_snap"]
+evidence = ["crates/automation/tests/automation.rs::measurement_snap_tool_covers_all_targets", "crates/measure/src/tests.rs::nested_forms_transforms_curves_and_cycles_are_bounded", "crates/measure/src/tests.rs::snap_paths_endpoints_midpoints_and_intersections"]
+notes = "Paths, endpoints, midpoints and intersections of painted vector geometry, including transformed Form XObjects. Cubics flattened to 0.2 user units. Bounded extraction and dense-intersection limits are reported. Raster/text outlines, clipping and optional-content visibility are not interpreted."
 
 [[feature]]
 id = "comment.measure-info-panel"
@@ -4199,11 +4223,11 @@ title = "Measurement info panel"
 area = "E"
 tier = "P2"
 milestone = "M12"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = ""
+status = "shipped"
+commands = ["measure.info"]
+tools = ["measure_info", "measure_list"]
+evidence = ["crates/automation/tests/automation.rs::measurements_calibrate_draw_save_reopen_and_export", "crates/ui-egui/tests/control.rs::measurement_tools_draw_live_calibrate_save_and_export"]
+notes = "Live value, units, X/Y deltas, angle and selected scale while drawing; saved measurements can be selected from the panel. Rectilinear 2D readings only."
 
 [[feature]]
 id = "comment.measure-export"
@@ -4211,11 +4235,11 @@ title = "Export measurements as CSV"
 area = "E"
 tier = "P3"
 milestone = "M12"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = ""
+status = "shipped"
+commands = ["measure.export"]
+tools = ["measure_export"]
+evidence = ["crates/automation/tests/automation.rs::measurements_calibrate_draw_save_reopen_and_export", "crates/measure/src/tests.rs::measurement_csv_quotes_newlines_and_blocks_formula_cells", "crates/ui-egui/tests/control.rs::measurement_tools_draw_live_calibrate_save_and_export"]
+notes = "Atomic CSV export of page, annotation index, type, numeric value, unit, label, author and scale. Quotes embedded delimiters and prefixes spreadsheet formula triggers."
 
 [[feature]]
 id = "comment.geospatial"
@@ -5094,8 +5118,8 @@ milestone = "M6"
 status = "shipped"
 commands = ["app.preferences"]
 tools = ["js_enabled"]
-evidence = ["crates/js/src/tests.rs::the_sandbox_has_no_host_access", "crates/js/src/tests.rs::errors_and_runaway_scripts_are_contained", "crates/ui-egui/tests/javascript.rs::document_scripts_and_preferences"]
-notes = "Preferences \u25b8 JavaScript \u25b8 Enable Acrobat JavaScript (remembered); no host access; loop and recursion limits."
+evidence = ["crates/js/src/tests.rs::the_sandbox_has_no_host_access", "crates/js/src/tests.rs::errors_and_runaway_scripts_are_contained", "crates/ui-egui/tests/javascript.rs::document_scripts_and_preferences", "crates/ui-egui/tests/document_links.rs::a_script_asks_first_and_only_once", "crates/ui-egui/tests/document_links.rs::a_script_cannot_open_other_kinds_of_address"]
+notes = "Preferences \u25b8 JavaScript \u25b8 Enable Acrobat JavaScript (remembered); no host access; loop and recursion limits; app.launchURL asks before opening and only offers http, https and mailto addresses (#90, #91)."
 
 [[feature]]
 id = "form.folder-level-js"
@@ -5115,11 +5139,11 @@ title = "View and fill static XFA forms"
 area = "F"
 tier = "P1"
 milestone = "M12"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = "not read yet; detected on open (DocInfo.xfa, doc_info \"xfa\") and a notice says the fields can be filled but Acrobat may show the XFA values instead (#60)"
+status = "partial"
+commands = ["file.open"]
+tools = ["doc_open", "form_fill"]
+evidence = ["crates/engine/src/tests.rs::static_xfa_forms_take_their_values_from_the_datasets_and_write_them_back", "crates/ui-egui/tests/xfa.rs::a_static_xfa_form_is_filled_from_its_data_and_says_so", "crates/xfa/src/tests.rs::static_forms_read_their_values_from_the_datasets", "crates/xfa/src/tests.rs::writing_values_keeps_the_data_no_field_binds_to", "crates/xfa/src/tests.rs::utf16_packets_are_read_and_written_back_as_utf16", "crates/engine/src/tests.rs::xfa_data_no_field_binds_to_survives_an_edit_and_save"]
+notes = "the AcroForm fields are shown and filled as in any form; on open their values come from the XFA datasets (what another viewer saved) by the fields' Designer names (recorded as a document warning), and every edit merges the values back into the datasets, keeping data no field binds to, so Acrobat shows the same values; values that can't be written are warnings. Missing: no template semantics (no scripts, calculations or hidden subforms), explicit bind refs are not followed (#60)"
 
 [[feature]]
 id = "form.xfa-dynamic"
@@ -5127,11 +5151,11 @@ title = "View and fill dynamic XFA forms"
 area = "F"
 tier = "P1"
 milestone = "M12"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = "not rendered yet; detected on open and a notice says the page shown is the file's placeholder (#60)"
+status = "partial"
+commands = ["file.open"]
+tools = ["doc_open", "doc_info", "form_fields", "form_fill", "js_run"]
+evidence = ["crates/xfa/src/tests.rs::layout_places_captions_fields_and_sizes_containers_to_their_content", "crates/xfa/src/tests.rs::tables_break_across_pages_and_repeat_their_header_row", "crates/xfa/src/tests.rs::rendering_into_the_pdf_replaces_the_placeholder_page_and_adds_fields", "crates/engine/src/tests.rs::dynamic_xfa_forms_are_laid_out_on_open_filled_and_saved_incrementally", "crates/automation/tests/automation.rs::dynamic_xfa_forms_open_render_fill_and_save_through_tools", "crates/ui-egui/tests/xfa.rs::a_dynamic_xfa_form_is_laid_out_and_filled", "crates/xfa/src/tests.rs::nested_width_less_subforms_lay_out_in_polynomial_time", "crates/js/src/tests.rs::instance_managers_add_remove_and_count", "crates/xfa/src/tests.rs::the_form_tree_carries_values_presence_instances_and_the_events", "crates/engine/src/tests.rs::xfa_scripts_initialize_calculate_validate_toggle_and_add_rows", "crates/automation/tests/automation.rs::xfa_scripts_run_for_buttons_and_field_changes_through_tools", "crates/ui-egui/tests/xfa.rs::xfa_buttons_run_their_scripts_in_the_app", "crates/engine/src/tests.rs::hostile_xfa_open_scripts_are_merged_capped_kept_from_printing_and_noted", "crates/engine/src/tests.rs::runaway_xfa_calculations_at_open_end_quickly_with_a_report", "crates/xfa/src/tests.rs::the_live_form_of_nested_repeating_subforms_stops_at_its_node_budget", "crates/xfa/src/tests.rs::data_ops_of_one_event_are_one_datasets_rewrite"]
+notes = "laid out from the template on open by the xfa crate (positioned, tb, lr-tb, table/row, page masters, breaks, repeated header rows, captions, rich text, JPEG images) into real pages and AcroForm fields (text, date with AFDate formats, check boxes, radio groups, buttons with reset/print/save/URL), filled from the datasets packet (including rows another viewer added), saved as an incremental revision with the values merged into the datasets so Adobe's viewers show them; doc_info reports xfa_layout. XFA JavaScript runs in the js crate's XFA object model (xfa.form, SOM resolution, rawValue, presence, access, instance managers, xfa.host, xfa.layout, xfa.event): initialize and calculate on open, exit, validate and calculate after a field changes, click for buttons (through js_run and the app), with rows added and removed, subforms shown and hidden, and the form laid out again, all as one undo step and kept in the file. Hostile scripts are bounded per event (merged and capped effects, messages and console lines, lower loop limits and a time budget on open and calculate, one datasets rewrite per event, print/save/links/focus from clicks only, a runaway script abandoned and the form's scripts turned off) and what open-time scripts changed is noted. Missing: loops inside nested calls are only stopped by abandoning their thread, and script memory is not capped; FormCalc (reported, not run); the change event per keystroke; xfa.template, connections and data descriptions; a hidden instance of a repeating subform hides them all; choice lists are text fields; signature, image and barcode fields are blank; PNG images; keep rules; metrics are approximate and Acrobat fidelity is eyeballed on real forms, not measured (#60)"
 
 [[feature]]
 id = "form.xfa-formcalc"
@@ -5151,11 +5175,11 @@ title = "XFA XML data import and export"
 area = "F"
 tier = "P2"
 milestone = "M12"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = ""
+status = "partial"
+commands = ["file.open", "file.save"]
+tools = ["doc_open", "form_fill", "doc_save"]
+evidence = ["crates/xfa/src/tests.rs::the_datasets_packet_is_written_from_the_fields_and_read_back", "crates/xfa/src/tests.rs::data_fills_the_fields_and_adds_rows", "crates/engine/src/tests.rs::dynamic_xfa_forms_are_laid_out_on_open_filled_and_saved_incrementally"]
+notes = "the datasets packet inside the PDF: read on open (values, dates in ISO form, check and radio states, extra rows for repeating subforms) and rewritten after every form edit from the fields' SOM paths (/PCSom). Missing: importing or exporting a standalone XML/XDP data file, explicit bind refs, data descriptions"
 
 [[feature]]
 id = "form.xfa-flatten"
@@ -5191,7 +5215,7 @@ status = "shipped"
 commands = ["sign.fill.check", "sign.fill.cross", "sign.fill.dot", "sign.fill.line"]
 tools = ["fill_sign_add"]
 evidence = ["crates/ui-egui/tests/fill_sign.rs::text_marks_and_date", "crates/annot/src/tests.rs::fill_and_sign_items_are_drawn"]
-notes = "PrintCraft-drawn stamps"
+notes = "PdfCraft-drawn stamps"
 
 [[feature]]
 id = "form.fill-sign-date"
@@ -5212,10 +5236,10 @@ area = "F"
 tier = "P0"
 milestone = "M5"
 status = "partial"
-commands = ["sign.fill.signature", "sign.fill.initials"]
+commands = ["sign.fill.signature", "sign.fill.initials", "sign.fill.signature.change", "sign.fill.initials.change", "sign.fill.signature.remove", "sign.fill.initials.remove"]
 tools = ["fill_sign_add"]
-evidence = ["crates/ui-egui/tests/fill_sign.rs::typed_signatures_and_initials", "crates/ui-egui/tests/fill_sign.rs::signing_draws_a_signature_once_and_places_it", "crates/fonts/src/script.rs::a_name_becomes_outlines", "crates/automation/tests/automation.rs::fill_and_sign_through_tools"]
-notes = "signature and initials, typed (Dancing Script outlines as filled paths, no font embedded) or drawn, saved in settings; image signatures not yet"
+evidence = ["crates/ui-egui/tests/fill_sign.rs::typed_signatures_and_initials", "crates/ui-egui/tests/fill_sign.rs::signing_draws_a_signature_once_and_places_it", "crates/ui-egui/tests/fill_sign.rs::changing_saved_signatures_and_initials_preserves_placed_marks", "crates/ui-egui/tests/fill_sign.rs::changing_drawn_signatures_can_be_cancelled_or_switched_to_type", "crates/ui-egui/tests/fill_sign.rs::saved_signature_cards_remove_and_add_without_changing_the_document", "crates/ui-egui/tests/fill_sign.rs::long_typed_names_fit_the_placed_signature_and_keep_every_outline", "crates/ui-egui/src/fill_sign.rs::long_signature_previews_have_clear_margins", "crates/ui-egui/tests/control.rs::saved_signature_can_be_changed_through_the_control_channel", "crates/fonts/src/script.rs::a_name_becomes_outlines", "crates/fonts/src/script.rs::long_names_keep_every_glyph_with_bounded_outline_work", "crates/automation/tests/automation.rs::fill_and_sign_through_tools"]
+notes = "signature and initials, typed (Dancing Script outlines as filled paths, no font embedded) or drawn, saved in settings; preview cards with add/change/remove controls in the panel and picker, also through ui.command; changes leave placed annotations untouched; long names fit within 150 pt with overhangs included in preview/PDF bounds; image signatures not yet"
 
 [[feature]]
 id = "form.fill-sign-flatten"
@@ -5999,11 +6023,11 @@ title = "Add a document timestamp (RFC 3161)"
 area = "H"
 tier = "P1"
 milestone = "M9"
-status = "planned"
+status = "partial"
 commands = []
 tools = []
-evidence = []
-notes = ""
+evidence = ["crates/sign/tests/pdf.rs::a_document_timestamp_covers_the_file_and_validates"]
+notes = "timestamp_document appends a standalone /ETSI.RFC3161 signature dictionary over the whole file; validation discovers and verifies these (imprint, token signature, TSA cert validity) and reports the trusted time. Missing: automation tool and timestamp-server configuration (transport is caller-injected)."
 
 [[feature]]
 id = "sign.timestamp-servers"
@@ -6023,11 +6047,11 @@ title = "PAdES B-T (signature timestamp)"
 area = "H"
 tier = "P1"
 milestone = "M9"
-status = "planned"
+status = "partial"
 commands = []
 tools = []
-evidence = []
-notes = ""
+evidence = ["crates/sign/tests/pdf.rs::signing_with_a_timestamp_embeds_a_verified_rfc3161_token"]
+notes = "Sign with an embedded RFC 3161 token (sign_with_timestamp): imprint and TSA signature verified at signing and validation time, trusted time reported. Missing: timestamp-server configuration and a fetcher (transport is caller-injected), the standalone document timestamp, automation tool."
 
 [[feature]]
 id = "sign.ltv"
@@ -6035,11 +6059,11 @@ title = "Long-term validation (DSS/VRI)"
 area = "H"
 tier = "P1"
 milestone = "M9"
-status = "planned"
+status = "partial"
 commands = []
 tools = []
-evidence = []
-notes = ""
+evidence = ["crates/sign/tests/pdf.rs::embedding_ltv_evidence_adds_a_dss_and_keeps_signatures_valid", "crates/sign/tests/pdf.rs::an_embedded_verified_revocation_invalidates_the_signature"]
+notes = "dss::embed merges caller-supplied evidence into the catalog /DSS with /VRI entries per signature, deduplicating blobs, as a permitted incremental change; revocation.rs verifies the embedded CRLs and OCSP responses (signature, responder identity, CertID, window) and a verified revocation invalidates the signature. Missing: fetching evidence, automation tool."
 
 [[feature]]
 id = "sign.pades-blta"
@@ -6047,11 +6071,11 @@ title = "PAdES B-LT and B-LTA"
 area = "H"
 tier = "P1"
 milestone = "M9"
-status = "planned"
+status = "partial"
 commands = []
 tools = []
-evidence = []
-notes = ""
+evidence = ["crates/sign/tests/pdf.rs::sign_then_ltv_then_timestamp_makes_a_b_lta_file"]
+notes = "The B-LT/B-LTA chain works with caller-supplied evidence: sign, embed DSS (B-LT), then append a document timestamp over the result (B-LTA); earlier signatures stay valid with the store classified as a permitted change. Missing: OCSP/CRL verification of the evidence, re-timestamping automation."
 
 [[feature]]
 id = "sign.ocsp-crl"
@@ -6059,11 +6083,11 @@ title = "Revocation checking (OCSP and CRL)"
 area = "H"
 tier = "P1"
 milestone = "M9"
-status = "planned"
+status = "partial"
 commands = []
 tools = []
-evidence = []
-notes = ""
+evidence = ["crates/sign/tests/crypto.rs::crls_verify_and_report_revocation", "crates/sign/tests/crypto.rs::ocsp_responses_verify_and_match_the_certificate", "crates/sign/tests/pdf.rs::an_embedded_verified_revocation_invalidates_the_signature"]
+notes = "RFC 5280 CRLs and RFC 6960 OCSP responses are parsed and verified (issuer/responder signature, delegated responder's OCSP-signing EKU, CertID hash match, validity window) and checked against the DSS during validation. Missing: network fetching of fresh evidence and the OS trust store."
 
 [[feature]]
 id = "sign.validate-all"
@@ -6191,11 +6215,11 @@ title = "Verification time (signing time, timestamp, now)"
 area = "H"
 tier = "P1"
 milestone = "M9"
-status = "planned"
+status = "partial"
 commands = []
 tools = []
-evidence = []
-notes = ""
+evidence = ["crates/sign/tests/pdf.rs::signing_with_a_timestamp_embeds_a_verified_rfc3161_token", "crates/sign/tests/pdf.rs::an_untrusted_timestamp_does_not_set_the_validation_time"]
+notes = "Validation prefers the verified RFC 3161 timestamp time over /M when checking certificate validity and revocation, but only when the TSA chains to the trust store; an untrusted token is reported as an unverified timestamp and its time is not used. Missing: an explicit verification-time option (verify at a chosen date / now) in the validation API."
 
 [[feature]]
 id = "sign.changes-after-signing"
@@ -6811,11 +6835,11 @@ title = "Image compression options when converting"
 area = "J"
 tier = "P2"
 milestone = "M10"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = ""
+status = "partial"
+commands = ["create.images"]
+tools = ["doc_create"]
+evidence = ["crates/create/src/tests.rs::image_resolution_override_changes_size_without_resampling", "crates/automation/tests/automation.rs::creating_images_with_dpi_through_tools", "crates/ui-egui/tests/create.rs::image_import_dialog_chooses_dpi_and_cancels"]
+notes = "Page sizing: embedded resolution (72 dpi fallback), fixed 72 dpi, or custom 1–1200 dpi; pixels are not resampled. Compression options are still absent. Windows image context menu opens the same chooser; other OS context-menu integration not yet."
 
 [[feature]]
 id = "create.pdf-printer"
@@ -7806,8 +7830,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["doc_print", "printers"]
-evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf", "crates/engine/src/tests.rs::printing_lays_out_sheets_that_render"]
-notes = "⌘P; settings and live sheet preview"
+evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf", "crates/ui-egui/tests/print.rs::the_enter_that_opens_the_dialog_does_not_print", "crates/ui-egui/tests/print.rs::page_range_errors_are_translated", "crates/ui-egui/tests/print.rs::print_dialog_opens_at_its_final_size", "crates/engine/src/tests.rs::printing_lays_out_sheets_that_render", "crates/ui-egui/tests/print.rs::enter_prints_from_the_pages_field", "crates/ui-egui/tests/print.rs::enter_prints_with_nothing_focused_and_commits_a_typed_number", "crates/ui-egui/tests/print.rs::enter_does_not_print_while_a_menu_or_the_picker_is_open"]
+notes = "⌘P; settings in grouped panels like Acrobat's (Printer, Pages to Print, Page Sizing & Handling, Orientation, Comments & Forms; each with a coloured header, light and dark themes), the sizing modes as a segmented control with PeDeeFe's print area (Full page | Window) to its right, live sheet preview; scrolls on short screens (1280 × 720). Enter prints from anywhere in the dialog (also while typing in Pages, Copies or a scale field, which commit first), not while a menu is open or the area picker shows, and not with the Enter that opened the dialog (the command palette's); Escape cancels. Page-range and layout errors read in the UI's language. Not yet: the printer's own properties dialog, Acrobat's Advanced and Page Setup; Enter on a focused button prints rather than pressing that button."
 
 [[feature]]
 id = "print.printer-selection"
@@ -7818,8 +7842,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["printers", "doc_print"]
-evidence = ["crates/print/src/tests.rs::spooler_arguments_and_printer_list"]
-notes = "CUPS printers via lpstat; Save as PDF; Windows spooler pending"
+evidence = ["crates/print/src/tests.rs::spooler_arguments_and_printer_list", "crates/print/src/tests.rs::windows_spooler_scripts_and_answers", "crates/print/src/tests.rs::windows_prints_through_microsoft_print_to_pdf", "crates/ui-egui/tests/print.rs::a_printer_list_arriving_keeps_the_users_choice"]
+notes = "CUPS printers via lpstat; Windows printers through System.Drawing.Printing driven by Windows PowerShell (sheets as images, the printer's matching paper, per-sheet orientation); list fetched and jobs printed in the background; the choice is remembered; Save as PDF. Missing: the printer's own properties dialog, paper trays. The Windows end-to-end test runs only where Microsoft Print to PDF is installed."
 
 [[feature]]
 id = "print.copies-collate"
@@ -7866,8 +7890,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["doc_print"]
-evidence = ["crates/print/src/tests.rs::size_modes"]
-notes = "fit, actual size, shrink oversized, custom %"
+evidence = ["crates/print/src/tests.rs::size_modes", "crates/print/src/tests.rs::placement_scale_and_printed_size", "crates/print/src/tests.rs::fit_fills_the_sheet_without_margins", "crates/ui-egui/tests/print.rs::preview_reports_the_real_scale_and_printed_size"]
+notes = "fit, actual size, shrink oversized, custom %; the preview shows the real scale of every mode. Fit fills the whole sheet edge to edge with no margin (as SumatraPDF does): an A4 page on A4 prints at 100 %, A4 on A3 at 141 %; the Windows spooler draws each sheet from the paper's corner at the paper's size, adding no margin either. Unlike Acrobat's Fit (which fits the printer's printable area), content within the printer's hardware margin (a few mm on most printers) can be cut off, exactly as with Actual size; Multiple, Booklet and Poster keep their 18 pt margin (gutters, cut marks, tile overlap). Not yet: a fit-to-printable-area choice using the driver's margins."
 
 [[feature]]
 id = "print.paper-source-by-size"
@@ -7902,8 +7926,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["doc_print"]
-evidence = ["crates/print/src/tests.rs::multiple_pages_per_sheet", "crates/automation/tests/automation.rs::printing_through_tools"]
-notes = "2/4/6/9/16, four orders, borders, auto-rotate"
+evidence = ["crates/print/src/tests.rs::multiple_pages_per_sheet", "crates/automation/tests/automation.rs::printing_through_tools", "crates/print/src/tests.rs::cut_stack_keeps_piles_in_order_and_blanks_in_place", "crates/print/src/tests.rs::cutting_and_stacking_recovers_every_selected_page", "crates/automation/tests/automation.rs::cut_stack_printing_through_tools", "crates/ui-egui/tests/print.rs::cut_stack_dialog_previews_saves_and_refuses_duplex"]
+notes = "2/4/6/9/16, four sequential orders, borders, auto-rotate; also single-sided cut-and-stack order with aligned gutter cut marks, blank padding and range/reverse support (an extension, not an Acrobat parity claim). Duplex cut-and-stack is refused."
 
 [[feature]]
 id = "print.booklet"
@@ -7926,8 +7950,20 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = ["doc_print"]
-evidence = ["crates/print/src/tests.rs::posters_tile_with_overlap", "crates/automation/tests/automation.rs::printing_through_tools"]
-notes = "tile scale, overlap, cut marks (labels pending)"
+evidence = ["crates/print/src/tests.rs::posters_tile_with_overlap", "crates/automation/tests/automation.rs::printing_through_tools", "crates/ui-egui/tests/print.rs::poster_preview_shows_the_whole_page_grid"]
+notes = "tile scale, overlap, cut marks; the preview shows the whole page with the tile grid dashed over it (tiles numbered when large enough) and the current sheet's tile highlighted, like Acrobat's. Not yet: tile labels printed on the sheets, Acrobat's Tile large pages only."
+
+[[feature]]
+id = "print.selected-area"
+title = "Print a selected area of the page (window)"
+area = "L"
+tier = "P2"
+milestone = "M10"
+status = "shipped"
+commands = ["print.dialog"]
+tools = ["doc_print"]
+evidence = ["crates/print/src/tests.rs::a_window_prints_only_that_area", "crates/ui-egui/tests/print.rs::window_is_a_print_area_for_every_mode", "crates/ui-egui/tests/print.rs::the_picker_line_follows_the_sizing_mode", "crates/ui-egui/tests/print.rs::window_picker_draws_and_moves_the_area", "crates/ui-egui/tests/print.rs::window_picker_shift_drag_keeps_the_sheet_shape", "crates/ui-egui/tests/print.rs::window_geometry"]
+notes = "PeDeeFe's print area, like AutoCAD's plot window: Full page | Window beside the sizing modes, so the window works with every mode (Size: on one sheet, Fit filling it; Poster: tiled over several sheets; Multiple and Booklet: each page's window). Drag a rectangle in a large picker (zoom, pan; drag inside to move, a corner to resize; Escape cancels the picker); the area drawn prints exactly; Shift while dragging keeps the sheet's proportions so the area fills the sheet; outside the area is dimmed and its size shows on a badge; the area applies to every page printed (a page the window misses is reported). The area choice and the window last for the session; older settings files still load. doc_print region. Acrobat's own route is a snapshot of the selected graphic."
 
 [[feature]]
 id = "print.orientation"
@@ -7974,8 +8010,8 @@ milestone = "M10"
 status = "shipped"
 commands = ["print.dialog"]
 tools = []
-evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf"]
-notes = "live sheet preview with sheet navigation"
+evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf", "crates/ui-egui/tests/print.rs::preview_reports_the_real_scale_and_printed_size", "crates/ui-egui/tests/print.rs::preview_labels_format_like_acrobat"]
+notes = "live sheet preview with sheet navigation, drawn sharp at the screen's resolution (pages rendered at the displayed scale, thumbnails only while they render); like Acrobat's, \"Scale: N%   Sheets: M\" above it and below the sheet with the printed size of the page at that scale (\"A4 - 210 × 297 mm [197,30 × 263,07 mm]\", decimal comma), exact for every mode. Not yet: Acrobat's page slider, and the scale of each page when pages of different sizes share a sheet (the first page's is shown)."
 
 [[feature]]
 id = "print.grayscale"
@@ -7987,7 +8023,7 @@ status = "partial"
 commands = ["print.dialog"]
 tools = ["doc_print"]
 evidence = ["crates/print/src/tests.rs::spooler_arguments_and_printer_list"]
-notes = "asks the printer for monochrome; the PDF itself stays in colour"
+notes = "CUPS asks the printer for monochrome (the PDF stays in colour); Windows draws the sheets in grayscale and asks for monochrome"
 
 [[feature]]
 id = "print.print-as-image"
@@ -7995,11 +8031,11 @@ title = "Print as image"
 area = "L"
 tier = "P1"
 milestone = "M10"
-status = "planned"
-commands = []
-tools = []
-evidence = []
-notes = ""
+status = "partial"
+commands = ["print.dialog"]
+tools = ["doc_print"]
+evidence = ["crates/print/src/tests.rs::sheets_are_drawn_as_images"]
+notes = "Windows always prints sheets as images (300 or 600 dpi, print quality in the dialog); no Print as image option for CUPS"
 
 [[feature]]
 id = "print.page-setup"
@@ -8024,6 +8060,18 @@ commands = ["print.dialog"]
 tools = ["doc_print"]
 evidence = ["crates/ui-egui/tests/print.rs::print_dialog_lays_out_sheets_and_saves_a_pdf", "crates/automation/tests/automation.rs::printing_through_tools", "crates/engine/src/tests.rs::printing_lays_out_sheets_that_render"]
 notes = "Save as PDF from the dialog"
+
+[[feature]]
+id = "print.shell-quick-print"
+title = "Print from the shell without the dialog (Explorer Print, Outlook Quick Print, print to a named printer)"
+area = "L"
+tier = "P1"
+milestone = "M10"
+status = "partial"
+commands = []
+tools = []
+evidence = ["apps/pdfcraft/src/main.rs::the_print_verbs_parse_to_quick_print_requests", "apps/pdfcraft/src/quick_print.rs::every_file_is_tried_and_the_failures_are_collected", "apps/pdfcraft/src/quick_print.rs::a_usage_mistake_is_reported_without_printing", "crates/ui-egui/src/quick_print.rs::a4_unless_a_page_is_larger", "crates/ui-egui/src/quick_print.rs::the_settings_are_the_dialogs_defaults", "crates/ui-egui/src/quick_print.rs::the_remembered_quality_is_used_when_it_is_valid", "crates/ui-egui/tests/print.rs::quick_print_prepares_fit_sheets_on_a4_without_the_dialog"]
+notes = "PeDeeFe: `--print FILE` (default printer) and `--print-to PRINTER FILE`, registered as the print and printto verbs of the PDF ProgID by the MSI (checked by packaging/windows/test-msi.ps1). Prints every page Fit, auto orientation, on A4 (A3 when a page is more than 5 % larger than A4), one colour copy at the Print dialog's remembered quality, with no window, then exits; failures are logged (logs/quick-print.log) and shown in a message box. Checked on Linux through CUPS's lp; not yet run on Windows (Outlook Quick Print, Explorer Print). Acrobat's own /p and /t switches are not offered."
 
 [[feature]]
 id = "print.print-pages-from-thumbnails"
@@ -9290,8 +9338,8 @@ milestone = "M13"
 status = "shipped"
 commands = []
 tools = []
-evidence = ["crates/automation/tests/automation.rs::tool_table_is_well_formed", "crates/automation/tests/automation.rs::edit_undo_redo_and_save_round_trip"]
-notes = ""
+evidence = ["crates/automation/tests/automation.rs::tool_table_is_well_formed", "crates/automation/tests/automation.rs::edit_undo_redo_and_save_round_trip", "apps/pdfcraft-cli/tests/stdout.rs::output_commands_exit_cleanly_when_the_reader_has_closed"]
+notes = "CLI stdout exits cleanly if a pipe reader closes early; other output errors and command failures remain errors."
 
 [[feature]]
 id = "misc.cli-completeness"
@@ -9350,8 +9398,8 @@ milestone = "M13"
 status = "shipped"
 commands = []
 tools = []
-evidence = ["crates/automation/tests/automation.rs::errors_are_specific_and_safe"]
-notes = ""
+evidence = ["crates/automation/tests/automation.rs::errors_are_specific_and_safe", "crates/automation/tests/automation.rs::root_refusals_do_not_reveal_what_exists_outside", "apps/pdfcraft-cli/tests/run_root.rs::script_image_output_is_confined_to_the_root", "crates/automation/tests/automation.rs::file_names_from_documents_stay_in_the_output_folder"]
+notes = "One refusal for every path outside the root, existing or not (#136). `run --script` images (`out`) are confined too (#137). Check-then-write, not openat-style: a process racing the tool on the same disk could swap a folder for a link between the check and the write."
 
 [[feature]]
 id = "misc.mcp-resources"
@@ -9363,7 +9411,7 @@ status = "shipped"
 commands = []
 tools = ["doc_info", "text_extract", "page_render"]
 evidence = ["crates/automation/tests/automation.rs::mcp_resources_expose_open_documents", "crates/automation/src/mcp.rs::resource_uris_parse"]
-notes = "resources/list, resources/templates/list and resources/read: printcraft://doc/{doc}/info (JSON), /text, /page/{page}/text, /page/{page}/image?dpi= (PNG)"
+notes = "resources/list, resources/templates/list and resources/read: pdfcraft://doc/{doc}/info (JSON), /text, /page/{page}/text, /page/{page}/image?dpi= (PNG)"
 
 [[feature]]
 id = "misc.ui-control-channel"
@@ -9662,8 +9710,8 @@ milestone = "M14"
 status = "partial"
 commands = ["app.preferences"]
 tools = ["js_enabled"]
-evidence = ["crates/ui-egui/tests/javascript.rs::document_scripts_and_preferences"]
-notes = "Preferences dialog with Interface language, Identity and JavaScript; other categories still live in their tools, and it isn't generated from a schema yet."
+evidence = ["crates/ui-egui/tests/javascript.rs::document_scripts_and_preferences", "crates/ui-egui/tests/ui.rs::preferences_selects_default_workspace_for_next_open", "crates/ui-egui/tests/control.rs::control_default_workspace_and_session_override"]
+notes = "Preferences dialog with Interface language, Documents and view (persistent default workspace with session override), Identity and JavaScript; other categories still live in their tools, and it isn't generated from a schema yet."
 
 [[feature]]
 id = "misc.prefs-general"
@@ -9683,11 +9731,11 @@ title = "Preferences: page display"
 area = "N"
 tier = "P1"
 milestone = "M14"
-status = "planned"
+status = "partial"
 commands = []
 tools = []
-evidence = []
-notes = ""
+evidence = ["crates/ui-egui/tests/view.rs::default_page_display_is_used_for_new_documents", "crates/ui-egui/tests/view.rs::default_zoom_is_used_for_new_documents", "crates/ui-egui/tests/view.rs::preferences_set_the_default_zoom"]
+notes = "Preferences ▸ Documents and view: Default page display and Default zoom (Fit to width, Zoom to page level or a percentage) for every new tab; a PDF that asks for a layout or zoom gets it. Missing: Acrobat's resolution, rendering and page-content options"
 
 [[feature]]
 id = "misc.prefs-documents"
@@ -9804,10 +9852,10 @@ area = "N"
 tier = "P1"
 milestone = "M14"
 status = "partial"
-commands = []
+commands = ["app.preferences"]
 tools = []
-evidence = ["crates/ui-egui/src/i18n.rs::language_persists_and_invalid_input_keeps_current_language"]
-notes = "Preferences switches English/Japanese and persists; ui.set language en|ja and ui.state expose it. Core menu labels translated; broader dialog/panel translations and additional languages remain open."
+evidence = ["crates/ui-egui/src/i18n/mod.rs::windows_display_language_resolves_chinese_scripts", "crates/ui-egui/src/i18n/mod.rs::windows_display_language_query_returns_a_locale_tag", "crates/ui-egui/src/i18n/mod.rs::language_persists_and_invalid_input_keeps_current_language", "crates/ui-egui/src/i18n/mod.rs::bundled_catalogs_are_consistent", "crates/ui-egui/src/i18n/mod.rs::japanese_covers_commands_and_catalogue", "crates/ui-egui/src/i18n/mod.rs::simplified_chinese_covers_commands_and_catalogue", "crates/ui-egui/src/i18n/mod.rs::simplified_chinese_covers_ui_literals", "crates/ui-egui/src/i18n/mod.rs::simplified_chinese_history_and_diagnostics_preserve_user_values", "crates/ui-egui/tests/control.rs::simplified_chinese_signature_prompts_and_errors_keep_document_state", "crates/ui-egui/tests/control.rs::language_switch_preserves_document_and_command_ids", "crates/ui-egui/tests/control.rs::japanese_controls_and_search_keep_command_ids", "crates/ui-egui/tests/control.rs::japanese_dialogs_errors_and_custom_action_names"]
+notes = "Preferences switches Auto (system language)/English/Japanese/Simplified Chinese/Traditional Chinese/Czech/Brazilian Portuguese and persists; ui.set language auto|en|ja|zh-hans|zh-hant|cs|pt-br and ui.state expose it. TSV catalogs per language (same system as PhotoCraft); every dialog, panel and notice goes through tl!. Japanese, Traditional Chinese and Simplified Chinese cover commands, dialogs, panels, shortcuts and history labels; Czech and Brazilian Portuguese the menus. Engine/OS error details stay untranslated. Auto detects the Windows display language after locale environment overrides, with Chinese script/region mapping and English fallback. Missing: the other catalogs filled in, Chinese font delivery, a full localization audit."
 
 [[feature]]
 id = "misc.prefs-reading"
@@ -9963,7 +10011,7 @@ status = "planned"
 commands = []
 tools = []
 evidence = []
-notes = ""
+notes = "Windows MSI creates a Start menu shortcut and an optional (default on) desktop shortcut and confirms full-UI completion with Finish (#143); packaging/windows/test-msi.ps1 checks the compiled MSI and windows-arm64.yml checks installation/removal. Signed installers across platforms remain planned."
 
 [[feature]]
 id = "misc.web-deploy"

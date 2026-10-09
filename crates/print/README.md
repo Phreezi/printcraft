@@ -1,19 +1,29 @@
-# printcraft-print
+# pdfcraft-print
 
 Layer L4: printing (execution plan M10.5).
 
 ```rust
 let pages = select_pages(count, Some("1-3, ii, 9-"), &labels, Subset::All, false)?;
-let settings = Settings { pages, paper: PAPERS[0].1, layout: Layout::multiple(4), ..Default::default() };
+let settings = Settings { pages, paper: A4, layout: Layout::multiple(4), ..Default::default() };
 let sheets = layout(&display_sizes, &settings)?;   // geometry only (previews)
 let pdf = impose(&doc, &settings)?;                // the print-ready PDF
 spool::submit(&pdf, &spool::Job { printer: None, copies: 2, ..Default::default() })?;
 ```
 
-- **Size**: fit (to the sheet minus an 18 pt margin), actual size, shrink oversized, custom %;
-  centred; auto orientation turns the sheet for landscape pages.
+- **Size**: fit (to the whole sheet, edge to edge, no margin: an A4 page on A4 prints at 100 %,
+  A4 on A3 fills the A3 sheet), actual size, shrink oversized, custom %; centred; auto
+  orientation turns the sheet for landscape pages. Multiple, Booklet and Poster keep an 18 pt
+  margin (`MARGIN`) for their gutters, cut marks and tile overlap.
 - **Multiple**: 2/4/6/9/16 (or any n) pages per sheet, horizontal/vertical (reversed) order,
   page borders, auto-rotation of pages that don't match the cell.
+- **Cut and stack** (Multiple's page order): consecutive pages in each cell's pile,
+  with aligned cut marks in the gutters. For example, 10 pages at 4 per sheet give
+  `[1, 4, 7, 10]`, `[2, 5, 8, blank]`, `[3, 6, 9, blank]`. Print single-sided,
+  keep sheets in output order, cut at the marks, then stack the cell piles from
+  left to right, top to bottom. Blank cells can be discarded. Page ranges and
+  Reverse pages are applied before imposition. Duplex imposition is not supported.
+  Headless: `doc_print` with `layout: "multiple"`, `order: "cut-stack"` and
+  `per_sheet: 4` (or any supported grid size), plus `path` or `printer`.
 - **Booklet**: saddle-stitch imposition padded to a multiple of 4; both sides, front or back
   only; left or right binding.
 - **Poster**: tile scale, overlap shared by neighbouring tiles, cut marks.
@@ -24,9 +34,23 @@ Each source page becomes a Form XObject (its content wrapped in q/Q, plus the pr
 annotations); sheets place them with a clip. The result is a fresh, unencrypted,
 garbage-collected file (callers check the print permission).
 
-`spool` talks to CUPS (`lpstat -p -d`, `lp` with copies, collation, duplex and monochrome
-options). Other platforms report that printing to a printer isn't available yet; the
-print-ready PDF can always be saved.
+- **Window** (`Settings::region`): print only an area of each page; every layout treats the
+  area as the page (Fit fills the sheet with it, Poster tiles it). PeDeeFe's Print dialog picks it
+  like AutoCAD's plot window.
+- **Preview helpers**: `Placement::scale()` is the scale a page prints at in every layout
+  (rotated or not), `printed_size(size, region, scale)` the printed size of the page (or window)
+  at that scale, and `Sheet::tile` a poster sheet's column and row in its page's tile grid, so a
+  preview can draw the whole page with the grid over it.
 
-Not yet: Windows and web spoolers, print as image, poster labels, PostScript output, colour
-conversion for grayscale.
+`spool` talks to CUPS on macOS and Linux (`lpstat -p -d`, `lp` with copies, collation, duplex and
+monochrome options). On Windows, `raster` draws each sheet as a PNG at the job's resolution
+(300 or 600 dpi) and `spool::windows` prints them through `System.Drawing.Printing`, driven by
+Windows PowerShell with a fixed script (no `unsafe`, nothing from the document in the script's
+text): the printer's matching paper, per-sheet orientation, copies, collation, duplex and colour.
+Each sheet image is drawn from the paper's corner at the paper's full size (zero margins, the
+hard margin offset undone), so the spooler adds no margin or scaling of its own.
+The web reports that printing to a printer isn't available; the print-ready PDF can always be
+saved.
+
+Not yet: the printer's own properties dialog, paper trays, poster labels, PostScript output,
+colour conversion for grayscale on CUPS.

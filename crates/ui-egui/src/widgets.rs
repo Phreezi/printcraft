@@ -3,7 +3,7 @@
 use egui::{Align2, Color32, CornerRadius, Rect, Response, Sense, Stroke, vec2};
 
 use crate::theme::{self, Tokens};
-use crate::{PrintCraftApp, icons};
+use crate::{PdfCraftApp, icons};
 
 /// A mode-bar tab: text with an underline when active.
 pub fn mode_tab(ui: &mut egui::Ui, label: &str, active: bool) -> Response {
@@ -63,8 +63,12 @@ pub fn search_box(ui: &mut egui::Ui, placeholder: &str, width: f32) -> Response 
     let fill = if resp.hovered() { t.hover } else { t.field };
     ui.painter().rect(rect, CornerRadius::same(16), fill, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     icons::paint(ui, Rect::from_min_size(rect.min + vec2(10.0, 8.0), vec2(16.0, 16.0)), "search", 15.0, t.text_muted);
-    ui.painter().text(rect.left_center() + vec2(34.0, 0.0), Align2::LEFT_CENTER, placeholder, theme::regular(13.0), t.text_faint);
-    ui.painter().text(rect.right_center() - vec2(12.0, 0.0), Align2::RIGHT_CENTER, "⌘K", theme::regular(11.5), t.text_faint);
+    let key = ui.painter().text(rect.right_center() - vec2(12.0, 0.0), Align2::RIGHT_CENTER, "⌘K", theme::regular(11.5), t.text_faint);
+    // A long (translated) placeholder ends in "…" before the shortcut rather than running under it.
+    let mut job = egui::text::LayoutJob::simple_singleline(placeholder.to_owned(), theme::regular(13.0), t.text_faint);
+    job.wrap = egui::text::TextWrapping::truncate_at_width((key.left() - rect.left() - 34.0 - 8.0).max(0.0));
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    ui.painter().galley(rect.left_center() + vec2(34.0, -galley.size().y / 2.0), galley, t.text_faint);
     resp.on_hover_cursor(egui::CursorIcon::Text)
 }
 
@@ -75,12 +79,117 @@ pub fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: &str) -> Response {
 pub fn section_title(ui: &mut egui::Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
     ui.add_space(10.0);
-    ui.label(egui::RichText::new(text.to_uppercase()).font(theme::semibold(10.5)).color(t.text_faint).extra_letter_spacing(0.6));
+    // Section titles across every panel go through here, so one translation point covers them.
+    ui.label(egui::RichText::new(tl!(text).to_uppercase()).font(theme::semibold(10.5)).color(t.text_faint).extra_letter_spacing(0.6));
     ui.add_space(2.0);
 }
 
+/// A titled panel for one section of a dialog: a header band tinted with the section's `hue`
+/// (with a marker bar in that hue and the title in Title Case), then the content on the group
+/// fill, inside a rounded border. Returns what `add` returns.
+pub fn group<R>(ui: &mut egui::Ui, title: &str, hue: Color32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let t = Tokens::get(ui.ctx());
+    group_with(
+        ui,
+        hue,
+        |ui| {
+            ui.label(egui::RichText::new(title).font(theme::semibold(13.5)).color(t.text));
+        },
+        add,
+    )
+}
+
+/// [`group`] with its own header row (after the marker bar).
+pub fn group_with<R>(ui: &mut egui::Ui, hue: Color32, header: impl FnOnce(&mut egui::Ui), add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let t = Tokens::get(ui.ctx());
+    let r = 8;
+    egui::Frame::new()
+        .fill(t.group_fill)
+        .stroke(Stroke::new(1.0, t.border))
+        .corner_radius(CornerRadius::same(r))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let spacing = ui.spacing().item_spacing;
+            ui.spacing_mut().item_spacing.y = 0.0;
+            egui::Frame::new()
+                .fill(t.section_band(hue))
+                .corner_radius(CornerRadius { nw: r - 1, ne: r - 1, sw: 0, se: 0 })
+                .inner_margin(egui::Margin { left: 10, right: 12, top: 6, bottom: 6 })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = spacing;
+                        let (bar, _) = ui.allocate_exact_size(vec2(4.0, 15.0), Sense::hover());
+                        ui.painter().rect_filled(bar, CornerRadius::same(2), hue);
+                        header(ui);
+                    });
+                });
+            egui::Frame::new()
+                .inner_margin(egui::Margin { left: 12, right: 12, top: 8, bottom: 10 })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing = spacing;
+                    add(ui)
+                })
+                .inner
+        })
+        .inner
+}
+
+/// A segmented control: one strip of buttons, the selected one filled. Returns the index of
+/// the segment clicked. Each segment is a selectable button labelled with its text.
+pub fn segmented(ui: &mut egui::Ui, id_salt: &str, labels: &[&str], selected: usize) -> Option<usize> {
+    let t = Tokens::get(ui.ctx());
+    let font = theme::medium(13.0);
+    let bold = theme::semibold(13.0);
+    let widths = segment_widths(ui, labels);
+    let total: f32 = widths.iter().sum::<f32>() + 4.0;
+    let (strip, _) = ui.allocate_exact_size(vec2(total, 32.0), Sense::hover());
+    ui.painter().rect(strip, CornerRadius::same(8), t.field, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    let (sel_fill, sel_text) = t.selected_pair();
+    let mut clicked = None;
+    let mut x = strip.left() + 2.0;
+    for (i, (label, w)) in labels.iter().zip(&widths).enumerate() {
+        let seg = Rect::from_min_size(egui::pos2(x, strip.top() + 2.0), vec2(*w, strip.height() - 4.0));
+        x += w;
+        let resp = ui.interact(seg, egui::Id::new((id_salt, i)), Sense::click());
+        let on = i == selected;
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, *label));
+        if on {
+            let stroke = if t.dark() { Stroke::new(1.0, t.accent) } else { Stroke::NONE };
+            ui.painter().rect(seg, CornerRadius::same(6), sel_fill, stroke, egui::StrokeKind::Inside);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(seg, CornerRadius::same(6), t.hover);
+        }
+        // A thin separator between two unselected neighbours.
+        if i + 1 < labels.len() && !on && i + 1 != selected {
+            let sx = seg.right();
+            ui.painter().line_segment([egui::pos2(sx, seg.top() + 7.0), egui::pos2(sx, seg.bottom() - 7.0)], Stroke::new(1.0, t.border));
+        }
+        let (f, c) = if on { (bold.clone(), sel_text) } else { (font.clone(), if resp.hovered() { t.text } else { t.text_muted }) };
+        ui.painter().text(seg.center(), Align2::CENTER_CENTER, *label, f, c);
+        if resp.clicked() {
+            clicked = Some(i);
+        }
+    }
+    clicked
+}
+
+/// Each segment's width in [`segmented`]: its label (in the bold face it takes when selected, so
+/// selecting doesn't move anything) plus padding.
+fn segment_widths(ui: &egui::Ui, labels: &[&str]) -> Vec<f32> {
+    let t = Tokens::get(ui.ctx());
+    let bold = theme::semibold(13.0);
+    labels.iter().map(|l| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), bold.clone(), t.text).size().x) + 28.0).collect()
+}
+
+/// The width [`segmented`] takes for `labels` (to decide whether it fits beside something).
+pub fn segmented_width(ui: &egui::Ui, labels: &[&str]) -> f32 {
+    segment_widths(ui, labels).iter().sum::<f32>() + 4.0
+}
+
 /// Transient message at the bottom centre.
-pub fn toast(app: &mut PrintCraftApp, ctx: &egui::Context) {
+pub fn toast(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let Some((msg, start)) = app.toast.clone() else { return };
     let now = ctx.input(|i| i.time);
     let start = if start == 0.0 { now } else { start };
@@ -107,34 +216,23 @@ pub fn toast(app: &mut PrintCraftApp, ctx: &egui::Context) {
     ctx.request_repaint_after(std::time::Duration::from_millis(100));
 }
 
-/// The ArtCraft wordmark (Storyteller's brand, docs/brand/; not open source), sized to `height`.
-pub fn artcraft_logo(ui: &mut egui::Ui, height: f32) -> Response {
-    let dark = ui.visuals().dark_mode;
-    let (uri, bytes): (&str, &'static [u8]) = if dark {
-        ("bytes://artcraft-logo-white.svg", include_bytes!("../../../docs/brand/artcraft-logo-white.svg"))
-    } else {
-        ("bytes://artcraft-logo.svg", include_bytes!("../../../docs/brand/artcraft-logo.svg"))
-    };
-    ui.add(egui::Image::from_bytes(uri, bytes).max_height(height).alt_text("ArtCraft"))
-}
-
-/// The ArtCraft mark (brand blue, works on light and dark), `size` points square.
-pub fn artcraft_mark(ui: &mut egui::Ui, size: f32) -> Response {
+/// The PeDeeFe app icon (assets/brand/pedeefe/logo/pedeefe-icon.svg), `size` points square.
+pub fn app_icon(ui: &mut egui::Ui, size: f32) -> Response {
     ui.add(
-        egui::Image::from_bytes("bytes://artcraft-mark.svg", include_bytes!("../../../docs/brand/artcraft-mark.svg"))
+        egui::Image::from_bytes("bytes://pedeefe-icon.svg", include_bytes!("../../../assets/brand/pedeefe/logo/pedeefe-icon.svg"))
             .fit_to_exact_size(vec2(size, size))
-            .alt_text("ArtCraft"),
+            .alt_text(tl!("PeDeeFe icon")),
     )
 }
 
-/// Buttons for every community link (`printcraft_engine::links`), Discord first and prominent.
+/// Buttons for every project link (`pdfcraft_engine::links`), the first one prominent.
 /// Returns the registry command of the one clicked.
 pub fn community_links(ui: &mut egui::Ui) -> Option<&'static str> {
     let mut clicked = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-        for (i, l) in printcraft_engine::links::LINKS.iter().enumerate() {
-            let resp = if i == 0 { icon_pill(ui, l.icon, "Join our Discord", true) } else { icon_pill(ui, l.icon, l.label, false) };
+        for (i, l) in pdfcraft_engine::links::LINKS.iter().enumerate() {
+            let resp = icon_pill(ui, l.icon, tl!(l.label), i == 0);
             if resp.on_hover_text(l.url).clicked() {
                 clicked = Some(l.command);
             }

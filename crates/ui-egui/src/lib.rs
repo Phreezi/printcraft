@@ -1,11 +1,18 @@
-//! printcraft-ui-egui — the first PrintCraft shell (L7).
+//! pdfcraft-ui-egui — the first PdfCraft shell (L7).
 //!
 //! Layout grammar follows plan/acrobat/02-ui-ux.md §1: tab strip, mode bar, left tool panel,
 //! floating quick-action bar, document area, right panel + right rail with page navigation.
 //! Everything here is presentation: documents, rendering and the tool catalogue live in
-//! `printcraft-engine`.
+//! `pdfcraft-engine`.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+/// Translate an English UI string into the current language (see [`i18n`]).
+macro_rules! tl {
+    ($s:expr) => {
+        $crate::i18n::t($s)
+    };
+}
 
 mod a11y_ui;
 mod actions_ui;
@@ -19,10 +26,12 @@ mod comments_panel;
 mod compare_ui;
 pub mod control;
 mod create_ui;
+mod credits;
 mod crop;
 mod export_ui;
 mod js_ui;
 mod marks_ui;
+mod measure_ui;
 mod ocr_ui;
 mod optimize_ui;
 mod search_ui;
@@ -37,9 +46,11 @@ pub mod marks {
 mod content_ui;
 mod link_ui;
 pub use create_ui::Clip;
+pub use edit_text_ui::BoxSelection;
 pub use link_ui::LinkDraft;
 pub use optimize_ui::{OptimizeDraft, OptimizeTab};
 pub use sign_ui::{DigitalIdEntry, SignDraft, SignStep};
+mod autoscroll;
 mod dialogs;
 mod edit_text_ui;
 mod editing;
@@ -52,9 +63,12 @@ pub mod icons;
 mod pageboxes;
 mod palette;
 mod panels;
+#[cfg(not(target_arch = "wasm32"))]
+mod pickers;
 pub mod prepare;
-mod print_ui;
-pub use print_ui::{Handling as PrintHandling, PrintDraft, Which as PrintWhich};
+pub mod print_ui;
+pub mod quick_print;
+pub use print_ui::{Handling as PrintHandling, PrintArea, PrintDraft, Which as PrintWhich};
 mod redact_ui;
 pub use redact_ui::{HiddenDraft, PagesDraft as RedactPagesDraft, RedactPrefs, SearchDraft as RedactSearchDraft};
 pub mod i18n;
@@ -65,24 +79,51 @@ mod protect;
 mod recovery;
 pub mod theme;
 pub mod updates;
+pub mod window_state;
+pub mod windows;
+/// The app's name as people see it (window title, About, installer).
+pub use pdfcraft_engine::links::APP_NAME;
+pub use windows::{Geometry as WindowGeometry, ROOT_WINDOW, TabTarget, WindowKey};
 mod widgets;
 
-use printcraft_engine::{DocId, Session};
+use pdfcraft_engine::{DocId, Session};
 
 pub use canvas::DocView;
 pub use editing::{CloseRequest, SaveTarget};
-pub use files::{ExtractDraft, FilePurpose, RotateDraft, SplitDraft, SplitMode, SplitPlan};
+pub use files::{ExtractDraft, FilePurpose, FileRequest, RotateDraft, SplitDraft, SplitMode, SplitPlan};
 pub use recovery::{AUTOSAVE_SECS, RecoveryMeta, RecoveryStore};
-use theme::ThemeKind;
+use theme::{ThemeKind, ThemePreference};
+
+/// `text` (usually a translated string) with the app's name where upstream's wording names
+/// PdfCraft (or PrintCraft, its former name). Catalog keys and their translations keep upstream's
+/// wording, so they stay shared with PdfCraft's catalogs; people see [`APP_NAME`].
+pub(crate) fn branded(text: &str) -> String {
+    text.replace("PdfCraft", APP_NAME).replace("PrintCraft", APP_NAME)
+}
 
 /// Top-level workspace modes (Acrobat's mode bar).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Mode {
+    #[serde(rename = "all")]
     AllTools,
     Read,
     Edit,
     Convert,
     Sign,
+}
+
+impl Mode {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "all" => Some(Self::AllTools),
+            "read" => Some(Self::Read),
+            "edit" => Some(Self::Edit),
+            "convert" => Some(Self::Convert),
+            "sign" => Some(Self::Sign),
+            _ => None,
+        }
+    }
 }
 
 /// What the left panel shows.
@@ -117,6 +158,7 @@ pub enum QuickTool {
     Hand,
     /// A commenting tool (Add comments).
     Comment(comments::CommentTool),
+    Measure(measure_ui::Tool),
     /// Crop pages by dragging a rectangle.
     Crop,
     /// A Fill & Sign tool.
@@ -130,7 +172,7 @@ pub enum QuickTool {
     /// Edit a PDF ▸ Edit text: click a line of existing text to edit it.
     EditText,
     /// Add a stamp: click to place this stamp.
-    Stamp(printcraft_engine::StampKind),
+    Stamp(pdfcraft_engine::StampKind),
     /// A custom stamp from the library (its index).
     CustomStamp(usize),
     /// Edit a PDF ▸ Link: draw link areas, select and edit links.
@@ -147,6 +189,7 @@ pub enum QuickTool {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialog {
+    CreateImages,
     Properties(PropsTab),
     About,
     Shortcuts,
@@ -158,7 +201,7 @@ pub enum Dialog {
     /// Set Page Boxes (crop, trim, bleed, art, media).
     PageBoxes,
     /// Add / Update Header and Footer, Watermark, Background.
-    Marks(printcraft_engine::MarkKind),
+    Marks(pdfcraft_engine::MarkKind),
     /// Export a PDF ▸ Image / Text.
     Export(export_ui::ExportKind),
     /// Fill & Sign ▸ Create signature (the drawing pad).
@@ -257,8 +300,11 @@ pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 /// double-clicks, Open With and drops on the Dock icon arrive as Apple events, not arguments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OsEvent {
-    /// Open these files.
+    /// Open these files (as tabs of the window the user worked in last, which comes to the front).
     Open(Vec<String>),
+    /// Bring the window the user worked in last to the front (the app was launched again, with no
+    /// files).
+    Activate,
     /// Quit (the Dock's Quit, logging out), asking about unsaved changes first.
     Quit,
 }
@@ -282,25 +328,47 @@ pub struct RecentFile {
     pub size: usize,
 }
 
-pub struct PrintCraftApp {
+pub struct PdfCraftApp {
     pub session: Session,
     pub views: Vec<DocView>,
     /// `None` shows the Home tab.
     pub active: Option<usize>,
     pub mode: Mode,
+    /// Workspace used for newly opened PDFs; independent of PDF Initial View metadata.
+    pub default_mode: Mode,
+    /// Page display and zoom for newly opened PDFs that don't ask for their own (Preferences ▸
+    /// Documents and view). Continuous scrolling at fit width by default, which never snaps
+    /// between pages.
+    pub view_defaults: canvas::ViewDefaults,
+    /// Explicit CLI/control mode lasts for this session and is never persisted.
+    mode_override: Option<Mode>,
     pub left: LeftPanel,
+    /// The left tool panel is showing. Closed on a first run, then remembered across sessions.
     pub left_open: bool,
     pub right: Option<RightPanel>,
+    /// The right panel opening a document chose by itself (Pages for 2+ pages), while the user
+    /// hasn't changed it: the next document opened decides again.
+    auto_right: Option<RightPanel>,
     pub quick_tool: QuickTool,
     /// Comment author, per-tool colours and widths, pin.
     pub comment_prefs: comments::CommentPrefs,
+    /// Resolved colours, including the current OS theme when following the system.
     pub theme: ThemeKind,
-    pub language: i18n::Language,
-    /// Follow the operating system's light/dark setting.
-    pub follow_system_theme: bool,
+    pub theme_preference: ThemePreference,
+    /// Interface language preference: `auto` (follow the system) or a code from [`i18n::LANGUAGES`].
+    pub language: String,
+    /// The first-run "Choose your language / Escolha o idioma" prompt is open (see
+    /// [`Self::ask_language_if_unset`]); nothing else takes input until a language is chosen.
+    pub language_prompt: bool,
+    /// Write the settings at the end of this frame rather than at the next autosave (a language
+    /// chosen at first start survives even if the app is killed right after).
+    save_requested: bool,
     pub dialog: Option<Dialog>,
     /// How to ask for the latest release (the desktop app sets it; see `updates`).
     pub update_source: Option<updates::UpdateSource>,
+    /// How to download and install an update (the desktop app on Windows sets it; elsewhere a
+    /// newer release is offered on its release page).
+    pub update_installer: Option<updates::UpdateInstaller>,
     pub(crate) updates: updates::Updates,
     pub palette_open: bool,
     pub palette_query: String,
@@ -315,6 +383,10 @@ pub struct PrintCraftApp {
     pub inbox: Inbox,
     /// Requests from the operating system, polled every frame (macOS Apple events).
     pub os_events: Option<OsEventsFn>,
+    /// Files sent from outside (another launch, the Finder) while a dialog or prompt was open:
+    /// they open once it closes, so they don't change the document it acts on.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    held_open: Vec<String>,
     /// A pending "save changes?" question (closing a dirty tab or quitting).
     pub close_request: Option<CloseRequest>,
     /// Save to this path instead of asking (tests and automation).
@@ -322,9 +394,15 @@ pub struct PrintCraftApp {
     /// Document Properties ▸ Description fields being edited: (document, Title/Author/Subject/Keywords).
     pub props_draft: Option<(DocId, [String; 4])>,
     /// Document Properties ▸ Initial View (and reading options) being edited.
-    pub view_draft: Option<(DocId, printcraft_engine::InitialView)>,
+    pub view_draft: Option<(DocId, pdfcraft_engine::InitialView)>,
     /// Files picked asynchronously for combine / insert (web).
     pub requests: files::Requests,
+    /// Native file pickers in flight (they never block the frame; see `pickers`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pickers: pickers::Pickers,
+    /// Pick these files instead of showing a picker (tests and automation).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub pick_override: Option<Vec<String>>,
     /// Write exported files (split) here instead of asking (tests and automation).
     pub export_dir_override: Option<String>,
     /// Split dialog settings.
@@ -332,7 +410,7 @@ pub struct PrintCraftApp {
     pub extract_draft: ExtractDraft,
     pub rotate_draft: RotateDraft,
     /// Summarize Comments: sort order.
-    pub summary_sort: printcraft_engine::SummarySort,
+    pub summary_sort: pdfcraft_engine::SummarySort,
     /// The signing dialogs' state.
     pub sign_draft: Option<SignDraft>,
     /// Digital ID files the user has created or added.
@@ -349,7 +427,7 @@ pub struct PrintCraftApp {
     pub run_inline: bool,
     /// Action Wizard: the user's actions, the dialog state, the running action and (tests) the
     /// files to use instead of a picker.
-    pub custom_actions: Vec<printcraft_engine::actions::Action>,
+    pub custom_actions: Vec<pdfcraft_engine::actions::Action>,
     pub wizard: actions_ui::Wizard,
     pub action_run: Option<std::sync::Arc<std::sync::Mutex<actions_ui::RunProgress>>>,
     pub action_files_override: Option<Vec<String>>,
@@ -362,15 +440,17 @@ pub struct PrintCraftApp {
     pub js_console: js_ui::JsConsole,
     pub doc_js: js_ui::DocJsDraft,
     pub a11y: a11y_ui::A11yState,
-    pub a11y_skipped: std::collections::BTreeSet<printcraft_engine::a11y::Rule>,
+    pub a11y_skipped: std::collections::BTreeSet<pdfcraft_engine::a11y::Rule>,
     pub alt_draft: a11y_ui::AltDraft,
     /// List the macOS Keychain's signing identities among the digital IDs (the desktop app).
     pub keychain_ids: bool,
     pub cert_viewer: Option<sign_ui::CertViewer>,
     /// The last space audit.
-    pub space_audit: Vec<printcraft_engine::optimize::SpaceUse>,
+    pub space_audit: Vec<pdfcraft_engine::optimize::SpaceUse>,
     /// Combine files: the files staged so far.
     pub combine_draft: Vec<combine_ui::CombineFile>,
+    /// Images waiting for the resolution choice (released on cancel).
+    pub image_import: Option<create_ui::ImageImport>,
     /// The custom stamp library, and the stamp being created.
     pub custom_stamps: Vec<stamps_ui::CustomStamp>,
     pub stamp_draft: stamps_ui::StampDraft,
@@ -396,11 +476,16 @@ pub struct PrintCraftApp {
     last_autosave: f64,
     pending_recovered: Option<RecoveryMeta>,
     allow_quit: bool,
+    /// The dialog seen at the last check, and a counter bumped whenever it changes (see
+    /// [`Self::dialog_epoch`]).
+    dialog_seen: Option<Dialog>,
+    dialog_epoch: u64,
     /// The egui context, for commands that change window or theme state.
     ctx: Option<egui::Context>,
-    pending_theme: Option<ThemeKind>,
     styled: bool,
     fonts_ready: bool,
+    /// The installed fonts put the Simplified Chinese faces first (see `theme::font_definitions_for`).
+    fonts_hans: bool,
     /// The window title last sent to the platform.
     pub window_title: String,
     /// The UI control channel, when enabled (`--control`; off by default).
@@ -425,6 +510,7 @@ pub struct PrintCraftApp {
     /// The Create signature / initials dialog, and its typed preview.
     pub signature_draft: fill_sign::SigDraft,
     pub(crate) signature_preview: Option<(String, egui::TextureHandle)>,
+    pub(crate) saved_signature_previews: [Option<(String, egui::TextureHandle)>; 2],
     /// The Comment Properties dialog's state.
     pub comment_props: Option<comment_props::PropsDraft>,
     pub field_props: Option<prepare::FieldDraft>,
@@ -433,13 +519,55 @@ pub struct PrintCraftApp {
     pub redact_search: RedactSearchDraft,
     pub hidden_draft: HiddenDraft,
     pub print_draft: PrintDraft,
+    /// The printer list being fetched and jobs printing in the background (none on the web).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) print_jobs: print_ui::PrintJobs,
+    /// The window's normal size and position and whether it is maximized (remembered).
+    pub window_state: window_state::WindowState,
+    /// Bringing the window back at start (`None`: following it).
+    pub(crate) window_restore: Option<window_state::Restore>,
     pub link_draft: Option<LinkDraft>,
     /// The style new text gets (Edit a PDF ▸ Format text).
-    pub text_style: printcraft_engine::AddedText,
+    pub text_style: pdfcraft_engine::AddedText,
     /// The Replace Pages dialog's state.
     pub replace_draft: Option<files::ReplaceDraft>,
     /// The last web link the app asked the system to open (tests and automation).
     pub last_opened_url: Option<String>,
+    /// A document asked to open this address; the user hasn't answered yet (#90, #91).
+    pub pending_link: Option<PendingLink>,
+    /// The open windows and the tabs of those not being drawn (see [`windows`]).
+    pub windows: windows::Windows,
+    /// How windows other than the first are created: icon, minimum size, app id (the desktop app
+    /// sets it to match its main window).
+    pub window_template: egui::ViewportBuilder,
+}
+
+/// Where in a document a request to open an address came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkOrigin {
+    /// A link on the page.
+    Link,
+    /// A push button's URI action.
+    Button,
+    /// A script (`app.launchURL`).
+    Script,
+}
+
+impl LinkOrigin {
+    fn noun(self) -> &'static str {
+        match self {
+            Self::Link => tl!("A link"),
+            Self::Button => tl!("A button"),
+            Self::Script => tl!("A script"),
+        }
+    }
+}
+
+/// An address a document asked to open, waiting for the user to allow or cancel it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingLink {
+    pub url: String,
+    pub origin: LinkOrigin,
 }
 
 /// Settings for the Number pages dialog.
@@ -447,34 +575,42 @@ pub struct PrintCraftApp {
 pub struct NumberDraft {
     pub from: usize,
     pub to: usize,
-    pub style: printcraft_engine::LabelStyle,
+    pub style: pdfcraft_engine::LabelStyle,
     pub prefix: String,
     pub start: u32,
 }
 
-impl Default for PrintCraftApp {
+impl Default for PdfCraftApp {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PrintCraftApp {
+impl PdfCraftApp {
     pub fn new() -> Self {
         Self {
             session: Session::new(),
             views: Vec::new(),
             active: None,
             mode: Mode::AllTools,
+            default_mode: Mode::AllTools,
+            view_defaults: Default::default(),
+            mode_override: None,
             left: LeftPanel::AllTools,
-            left_open: true,
+            // As clear a window as possible on a first run: the tool panel opens on demand.
+            left_open: false,
             right: None,
+            auto_right: None,
             quick_tool: QuickTool::Select,
             comment_prefs: Default::default(),
             theme: ThemeKind::Light,
-            language: i18n::Language::default(),
-            follow_system_theme: false,
+            theme_preference: ThemePreference::Light,
+            language: i18n::AUTO.to_string(),
+            language_prompt: false,
+            save_requested: false,
             dialog: None,
             update_source: None,
+            update_installer: None,
             updates: updates::Updates::default(),
             palette_open: false,
             palette_query: String::new(),
@@ -486,11 +622,16 @@ impl PrintCraftApp {
             full_screen: false,
             inbox: Default::default(),
             os_events: None,
+            held_open: Vec::new(),
             close_request: None,
             save_override: None,
             props_draft: None,
             view_draft: None,
             requests: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            pickers: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            pick_override: None,
             export_dir_override: None,
             split_draft: SplitDraft::default(),
             extract_draft: ExtractDraft::default(),
@@ -520,6 +661,7 @@ impl PrintCraftApp {
             cert_viewer: None,
             space_audit: Vec::new(),
             combine_draft: Vec::new(),
+            image_import: None,
             custom_stamps: Vec::new(),
             stamp_draft: Default::default(),
             optimize_draft: OptimizeDraft::default(),
@@ -536,13 +678,16 @@ impl PrintCraftApp {
             last_autosave: 0.0,
             pending_recovered: None,
             allow_quit: false,
+            dialog_seen: None,
+            dialog_epoch: 0,
             ctx: None,
-            pending_theme: None,
             styled: false,
             fonts_ready: false,
+            fonts_hans: false,
             control: None,
             bookmark_rename: None,
             last_opened_url: None,
+            pending_link: None,
             protect_draft: Default::default(),
             boxes_draft: Default::default(),
             marks_draft: Default::default(),
@@ -552,6 +697,7 @@ impl PrintCraftApp {
             initials: None,
             signature_draft: Default::default(),
             signature_preview: None,
+            saved_signature_previews: [None, None],
             comment_props: None,
             field_props: None,
             redact_prefs: RedactPrefs::default(),
@@ -559,10 +705,15 @@ impl PrintCraftApp {
             redact_search: RedactSearchDraft::default(),
             hidden_draft: HiddenDraft::default(),
             print_draft: PrintDraft::default(),
+            print_jobs: print_ui::PrintJobs::default(),
+            window_state: window_state::WindowState::default(),
+            window_restore: None,
             link_draft: None,
             text_style: content_ui::default_style(),
             replace_draft: None,
-            number_draft: NumberDraft { from: 1, to: 1, style: printcraft_engine::LabelStyle::Decimal, prefix: String::new(), start: 1 },
+            number_draft: NumberDraft { from: 1, to: 1, style: pdfcraft_engine::LabelStyle::Decimal, prefix: String::new(), start: 1 },
+            windows: Default::default(),
+            window_template: egui::ViewportBuilder::default().with_min_inner_size([820.0, 520.0]).with_drag_and_drop(true),
         }
     }
 
@@ -574,20 +725,23 @@ impl PrintCraftApp {
 
     /// Open a document the way it asks to be opened: navigation panel, layout, magnification,
     /// page (Document Properties ▸ Initial View).
-    fn apply_initial_view(&mut self, index: usize, v: &printcraft_engine::InitialView) {
-        use printcraft_engine::{InitialLayout as L, Magnification as M, Navigation as N};
+    fn apply_initial_view(&mut self, index: usize, v: &pdfcraft_engine::InitialView) {
+        use pdfcraft_engine::{InitialLayout as L, Magnification as M, Navigation as N};
         let pages = self.session.get(self.views[index].id).map_or(0, |d| d.info.pages.len());
         match v.navigation {
             N::PageOnly => {}
             N::Bookmarks => self.right = Some(RightPanel::Bookmarks),
+            // Thumbnails of a single page would only take room.
+            N::Pages if pages < 2 => {}
             N::Pages => self.right = Some(RightPanel::Pages),
             N::Attachments => self.right = Some(RightPanel::Attachments),
             N::Layers => self.right = Some(RightPanel::Layers),
         }
         let view = &mut self.views[index];
         match v.layout {
+            // The view opened in Default page display already.
             L::Default => {}
-            L::SinglePage => view.layout = canvas::PageLayout::Single,
+            L::SinglePage => view.set_layout(canvas::PageLayout::Single),
             L::SinglePageContinuous => view.layout = canvas::PageLayout::Continuous,
             L::TwoUp | L::TwoUpContinuous => view.layout = canvas::PageLayout::TwoUp,
             L::TwoUpCoverPage | L::TwoUpContinuousCoverPage => {
@@ -596,6 +750,7 @@ impl PrintCraftApp {
             }
         }
         match v.magnification {
+            // The view opened at the default zoom already.
             M::Default => {}
             M::ActualSize => view.set_zoom(1.0),
             M::Percent(p) => view.set_zoom((p / 100.0) as f32),
@@ -618,7 +773,7 @@ impl PrintCraftApp {
     }
 
     fn try_open(&mut self, name: &str, path: Option<String>, bytes: std::sync::Arc<Vec<u8>>, password: Option<&str>) -> Result<(), String> {
-        use printcraft_render::OpenError;
+        use pdfcraft_render::OpenError;
         let size = bytes.len();
         let id = match self.session.open(name, path.clone(), bytes.clone(), password) {
             Ok(id) => id,
@@ -632,25 +787,43 @@ impl PrintCraftApp {
         self.password_prompt = None;
         let doc = self.session.get(id).ok_or("the document could not be opened")?;
         let pages = doc.info.pages.len();
-        // Acrobat opens straight to the Comments panel when a document has comments.
-        if self.right.is_none() {
-            self.right = if !doc.info.annotations.is_empty() {
-                Some(RightPanel::Comments)
-            } else if !doc.info.outline.is_empty() {
-                Some(RightPanel::Bookmarks)
-            } else {
-                None
-            };
+        // Keep the window clear: only a document with several pages opens the page thumbnails
+        // by itself. A panel the user picked stays; one opened automatically follows the new
+        // document (closing for a one-page one).
+        let automatic = self.right.is_none() || self.right == self.auto_right;
+        if automatic {
+            self.right = (pages >= 2).then_some(RightPanel::Pages);
+            self.auto_right = self.right;
         }
         let initial = doc.initial_view();
-        self.views.push(DocView::new(id, &doc.info));
+        self.views.push(DocView::new(id, &doc.info, self.view_defaults));
         self.active = Some(self.views.len() - 1);
+        let before = self.right;
         self.apply_initial_view(self.views.len() - 1, &initial);
+        // A panel the document asked for (/PageMode, e.g. Bookmarks) was not the user's choice
+        // either: it follows the next document like the automatic Pages panel.
+        if automatic || self.right != before {
+            self.auto_right = self.right;
+        }
+        if let Some(mode) = self.mode_override {
+            // Explicit mode options do not reset independent --tool / --left choices.
+            self.mode = mode;
+        } else if self.mode != self.default_mode {
+            // Switch workspace like the mode bar, but a left panel the user (or `--left closed`)
+            // closed stays closed, and an unchanged mode keeps the tool panel the user chose.
+            let left_open = self.left_open;
+            self.select_mode(self.default_mode);
+            self.left_open = left_open;
+        }
         if let Some(p) = path {
             self.recent.retain(|r| r.path != p);
             self.recent.insert(0, RecentFile { name: name.to_string(), path: p, pages, size });
             self.recent.truncate(12);
         }
+        // What the form's scripts said while it opened (messages, errors) shows now, not with
+        // the next edit.
+        let out = self.session.take_js_output(id);
+        self.handle_js(id, out);
         Ok(())
     }
 
@@ -665,10 +838,10 @@ impl PrintCraftApp {
         match f.bytes() {
             Ok(bytes) => {
                 if let Err(e) = self.open_bytes(&name, None, bytes) {
-                    self.notify(format!("Couldn't open {name}: {e}"));
+                    self.notify_fmt("Couldn't open {name}: {e}", &[("name", &name), ("e", &e.to_string())]);
                 }
             }
-            Err(e) => self.notify(format!("Couldn't read {name}: {e}")),
+            Err(e) => self.notify_fmt("Couldn't read {name}: {e}", &[("name", &name), ("e", &e.to_string())]),
         }
     }
 
@@ -688,28 +861,39 @@ impl PrintCraftApp {
         });
     }
 
+    /// A number that changes whenever the open dialog changes (opened, closed or replaced by
+    /// another), checked every frame. A picker started from a dialog's Browse… button answers
+    /// only into the same showing of that dialog.
+    pub(crate) fn dialog_epoch(&mut self) -> u64 {
+        if self.dialog != self.dialog_seen {
+            self.dialog_seen = self.dialog;
+            self.dialog_epoch = self.dialog_epoch.wrapping_add(1);
+        }
+        self.dialog_epoch
+    }
+
     /// Save an attachment to disk, or open a PDF attachment in a new tab.
     pub fn attachment_action(&mut self, doc: DocId, index: usize, open: bool) {
         let Some(d) = self.session.get(doc) else { return };
         let Some(att) = d.info.attachments.get(index).cloned() else { return };
-        let data = printcraft_render::attachment_data(&d.bytes, d.password.as_deref(), &att);
+        let data = pdfcraft_render::attachment_data(&d.bytes, d.password.as_deref(), &att);
         match (data, open) {
-            (Err(e), _) => self.notify(format!("Couldn't read {}: {e}", att.name)),
+            (Err(e), _) => self.notify_fmt("Couldn't read {name}: {e}", &[("name", &att.name), ("e", &e.to_string())]),
             (Ok(bytes), true) => {
                 if let Err(e) = self.open_bytes(&att.name, None, bytes) {
-                    self.notify(format!("Couldn't open {}: {e}", att.name));
+                    self.notify_fmt("Couldn't open {name}: {e}", &[("name", &att.name), ("e", &e.to_string())]);
                 }
             }
             (Ok(bytes), false) => {
                 #[cfg(not(target_arch = "wasm32"))]
-                if let Some(path) = rfd::FileDialog::new().set_file_name(&att.name).save_file() {
-                    match std::fs::write(&path, &bytes) {
-                        Ok(()) => self.notify(format!("Saved {}", path.display())),
-                        Err(e) => self.notify(format!("Couldn't save: {e}")),
+                self.ask_one(pickers::Ask::Save(rfd::AsyncFileDialog::new().set_file_name(&att.name)), None, move |app, path| {
+                    match crate::editing::write_atomically(&path.to_string_lossy(), &bytes) {
+                        Ok(()) => app.notify_fmt("Saved {name}", &[("name", &path.display().to_string())]),
+                        Err(e) => app.notify_fmt("Couldn't save: {e}", &[("e", &e.to_string())]),
                     }
-                }
+                });
                 #[cfg(target_arch = "wasm32")]
-                self.notify(format!("Downloading attachments on the web arrives with M3.10 ({} bytes ready)", bytes.len()));
+                self.notify_fmt("Downloading attachments on the web arrives with M3.10 ({n} bytes ready)", &[("n", &bytes.len().to_string())]);
             }
         }
     }
@@ -725,7 +909,7 @@ impl PrintCraftApp {
         let Some(p) = self.password_prompt.take() else { return };
         let Some(pw) = password else { return };
         match self.try_open(&p.name, p.path, p.bytes, Some(&pw)) {
-            Err(e) => self.notify(format!("Couldn't open {}: {e}", p.name)),
+            Err(e) => self.notify_fmt("Couldn't open {name}: {e}", &[("name", &p.name), ("e", &e.to_string())]),
             // A recovered encrypted document is open once the prompt is gone.
             Ok(()) if self.password_prompt.is_none() => {
                 if let Some(meta) = self.pending_recovered.clone() {
@@ -742,31 +926,39 @@ impl PrintCraftApp {
         match std::fs::read(path) {
             Ok(bytes) => {
                 if let Err(e) = self.open_bytes(&name, Some(path.to_string()), bytes) {
-                    self.notify(format!("Couldn't open {name}: {e}"));
+                    self.notify_fmt("Couldn't open {name}: {e}", &[("name", &name), ("e", &e.to_string())]);
                 }
             }
-            Err(e) => self.notify(format!("Couldn't read {name}: {e}")),
+            Err(e) => self.notify_fmt("Couldn't read {name}: {e}", &[("name", &name), ("e", &e.to_string())]),
         }
     }
 
     pub fn open_dialog(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(p) =
-            rfd::FileDialog::new().add_filter("PDF", &["pdf"]).add_filter("Images and text (converted to PDF)", &create_ui::CONVERTIBLE).pick_file()
-        {
-            self.open_path(&p.to_string_lossy());
-        }
+        self.pick(
+            pickers::PickFor::Open,
+            rfd::AsyncFileDialog::new().add_filter("PDF", &["pdf"]).add_filter(tl!("Images and text (converted to PDF)"), &create_ui::CONVERTIBLE),
+            false,
+        );
         // Browsers pick files asynchronously; the bytes arrive through `inbox`.
         #[cfg(target_arch = "wasm32")]
         {
             let inbox = self.inbox.clone();
+            let ctx = self.ctx.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                if let Some(h) =
-                    rfd::AsyncFileDialog::new().add_filter("PDF", &["pdf"]).add_filter("Images and text", &create_ui::CONVERTIBLE).pick_file().await
+                if let Some(h) = rfd::AsyncFileDialog::new()
+                    .add_filter("PDF", &["pdf"])
+                    .add_filter(tl!("Images and text"), &create_ui::CONVERTIBLE)
+                    .pick_file()
+                    .await
                 {
                     let bytes = h.read().await;
                     if let Ok(mut q) = inbox.lock() {
                         q.push((h.file_name(), bytes));
+                    }
+                    // The read may finish while the app is idle: wake it to open the file.
+                    if let Some(ctx) = ctx {
+                        ctx.request_repaint();
                     }
                 }
             });
@@ -799,7 +991,8 @@ impl PrintCraftApp {
         client
     }
 
-    /// Open a web link in the system browser (a new tab on the web).
+    /// Open a web link in the system browser (a new tab on the web). Only for the app's own
+    /// links; an address that came from a document goes through [`Self::request_document_url`].
     pub fn open_url(&mut self, url: &str) {
         if let Some(ctx) = &self.ctx {
             ctx.open_url(egui::OpenUrl::new_tab(url));
@@ -807,41 +1000,111 @@ impl PrintCraftApp {
         self.last_opened_url = Some(url.to_string());
     }
 
+    /// A document asks to open `url` (a link, a button's URI action or `app.launchURL`). Web and
+    /// email addresses wait for the user to allow them; anything else is refused with a notice
+    /// (#90, #91). While one request is waiting, further ones are dropped, so a script can't
+    /// queue up a stream of dialogs.
+    pub fn request_document_url(&mut self, url: &str, origin: LinkOrigin) {
+        match pdfcraft_engine::links::document_url(url) {
+            Ok(url) => {
+                if self.pending_link.is_none() {
+                    self.pending_link = Some(PendingLink { url, origin });
+                }
+            }
+            Err(e) => self.notify_fmt(
+                "{who} in this document tried to open an address PdfCraft won't open: {e}. Only web (http, https) and email (mailto) links open from documents.",
+                &[("who", tl!(origin.noun())), ("e", &e.to_string())],
+            ),
+        }
+    }
+
+    /// The user's answer to [`Self::pending_link`]: open it, or drop it.
+    pub fn resolve_pending_link(&mut self, open: bool) {
+        if let Some(p) = self.pending_link.take()
+            && open
+        {
+            self.open_url(&p.url);
+        }
+    }
+
     pub fn notify(&mut self, msg: impl Into<String>) {
         self.toast = Some((msg.into(), 0.0));
     }
 
-    pub fn set_theme(&mut self, ctx: &egui::Context, kind: ThemeKind) {
-        self.theme = kind;
-        theme::apply(ctx, kind);
+    /// Notify with a static message in the UI language.
+    pub fn notify_tr(&mut self, text: &str) {
+        self.notify(branded(tl!(text)));
+    }
+
+    /// Notify with an error's own text. Engine and OS messages are not translated: matching their
+    /// English wording would break silently whenever it changes.
+    pub fn notify_error(&mut self, error: impl std::fmt::Display) {
+        self.notify(error.to_string());
+    }
+
+    /// Notify with a `{name}`-style template in the UI language (placeholders filled once).
+    /// The app's name in the template is [`APP_NAME`] ([`branded`]); the values are left alone.
+    pub fn notify_fmt(&mut self, template: &str, args: &[(&str, &str)]) {
+        self.notify(i18n::fmt(&branded(tl!(template)), args));
+    }
+
+    pub fn set_theme_preference(&mut self, preference: ThemePreference) {
+        self.theme_preference = preference;
+        self.theme = preference.resolve(self.ctx.as_ref().and_then(egui::Context::system_theme), self.theme);
+        if let Some(ctx) = &self.ctx {
+            theme::apply(ctx, self.theme);
+        }
+    }
+
+    fn sync_theme(&mut self, ctx: &egui::Context) {
+        let kind = self.theme_preference.resolve(ctx.system_theme(), self.theme);
+        if kind != self.theme {
+            self.theme = kind;
+            theme::apply(ctx, kind);
+        }
     }
 
     /// Run a catalogue command. Commands that aren't implemented yet say which milestone ships them.
     pub fn run_command(&mut self, command: &str) {
-        if printcraft_engine::commands::command(command).is_some() {
+        if pdfcraft_engine::commands::command(command).is_some() {
             self.execute(command);
             return;
         }
         // Not implemented yet: say which milestone ships it.
-        let when = printcraft_engine::catalog::TOOL_GROUPS
+        let when = pdfcraft_engine::catalog::TOOL_GROUPS
             .iter()
             .flat_map(|g| g.sections.iter().flat_map(|s| s.items.iter()))
             .find(|i| i.command == command)
             .map(|i| match i.availability {
-                printcraft_engine::catalog::Availability::Planned(m) => format!("ships in milestone {m}"),
-                printcraft_engine::catalog::Availability::Provider => "needs an AI provider (off by default)".to_string(),
-                printcraft_engine::catalog::Availability::Ready => "is available".to_string(),
+                pdfcraft_engine::catalog::Availability::Planned(m) => crate::i18n::fmt(tl!("ships in milestone {m}"), &[("m", m)]),
+                pdfcraft_engine::catalog::Availability::Provider => tl!("needs an AI provider (off by default)").to_string(),
+                pdfcraft_engine::catalog::Availability::Ready => tl!("is available").to_string(),
             })
-            .unwrap_or_else(|| "is not available yet".into());
-        self.notify(format!("`{command}` {when}"));
+            .unwrap_or_else(|| tl!("is not available yet").to_string());
+        self.notify_fmt("`{command}` {when}", &[("command", command), ("when", &when)]);
+    }
+
+    /// Select the workspace and its matching tool panel, just like the mode bar.
+    pub(crate) fn select_mode(&mut self, mode: Mode) {
+        self.mode = mode;
+        self.left_open = true;
+        self.left = match mode {
+            Mode::Edit => LeftPanel::Tool("edit"),
+            Mode::Convert => LeftPanel::Tool("export"),
+            Mode::Sign => LeftPanel::Tool("fill_sign"),
+            _ => LeftPanel::AllTools,
+        };
     }
 
     /// Serialize the user's persistent state (recent files, theme). Local only.
     pub fn persist(&self) -> String {
-        let trusted: Vec<String> = self.session.trusted_certificates().iter().map(printcraft_engine::sign::x509::to_pem).collect();
+        let trusted: Vec<String> = self.session.trusted_certificates().iter().map(pdfcraft_engine::sign::x509::to_pem).collect();
         serde_json::json!({
             "recent": self.recent,
-            "theme": self.theme,
+            "theme": self.theme_preference,
+            "default_mode": self.default_mode,
+            "default_layout": self.view_defaults.layout.as_str(),
+            "default_zoom": self.view_defaults.zoom_name(),
             "language": self.language,
             "author": self.comment_prefs.author,
             // Drawn signatures keep their original form (older settings read the same).
@@ -854,8 +1117,31 @@ impl PrintCraftApp {
             "custom_stamps": stamps_ui::encode(&self.custom_stamps),
             "javascript": self.session.javascript(),
             "actions": actions_ui::encode(&self.custom_actions),
+            "print": self.print_draft.prefs(),
+            "window": self.window_state,
+            "left_open": self.left_open,
+            "updates": self.updates.prefs(),
         })
         .to_string()
+    }
+
+    /// Open the first-run language prompt unless the settings hold an explicit choice of an offered
+    /// language. The desktop and web apps call this after [`Self::restore`]; a first start (no
+    /// settings), settings from before the prompt (`auto`) and a language that is no longer
+    /// offered all ask.
+    pub fn ask_language_if_unset(&mut self) {
+        self.language_prompt = !i18n::is_offered_pref(&self.language);
+    }
+
+    /// Use the language with this code from now on (the first-run prompt, Preferences): applied
+    /// at once and saved at the end of the frame. `false` (nothing changes) for an unknown code.
+    pub fn choose_language(&mut self, code: &str) -> bool {
+        let Some(code) = i18n::normalize_pref(code) else { return false };
+        self.language = code.to_string();
+        i18n::set_current(i18n::Lang::from_pref(code));
+        self.language_prompt = false;
+        self.save_requested = true;
+        true
     }
 
     /// Restore state written by `persist`. Unknown or malformed data is ignored.
@@ -867,11 +1153,20 @@ impl PrintCraftApp {
             let r: Vec<RecentFile> = r.into_iter().filter(|f| std::path::Path::new(&f.path).exists()).collect();
             self.recent = r;
         }
-        if let Ok(t) = serde_json::from_value::<ThemeKind>(v["theme"].clone()) {
-            self.theme = t;
+        if let Ok(preference) = serde_json::from_value::<ThemePreference>(v["theme"].clone()) {
+            self.set_theme_preference(preference);
         }
-        if let Ok(language) = serde_json::from_value::<i18n::Language>(v["language"].clone()) {
-            self.language = language;
+        if let Ok(mode) = serde_json::from_value::<Mode>(v["default_mode"].clone()) {
+            self.default_mode = mode;
+        }
+        if let Some(layout) = v["default_layout"].as_str().and_then(canvas::PageLayout::try_parse) {
+            self.view_defaults.layout = layout;
+        }
+        if let Some(defaults) = v["default_zoom"].as_str().and_then(|zoom| self.view_defaults.with_zoom(zoom)) {
+            self.view_defaults = defaults;
+        }
+        if let Some(language) = v["language"].as_str().and_then(i18n::normalize_pref) {
+            self.language = language.to_string();
         }
         // An empty or missing name keeps the login-name default; settings are untrusted, so the
         // name is cut to a sane length.
@@ -893,19 +1188,51 @@ impl PrintCraftApp {
             self.digital_ids = ids;
         }
         self.custom_stamps = stamps_ui::decode(&v["custom_stamps"]);
+        self.print_draft.restore_prefs(&v["print"]);
+        if let Some(w) = window_state::WindowState::from_json(&v["window"]) {
+            self.window_state = w;
+        }
         self.custom_actions = actions_ui::decode(&v["actions"]);
+        if let Some(open) = v["left_open"].as_bool() {
+            self.left_open = open;
+        }
         if let Some(on) = v["javascript"].as_bool() {
             self.session.set_javascript(on);
         }
+        self.updates.restore_prefs(&v["updates"]);
         if let Ok(pems) = serde_json::from_value::<Vec<String>>(v["trusted"].clone()) {
-            let certs = pems.iter().filter_map(|p| printcraft_engine::sign::x509::load_certificates(p.as_bytes()).ok()).flatten().collect();
+            let certs = pems.iter().filter_map(|p| pdfcraft_engine::sign::x509::load_certificates(p.as_bytes()).ok()).flatten().collect();
             self.session.set_trusted_certificates(certs);
         }
     }
 
+    /// Install the fonts, image loaders and theme before the first frame (the desktop app calls this
+    /// as it creates the app). Fonts installed during a frame take effect only in the next one, so
+    /// otherwise the first frame, the one the window is shown with, would be empty. Called after
+    /// frames have run, it only queues them like the first frame does.
+    pub fn prepare(&mut self, ctx: &egui::Context) {
+        if self.styled {
+            return;
+        }
+        // So a theme or language change before the first frame restyles this context too.
+        self.ctx = Some(ctx.clone());
+        // The saved or requested preference; egui learns the system's theme only in its first
+        // pass, from when `sync_theme` follows it.
+        self.theme = self.theme_preference.resolve(ctx.system_theme(), self.theme);
+        // The same faces the first frame would install (`logic`), so it doesn't install them again.
+        let hans = i18n::Lang::from_pref(&self.language).code() == "zh-hans";
+        egui_extras::install_image_loaders(ctx);
+        theme::install_fonts_for(ctx, hans);
+        self.fonts_hans = hans;
+        theme::apply(ctx, self.theme);
+        self.styled = true;
+        // Fonts set before the first pass are active in it.
+        self.fonts_ready = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT) == 0;
+    }
+
     /// `true` while any open document still waits for page renders (used by headless capture).
     pub fn render_pending(&self) -> bool {
-        self.views.iter().any(|v| v.render_pending())
+        self.views.iter().chain(self.windows.parked_views()).any(|v| v.render_pending())
     }
 
     /// Apply a named view option (`--page 3`, `--panel bookmarks`, `--theme dark`, …).
@@ -915,11 +1242,29 @@ impl PrintCraftApp {
         let view = self.active.and_then(|i| self.views.get_mut(i));
         match (key, view) {
             ("language", _) => {
-                self.language = i18n::Language::parse(value).ok_or("language must be en or ja")?;
+                let language = i18n::normalize_pref(value).ok_or_else(|| {
+                    let codes: Vec<&str> = std::iter::once(i18n::AUTO).chain(i18n::Lang::all().map(i18n::Lang::code)).collect();
+                    format!("language must be one of {}", codes.join(", "))
+                })?;
+                self.language = language.to_string();
+                // An explicit choice (`--language`, the control channel) answers the first-run prompt.
+                self.language_prompt = false;
+            }
+            ("language-prompt", _) => {
+                self.language_prompt = match value {
+                    "show" => true,
+                    "hide" => false,
+                    _ => return Err("language-prompt must be show or hide".into()),
+                };
             }
             ("theme", _) => {
-                self.follow_system_theme = value == "system";
-                self.pending_theme = Some(if value == "dark" { ThemeKind::Dark } else { ThemeKind::Light });
+                let preference = match value {
+                    "system" => ThemePreference::System,
+                    "light" => ThemePreference::Light,
+                    "dark" => ThemePreference::Dark,
+                    _ => return Err("theme must be light, dark, or system".into()),
+                };
+                self.set_theme_preference(preference);
             }
             ("panel", _) => {
                 self.right = match value {
@@ -938,21 +1283,64 @@ impl PrintCraftApp {
                 }
             }
             ("mode", _) => {
-                self.mode = match value {
-                    "read" => Mode::Read,
-                    "edit" => Mode::Edit,
-                    "convert" => Mode::Convert,
-                    "sign" => Mode::Sign,
-                    _ => Mode::AllTools,
-                }
+                let mode = Mode::parse(value).unwrap_or(Mode::AllTools);
+                self.mode_override = Some(mode);
+                self.mode = mode;
+            }
+            ("default-mode", _) => {
+                self.default_mode = Mode::parse(value).ok_or("default-mode must be all, read, edit, convert or sign")?;
             }
             ("tool", _) => {
-                let g = printcraft_engine::catalog::group(value).ok_or_else(|| format!("unknown tool {value}"))?;
+                let g = pdfcraft_engine::catalog::group(value).ok_or_else(|| format!("unknown tool {value}"))?;
                 self.left = LeftPanel::Tool(g.id);
                 self.left_open = true;
             }
             ("left", _) => self.left_open = value != "closed",
+            // The Print dialog's options (screenshots, the control channel).
+            ("print-tab", _) => {
+                self.print_draft.handling = match value {
+                    "size" => PrintHandling::Size,
+                    "poster" => PrintHandling::Poster,
+                    "multiple" => PrintHandling::Multiple,
+                    "booklet" => PrintHandling::Booklet,
+                    // The Window tab became the print area (print-area); old scripts still work.
+                    "window" => {
+                        self.print_draft.area = PrintArea::Window;
+                        return Ok(());
+                    }
+                    _ => return Err("print-tab must be size, poster, multiple or booklet".into()),
+                };
+            }
+            ("print-area", _) => {
+                self.print_draft.area = match value {
+                    "full" | "full-page" | "page" => PrintArea::FullPage,
+                    "window" => PrintArea::Window,
+                    _ => return Err("print-area must be full or window".into()),
+                };
+            }
+            ("print-paper", _) => {
+                self.print_draft.paper =
+                    print_ui::PAPER_CHOICES.iter().position(|p| p.0.eq_ignore_ascii_case(value)).ok_or("print-paper must be A4 or A3")?;
+            }
+            ("print-region", _) => {
+                let r: Vec<f64> = value.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                let r = <[f64; 4]>::try_from(r).map_err(|_| "print-region must be x0,y0,x1,y1 in points")?;
+                self.print_draft.region = r.iter().all(|v| v.is_finite()).then_some(r);
+            }
+            ("print-poster-scale", _) => {
+                let pct: f64 = value.trim().trim_end_matches('%').trim().parse().map_err(|_| "print-poster-scale must be a percentage")?;
+                if !(pct.is_finite() && (10.0..=1000.0).contains(&pct)) {
+                    return Err("print-poster-scale must be from 10 to 1000".into());
+                }
+                self.print_draft.poster_scale = pct;
+            }
+            ("print-pick", _) => {
+                self.print_draft.picking = value == "on";
+                self.print_draft.region_page = self.print_draft.current_page;
+            }
             ("home", _) => self.active = None,
+            // The Updates status (screenshots, the control channel).
+            ("update-state", _) => self.set_update_state(value)?,
             ("dialog", _) => {
                 self.dialog = match value {
                     "properties" => Some(Dialog::Properties(PropsTab::Description)),
@@ -963,9 +1351,9 @@ impl PrintCraftApp {
                     "split" => Some(Dialog::Split),
                     "protect" => Some(Dialog::Protect),
                     "page-boxes" => Some(Dialog::PageBoxes),
-                    "header-footer" => Some(Dialog::Marks(printcraft_engine::MarkKind::HeaderFooter)),
-                    "watermark" => Some(Dialog::Marks(printcraft_engine::MarkKind::Watermark)),
-                    "background" => Some(Dialog::Marks(printcraft_engine::MarkKind::Background)),
+                    "header-footer" => Some(Dialog::Marks(pdfcraft_engine::MarkKind::HeaderFooter)),
+                    "watermark" => Some(Dialog::Marks(pdfcraft_engine::MarkKind::Watermark)),
+                    "background" => Some(Dialog::Marks(pdfcraft_engine::MarkKind::Background)),
                     "export-image" => Some(Dialog::Export(export_ui::ExportKind::Image)),
                     "export-text" => Some(Dialog::Export(export_ui::ExportKind::Text)),
                     "export-all-images" => Some(Dialog::Export(export_ui::ExportKind::AllImages)),
@@ -990,6 +1378,11 @@ impl PrintCraftApp {
                         self.execute("page.number");
                         Some(Dialog::NumberPages)
                     }
+                    "print" => {
+                        // Same path as File ▸ Print (the printer list is fetched).
+                        self.open_print();
+                        Some(Dialog::Print)
+                    }
                     "none" => None,
                     _ => Some(Dialog::About),
                 }
@@ -1001,12 +1394,24 @@ impl PrintCraftApp {
             }
             ("page", Some(v)) => v.go_to_page(value.parse::<usize>().map_err(|e| e.to_string())?.saturating_sub(1)),
             ("zoom", Some(v)) => v.set_zoom(value.trim_end_matches('%').parse::<f32>().map_err(|e| e.to_string())? / 100.0),
-            ("layout", Some(v)) => {
-                v.layout = match value {
-                    "two-up" => canvas::PageLayout::TwoUp,
-                    "single" => canvas::PageLayout::Single,
-                    _ => canvas::PageLayout::Continuous,
+            ("layout", Some(v)) => v.set_layout(canvas::PageLayout::try_parse(value).ok_or("layout must be continuous, single or two-up")?),
+            ("cover", Some(v)) => {
+                let on = match value {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err("cover must be on or off".into()),
+                };
+                if on && !v.cover_applies() {
+                    return Err("switch to two-page view first to show the cover page".into());
                 }
+                v.set_cover(on);
+            }
+            ("default-layout", _) => {
+                self.view_defaults.layout = canvas::PageLayout::try_parse(value).ok_or("default-layout must be continuous, single or two-up")?;
+            }
+            ("default-zoom", _) => {
+                self.view_defaults =
+                    self.view_defaults.with_zoom(value).ok_or("default-zoom must be fit-width, fit-page or a percentage from 8 to 6400")?;
             }
             ("organize", Some(v)) => v.organize = value != "off",
             ("rotate", Some(v)) => {
@@ -1043,10 +1448,42 @@ impl PrintCraftApp {
                 v.select_pages(&pages.map_err(|_| "select: comma-separated page numbers")?);
             }
             ("notice", Some(v)) => v.notice_dismissed = value == "off",
+            ("edit-select", Some(v)) => {
+                // `--edit-select all|none|p1,p3,i1`: select boxes in Edit text & images on the
+                // current page (paragraphs p, images i, 1-based).
+                let bad = || "edit-select: all, none, or paragraphs and images like p1,p3,i1".to_string();
+                let doc = self.session.get(v.id).ok_or("`edit-select` needs an open document")?;
+                let page = v.current;
+                let (n, m) = (doc.text_blocks(page).len(), doc.page_images(page).len());
+                let mut s = edit_text_ui::BoxSelection::new(page);
+                match value {
+                    "all" => {
+                        s.blocks = (0..n).collect();
+                        s.images = (0..m).collect();
+                    }
+                    "none" => {}
+                    list => {
+                        for item in list.split(',').map(str::trim) {
+                            let (kind, num) = item.split_at_checked(1).ok_or_else(bad)?;
+                            let k = num.parse::<usize>().ok().and_then(|k| k.checked_sub(1)).ok_or_else(bad)?;
+                            match kind {
+                                "p" if k < n => s.blocks.insert(k),
+                                "i" if k < m => s.images.insert(k),
+                                "p" | "i" => return Err(format!("edit-select: page {} has no {item}", page + 1)),
+                                _ => return Err(bad()),
+                            };
+                        }
+                    }
+                }
+                edit_text_ui::set_selection(v, s);
+            }
             ("quick", _) => {
                 // `--quick select|hand|note|freetext|highlight|underline|strikeout|ink|line|arrow|square|circle`
                 self.quick_tool = match value {
                     "select" => QuickTool::Select,
+                    measure if measure.starts_with("measure-") => QuickTool::Measure(
+                        measure_ui::Tool::from_name(measure.trim_start_matches("measure-")).ok_or_else(|| format!("unknown tool {measure}"))?,
+                    ),
                     "hand" => QuickTool::Hand,
                     "crop" => QuickTool::Crop,
                     "redact" => QuickTool::Redact,
@@ -1065,7 +1502,7 @@ impl PrintCraftApp {
                         QuickTool::CustomStamp(i)
                     }
                     stamp if stamp.starts_with("stamp-") => QuickTool::Stamp(
-                        printcraft_engine::StampKind::ALL
+                        pdfcraft_engine::StampKind::ALL
                             .into_iter()
                             .find(|k| k.name().trim_start_matches("PC").eq_ignore_ascii_case(&stamp[6..]))
                             .ok_or_else(|| format!("unknown stamp {stamp}"))?,
@@ -1092,7 +1529,10 @@ impl PrintCraftApp {
                 v.comments.selected = Some((p.saturating_sub(1), i.saturating_sub(1)));
                 v.comments.reveal = true;
             }
-            (k, None) if ["page", "zoom", "layout", "organize", "fields", "find", "rotate", "select", "notice", "comment"].contains(&k) => {
+            (k, None)
+                if ["page", "zoom", "layout", "cover", "organize", "fields", "find", "rotate", "select", "notice", "comment", "edit-select"]
+                    .contains(&k) =>
+            {
                 return Err(format!("`{k}` needs an open document"));
             }
             (other, _) => return Err(format!("unknown option {other}")),
@@ -1102,106 +1542,98 @@ impl PrintCraftApp {
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
         use egui::Key;
+        // The first-run language prompt only takes a choice.
+        if self.language_prompt {
+            return;
+        }
         // "Save changes?" is modal: its keys are its own (⌘D is Don't save there, not Document
         // properties; Escape cancels it rather than clearing a selection), and nothing may run
         // underneath it. They are read here, before the canvas can consume them.
         if self.close_request.is_some() {
-            if let Some(choice) = dialogs::save_prompt_key(ctx) {
+            if self.draws_overlays()
+                && let Some(choice) = dialogs::save_prompt_key(ctx)
+            {
                 self.resolve_close(ctx, choice);
             }
             return;
         }
+        if let Some(view) = self.active.and_then(|i| self.views.get_mut(i))
+            && view.auto_scroll.escape(ctx)
+        {
+            return;
+        }
         self.registry_shortcuts(ctx);
+        // Before the canvas's own keys: ⌘A there selects all text.
+        self.edit_text_keys(ctx);
         if self.full_screen && ctx.input(|i| i.key_pressed(Key::Escape)) {
             self.set_full_screen(ctx, false);
         }
         if let Some(i) = self.active {
-            canvas::shortcuts(&mut self.views[i], ctx);
+            // Select all belongs to the document or page grid, unless a text field or
+            // overlay owns the keyboard. Other canvas shortcuts keep their own handling.
+            if self.dialog.is_none()
+                && !self.palette_open
+                && !ctx.egui_wants_keyboard_input()
+                && ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, Key::A)))
+            {
+                self.views[i].select_all();
+            }
+            let space = self.space_pages(ctx);
+            canvas::shortcuts(&mut self.views[i], ctx, space);
         }
+    }
+
+    /// Whether Space pages through the active document now: nothing else has the keyboard (a
+    /// dialog, the palette, a menu, a text field or a focused button, which Space would press),
+    /// and no mode types or edits with it (Edit a PDF, Add text, Edit text, Prepare a form, the
+    /// page grid).
+    fn space_pages(&self, ctx: &egui::Context) -> bool {
+        let organizing = self.active.and_then(|i| self.views.get(i)).is_none_or(|v| v.organize);
+        let editing = (self.left_open && self.left == LeftPanel::Tool("edit"))
+            || matches!(self.quick_tool, QuickTool::AddText | QuickTool::EditText)
+            || self.is_preparing();
+        self.dialog.is_none()
+            && !self.palette_open
+            && !self.modal_open()
+            && !organizing
+            && !editing
+            && !egui::Popup::is_any_open(ctx)
+            && !ctx.egui_wants_keyboard_input()
+            && ctx.memory(|m| m.focused().is_none())
     }
 }
 
-impl eframe::App for PrintCraftApp {
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        storage.set_string("printcraft", self.persist());
-    }
-
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.ctx = Some(ctx.clone());
-        if !self.styled {
-            egui_extras::install_image_loaders(ctx);
-            theme::install_fonts(ctx);
-            theme::apply(ctx, self.theme);
-            self.styled = true;
-        } else {
-            self.fonts_ready = true;
+impl PdfCraftApp {
+    /// The keys typed in the window being drawn, and its autoscroll (each window reads its own).
+    pub(crate) fn window_keys(&mut self, ctx: &egui::Context) {
+        // While a modal is open in the focus window, the other windows are disabled.
+        if self.draws_overlays() || !self.modal_open() {
+            self.shortcuts(ctx);
         }
-        if let Some(k) = self.pending_theme.take() {
-            self.set_theme(ctx, k);
-        }
-        if self.follow_system_theme
-            && let Some(sys) = ctx.system_theme()
-        {
-            let want = if sys == egui::Theme::Dark { ThemeKind::Dark } else { ThemeKind::Light };
-            if want != self.theme {
-                self.set_theme(ctx, want);
-            }
-        }
-        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
-        for f in dropped {
-            self.open_dropped(f, ctx);
-        }
-        let arrived: Vec<(String, Vec<u8>)> = self.inbox.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
-        for (name, bytes) in arrived {
-            if let Err(e) = self.open_bytes(&name, None, bytes) {
-                self.notify(format!("Couldn't open {name}: {e}"));
-            }
-        }
-        let os_events = self.os_events.as_mut().map(|poll| poll()).unwrap_or_default();
-        for e in os_events {
-            match e {
-                #[cfg(not(target_arch = "wasm32"))]
-                OsEvent::Open(paths) => paths.iter().for_each(|p| self.open_path(p)),
-                #[cfg(target_arch = "wasm32")]
-                OsEvent::Open(_) => {}
-                // Like closing the window: `guard_quit` asks about unsaved changes.
-                OsEvent::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            }
-        }
-        if let Some(mut control) = self.control.take() {
-            control.tick(ctx, self);
-            self.control = Some(control);
-        }
-        self.guard_quit(ctx);
-        let now = ctx.input(|i| i.time);
-        self.autosave_tick(now);
-        self.poll_updates();
-        self.shortcuts(ctx);
-        self.process_pending_edits();
-        self.poll_export();
-        self.poll_ocr();
-        self.poll_action();
-        self.process_file_requests();
-        // Pull finished renders into textures for every open document.
-        for view in &mut self.views {
-            if let Some(doc) = self.session.get(view.id) {
-                view.receive(ctx, &doc.renderer);
+        // Scrolling is transient: never resume after changing tabs, opening a modal/palette,
+        // or returning to a window that lost focus.
+        let blocked = self.modal_open() || !ctx.input(|i| i.focused);
+        for (index, view) in self.views.iter_mut().enumerate() {
+            if blocked || self.active != Some(index) {
+                view.auto_scroll.cancel();
             }
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    /// Draw the window whose tabs are current (see [`windows`]).
+    pub(crate) fn draw_window(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        // Fonts registered via set_fonts only take effect next frame; named families would panic now.
-        if !self.fonts_ready {
-            ctx.request_repaint();
-            return;
+        let overlays = self.draws_overlays();
+        if !overlays && self.modal_open() {
+            // A dialog is open in another window: this one waits for it.
+            ui.disable();
         }
         // The window shows the active document's name (or title, if it asks for that).
         let title = self
             .active
-            .and_then(|i| self.session.get(self.views[i].id))
-            .map_or_else(|| "PrintCraft".to_owned(), |d| format!("{} — PrintCraft", d.display_name()));
+            .and_then(|i| self.views.get(i))
+            .and_then(|v| self.session.get(v.id))
+            .map_or_else(|| pdfcraft_engine::links::APP_NAME.to_owned(), |d| format!("{} — {}", d.display_name(), pdfcraft_engine::links::APP_NAME));
         if title != self.window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;
@@ -1217,7 +1649,9 @@ impl eframe::App for PrintCraftApp {
                     }
                 },
             );
-            dialogs::show(self, &ctx);
+            if overlays {
+                dialogs::show(self, &ctx);
+            }
             return;
         }
         chrome::tab_strip(self, ui);
@@ -1237,8 +1671,142 @@ impl eframe::App for PrintCraftApp {
             Some(i) => canvas::document_area(self, i, ui),
         });
         self.process_pending_edits();
-        palette::show(self, &ctx);
-        dialogs::show(self, &ctx);
-        widgets::toast(self, &ctx);
+        if overlays {
+            palette::show(self, &ctx);
+            dialogs::show(self, &ctx);
+            updates::notice(self, &ctx);
+            widgets::toast(self, &ctx);
+        }
+    }
+}
+
+impl eframe::App for PdfCraftApp {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(window_state::STORAGE_KEY, self.persist());
+    }
+
+    /// Behind anything not painted yet: the panels' colour, never eframe's near-black default (a
+    /// dark flash in the light theme).
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        visuals.panel_fill.to_normalized_gamma_f32()
+    }
+
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.ctx = Some(ctx.clone());
+        self.dialog_epoch();
+        // Notices raised outside `ui` (opened files, OS events, the control channel) translate too.
+        let lang = i18n::Lang::from_pref(&self.language);
+        i18n::set_current(lang);
+        // Simplified Chinese wants its own faces before the Japanese ones (one baseline per line).
+        let hans = lang.code() == "zh-hans";
+        if !self.styled {
+            egui_extras::install_image_loaders(ctx);
+            theme::install_fonts_for(ctx, hans);
+            self.fonts_hans = hans;
+            theme::apply(ctx, self.theme);
+            self.styled = true;
+        } else {
+            self.fonts_ready = true;
+            if hans != self.fonts_hans {
+                // Same family names as before, so named fonts stay valid while the new set loads.
+                theme::install_fonts_for(ctx, hans);
+                self.fonts_hans = hans;
+            }
+        }
+        self.sync_theme(ctx);
+        // The focus window's tabs are current here (`tidy_windows`); the root's own input (files
+        // dropped on it, its close button, its keys) is read with the root's tabs current.
+        self.enter_window(ROOT_WINDOW);
+        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+        for f in dropped {
+            self.open_dropped(f, ctx);
+        }
+        // Files from outside the window open in the window the user worked in last.
+        self.enter_window(self.windows.focus());
+        let arrived: Vec<(String, Vec<u8>)> = self.inbox.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
+        for (name, bytes) in arrived {
+            if let Err(e) = self.open_bytes(&name, None, bytes) {
+                self.notify_fmt("Couldn't open {name}: {e}", &[("name", &name), ("e", &e.to_string())]);
+            }
+        }
+        let os_events = self.os_events.as_mut().map(|poll| poll()).unwrap_or_default();
+        for e in os_events {
+            match e {
+                // A dialog or prompt that is open acts on the active document (Print prints it): the
+                // files wait until it closes rather than open underneath it. The window still
+                // comes forward.
+                #[cfg(not(target_arch = "wasm32"))]
+                OsEvent::Open(paths) => {
+                    self.held_open.extend(paths);
+                    self.raise_window(ctx, self.windows.focus());
+                }
+                #[cfg(target_arch = "wasm32")]
+                OsEvent::Open(_) => {}
+                OsEvent::Activate => self.raise_window(ctx, self.windows.focus()),
+                // Like closing the window: `guard_quit` asks about unsaved changes, in every window.
+                OsEvent::Quit => {
+                    self.windows.quitting = true;
+                    ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
+                }
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.held_open.is_empty() && !self.modal_open() {
+            for p in std::mem::take(&mut self.held_open) {
+                self.open_path(&p);
+            }
+        }
+        if let Some(mut control) = self.control.take() {
+            control.tick(ctx, self);
+            self.control = Some(control);
+        }
+        self.enter_window(ROOT_WINDOW);
+        self.guard_quit(ctx);
+        let now = ctx.input(|i| i.time);
+        self.autosave_tick(now);
+        self.poll_updates();
+        self.poll_print();
+        self.window_tick(ctx);
+        self.window_keys(ctx);
+        // Results of pickers and background work land in the window the user worked in last.
+        self.enter_window(self.windows.focus());
+        self.process_pending_edits();
+        self.poll_export();
+        self.poll_ocr();
+        self.poll_action();
+        self.process_file_requests();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.process_picked();
+        // Pull finished renders into textures for every open document, in every window.
+        let session = &self.session;
+        let views = self.views.iter_mut().chain(self.windows.parked_views_mut());
+        for view in views {
+            if let Some(doc) = session.get(view.id) {
+                view.receive(ctx, &doc.renderer);
+            }
+        }
+        // The root is drawn first.
+        self.enter_window(ROOT_WINDOW);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        i18n::set_current(i18n::Lang::from_pref(&self.language));
+        // Fonts registered via set_fonts only take effect next frame; named families would panic now.
+        if !self.fonts_ready {
+            ctx.request_repaint();
+            return;
+        }
+        self.enter_window(ROOT_WINDOW);
+        self.note_window(&ctx);
+        self.draw_window(ui);
+        self.show_other_windows(&ctx);
+        self.tidy_windows(&ctx);
+        if std::mem::take(&mut self.save_requested)
+            && let Some(storage) = frame.storage_mut()
+        {
+            eframe::App::save(self, storage);
+            storage.flush();
+        }
     }
 }

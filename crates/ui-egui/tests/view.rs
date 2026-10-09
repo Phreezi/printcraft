@@ -1,8 +1,8 @@
 //! Page layouts, zoom modes and link navigation, checked by where pages land on screen.
 
-use egui::{Key, Modifiers};
+use egui::{Key, Modifiers, MouseWheelUnit, TouchPhase};
 use egui_kittest::Harness;
-use printcraft_ui_egui::PrintCraftApp;
+use pdfcraft_ui_egui::PdfCraftApp;
 
 /// Three 300×400 pt pages. Page 1 links to page 3.
 const PAGES: &[u8] = b"%PDF-1.7
@@ -27,9 +27,14 @@ fn gpu() -> std::sync::MutexGuard<'static, ()> {
     GPU.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn harness(options: &'static [(&'static str, &'static str)]) -> Harness<'static, PrintCraftApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
-        let mut app = PrintCraftApp::new();
+fn harness(options: &'static [(&'static str, &'static str)]) -> Harness<'static, PdfCraftApp> {
+    harness_stepping(1.0 / 4.0, options)
+}
+
+/// [`harness`] with frames `step_dt` seconds apart (a quarter second is kittest's default).
+fn harness_stepping(step_dt: f32, options: &'static [(&'static str, &'static str)]) -> Harness<'static, PdfCraftApp> {
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(step_dt).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
         app.open_bytes("pages.pdf", None, PAGES.to_vec()).expect("opens");
         app.set_option("left", "closed").unwrap();
         app.set_option("panel", "none").unwrap();
@@ -42,8 +47,72 @@ fn harness(options: &'static [(&'static str, &'static str)]) -> Harness<'static,
     h
 }
 
-fn rect(h: &Harness<'static, PrintCraftApp>, page: usize) -> Option<egui::Rect> {
+fn rect(h: &Harness<'static, PdfCraftApp>, page: usize) -> Option<egui::Rect> {
     h.state().views[0].page_screen_rect(page)
+}
+
+/// Two pages of different sizes: 300×400 then 600×300.
+const MIXED: &[u8] = b"%PDF-1.7
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 600 300] >> endobj
+trailer << /Root 1 0 R >>
+%%EOF";
+
+fn mixed_harness(options: &'static [(&'static str, &'static str)]) -> Harness<'static, PdfCraftApp> {
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.open_bytes("mixed.pdf", None, MIXED.to_vec()).expect("opens");
+        app.set_option("left", "closed").unwrap();
+        app.set_option("panel", "none").unwrap();
+        for (k, v) in options {
+            app.set_option(k, v).unwrap();
+        }
+        app
+    });
+    h.run_steps(8);
+    h
+}
+
+/// A vertical wheel event; negative `dy` scrolls down.
+fn wheel(unit: MouseWheelUnit, dy: f32, phase: TouchPhase) -> egui::Event {
+    egui::Event::MouseWheel { unit, delta: egui::vec2(0.0, dy), phase, modifiers: Modifiers::NONE }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn middle_button_scrolling_keeps_page_colours_in_both_themes() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = gpu();
+    for theme in ["light", "dark"] {
+        for organize in [false, true] {
+            let mut h = harness(&[("zoom", "50")]);
+            h.state_mut().set_option("theme", theme).unwrap();
+            h.state_mut().set_option("organize", if organize { "on" } else { "off" }).unwrap();
+            for _ in 0..100 {
+                h.run_steps(2);
+                if !h.state().render_pending() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let page = if organize { h.get_by_label("Page 1").rect() } else { rect(&h, 0).unwrap() };
+            let at = page.center();
+            let ppp = h.ctx.pixels_per_point();
+            let before = *h.render().unwrap().get_pixel((at.x * ppp) as u32, (at.y * ppp) as u32);
+            assert_eq!(before, image::Rgba([255, 255, 255, 255]), "the synthetic page is white");
+            let anchor = h.state().views[0].viewport_rect().center();
+            h.event(egui::Event::PointerMoved(anchor));
+            h.event(egui::Event::PointerButton { pos: anchor, button: egui::PointerButton::Middle, pressed: true, modifiers: Modifiers::NONE });
+            h.run_steps(1);
+            h.event(egui::Event::PointerButton { pos: anchor, button: egui::PointerButton::Middle, pressed: false, modifiers: Modifiers::NONE });
+            h.run_steps(1);
+            assert!(h.state().views[0].auto_scrolling());
+            let during = *h.render().unwrap().get_pixel((at.x * ppp) as u32, (at.y * ppp) as u32);
+            assert_eq!(during, before, "scrolling preserves page colours: theme={theme}, organize={organize}");
+        }
+    }
 }
 
 #[test]
@@ -67,13 +136,178 @@ fn two_up_layout_places_pages_side_by_side() {
 }
 
 #[test]
-fn single_page_layout_shows_one_page_at_a_time() {
-    let mut h = harness(&[("layout", "single"), ("zoom", "50")]);
+fn page_display_commands_switch_layouts() {
+    let mut h = harness(&[]);
+    h.state_mut().execute("view.layout.single");
+    assert_eq!(h.state().views[0].layout, pdfcraft_ui_egui::canvas::PageLayout::Single);
+    // The cover toggle refuses outside two-page view instead of arming a hidden flag.
+    assert!(!h.state().views[0].cover);
+    assert!(!h.state_mut().execute("view.layout.cover"));
+    assert!(!h.state().views[0].cover);
+    h.state_mut().execute("view.layout.two_up");
+    assert_eq!(h.state().views[0].layout, pdfcraft_ui_egui::canvas::PageLayout::TwoUp);
+    assert!(h.state_mut().execute("view.layout.cover"));
+    assert!(h.state().views[0].cover, "the cover toggle flips");
+    assert!(h.state_mut().execute("view.layout.cover"));
+    assert!(!h.state().views[0].cover, "toggling twice restores");
+    h.state_mut().execute("view.layout.continuous");
+    h.run_steps(3);
+    assert_eq!(h.state().views[0].layout, pdfcraft_ui_egui::canvas::PageLayout::Continuous);
+}
+
+#[test]
+fn layout_option_rejects_typos() {
+    let mut h = harness(&[]);
+    assert!(h.state_mut().set_option("layout", "singel").is_err());
+    assert!(h.state_mut().set_option("default-layout", "bogus").is_err());
+    assert!(h.state_mut().set_option("cover", "maybe").is_err());
+    assert_eq!(h.state().views[0].layout, pdfcraft_ui_egui::canvas::PageLayout::Continuous);
+    assert!(h.state_mut().set_option("cover", "on").is_err(), "cover needs two-page view first");
+    h.state_mut().set_option("layout", "two-up").unwrap();
+    h.state_mut().set_option("cover", "on").unwrap();
+    assert!(h.state().views[0].cover);
+    h.state_mut().set_option("cover", "off").unwrap();
+    assert!(!h.state().views[0].cover);
+}
+
+#[test]
+fn view_options_without_a_document() {
+    let mut app = PdfCraftApp::new();
+    assert!(app.set_option("default-layout", "single").is_ok(), "the default needs no document");
+    assert_eq!(app.view_defaults.layout, pdfcraft_ui_egui::canvas::PageLayout::Single);
+    assert!(app.set_option("cover", "on").is_err(), "cover needs an open document");
+    assert!(app.set_option("layout", "single").is_err(), "layout needs an open document");
+}
+
+#[test]
+fn default_page_display_is_used_for_new_documents() {
+    use pdfcraft_ui_egui::canvas::PageLayout;
+    // The factory default is continuous scrolling without snap jumps.
+    assert_eq!(PdfCraftApp::new().view_defaults.layout, PageLayout::Continuous);
+    let mut h = harness(&[]);
+    h.state_mut().set_option("default-layout", "single").unwrap();
+    h.state_mut().open_bytes("other.pdf", None, PAGES.to_vec()).expect("opens");
+    assert_eq!(h.state().views[1].layout, PageLayout::Single);
+    // So do documents the app creates itself (blank, combined, extracted, from images…).
+    assert!(h.state_mut().execute("create.blank"));
+    assert_eq!(h.state().views[2].layout, PageLayout::Single);
+    // Persisted preferences survive a restart.
+    let saved = h.state().persist();
+    let mut fresh = PdfCraftApp::new();
+    fresh.restore(&saved);
+    assert_eq!(fresh.view_defaults.layout, PageLayout::Single);
+    // Garbage keeps the previous default; casing is forgiven; legacy files lack the key.
+    fresh.restore(r#"{"default_layout":"bogus"}"#);
+    assert_eq!(fresh.view_defaults.layout, PageLayout::Single);
+    fresh.restore(r#"{"default_layout":"TWO-UP"}"#);
+    assert_eq!(fresh.view_defaults.layout, PageLayout::TwoUp);
+    let mut legacy = PdfCraftApp::new();
+    legacy.restore("{}");
+    assert_eq!(legacy.view_defaults.layout, PageLayout::Continuous);
+}
+
+#[test]
+fn default_zoom_is_used_for_new_documents() {
+    use pdfcraft_ui_egui::canvas::Fit;
+    let fit_zoom = |app: &PdfCraftApp, i: usize| (app.views[i].fit, app.views[i].zoom);
+    let mut h = harness(&[]);
+    // The factory default fits the width.
+    assert_eq!(h.state().views[0].fit, Fit::Width);
+    h.state_mut().set_option("default-zoom", "fit-page").unwrap();
+    assert!(h.state_mut().execute("create.blank"));
+    assert_eq!(h.state().views[1].fit, Fit::Page);
+    h.state_mut().set_option("default-zoom", "150%").unwrap();
+    h.state_mut().open_bytes("other.pdf", None, PAGES.to_vec()).expect("opens");
+    assert_eq!(fit_zoom(h.state(), 2), (Fit::None, 1.5));
+    // A PDF that asks for a zoom gets it.
+    let asks = String::from_utf8_lossy(PAGES).replace("/Pages 2 0 R >>", "/Pages 2 0 R /OpenAction [3 0 R /Fit] >>");
+    h.state_mut().open_bytes("asks.pdf", None, asks.into_bytes()).expect("opens");
+    assert_eq!(h.state().views[3].fit, Fit::Page);
+    // Typos and zooms the view can't show are refused.
+    for bad in ["huge", "fit-height", "5", "9000%"] {
+        assert!(h.state_mut().set_option("default-zoom", bad).is_err(), "{bad}");
+    }
+    // Saved settings keep it, and garbage leaves it alone.
+    let saved = h.state().persist();
+    let mut fresh = PdfCraftApp::new();
+    fresh.restore(&saved);
+    fresh.restore(r#"{"default_zoom":"bogus"}"#);
+    fresh.open_bytes("again.pdf", None, PAGES.to_vec()).expect("opens");
+    assert_eq!(fit_zoom(&fresh, 0), (Fit::None, 1.5));
+}
+
+#[test]
+fn preferences_set_the_default_zoom() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness(&[]);
+    assert!(h.state_mut().execute("app.preferences"));
+    h.run_steps(3);
+    h.get_by_label("Zoom to page level").click();
+    h.run_steps(2);
+    assert!(h.state_mut().execute("create.blank"));
+    assert_eq!(h.state().views[1].fit, pdfcraft_ui_egui::canvas::Fit::Page);
+}
+
+#[test]
+fn rail_page_display_menu_offers_acrobats_view_choices() {
+    use egui_kittest::kittest::Queryable;
+    use pdfcraft_ui_egui::canvas::{Fit, PageLayout};
+    let mut h = harness(&[]);
     h.run_steps(4);
-    assert!(rect(&h, 0).is_some() && rect(&h, 1).is_none(), "only page 1");
-    h.state_mut().set_option("page", "2").unwrap();
+    let pick = |h: &mut Harness<'static, PdfCraftApp>, item: &str| {
+        h.get_by_label_contains("Page display:").click();
+        h.run_steps(3);
+        h.get_by_label(item).click();
+        h.run_steps(4);
+    };
+    let shown = |h: &Harness<'static, PdfCraftApp>| (h.state().views[0].layout, h.state().views[0].fit);
+    pick(&mut h, "Fit one full page");
+    assert_eq!(shown(&h), (PageLayout::Single, Fit::Page));
+    pick(&mut h, "Actual size");
+    assert_eq!((h.state().views[0].fit, h.state().views[0].zoom), (Fit::None, 1.0));
+    pick(&mut h, "Zoom to page level");
+    assert_eq!(h.state().views[0].fit, Fit::Page);
+    pick(&mut h, "Fit to width scrolling");
+    assert_eq!(shown(&h), (PageLayout::Continuous, Fit::Width));
+}
+
+#[test]
+fn rail_page_display_button_switches_layouts() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness(&[]);
     h.run_steps(4);
-    assert!(rect(&h, 0).is_none() && rect(&h, 1).is_some(), "only page 2");
+    h.get_by_label_contains("Page display").click();
+    h.run_steps(3);
+    h.get_by_label("Single page").click();
+    h.run_steps(4);
+    assert_eq!(h.state().views[0].layout, pdfcraft_ui_egui::canvas::PageLayout::Single);
+}
+
+#[test]
+fn view_menu_page_display_uses_the_same_commands() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness(&[]);
+    h.run_steps(4);
+    h.get_by_label("Menu").click();
+    h.run_steps(2);
+    h.get_by_label("View ⏵").hover();
+    h.run_steps(3);
+    h.get_by_label("Single page").click();
+    h.run_steps(4);
+    assert_eq!(h.state().views[0].layout, pdfcraft_ui_egui::canvas::PageLayout::Single);
+}
+
+#[test]
+fn palette_runs_page_display_commands_from_the_keyboard() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness(&[]);
+    h.state_mut().set_option("palette", "single page").unwrap();
+    h.run_steps(3);
+    h.get_by_label("Single page");
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert!(!h.state().palette_open, "Enter runs the top hit and closes the palette");
+    assert_eq!(h.state().views[0].layout, pdfcraft_ui_egui::canvas::PageLayout::Single);
 }
 
 #[test]
@@ -96,6 +330,36 @@ fn actual_size_fit_width_and_fit_page() {
     let (r, vp) = (rect(&h, 0).expect("page 1"), h.state().views[0].viewport_rect());
     assert!(r.height() <= vp.height() && r.height() > vp.height() * 0.85, "fit page: page {} in viewport {}", r.height(), vp.height());
     assert!(r.width() < vp.width(), "a portrait page fits by height");
+}
+
+#[test]
+fn fit_page_holds_zoom_across_mixed_page_sizes() {
+    // Scrolling views fit their largest page, so scrolling past other sizes must not jump
+    // the zoom (#214).
+    let mut h = mixed_harness(&[("layout", "continuous")]);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Num0); // fit page
+    h.run_steps(4);
+    let z1 = h.state().views[0].zoom;
+    h.state_mut().set_option("page", "2").unwrap();
+    h.run_steps(4);
+    assert_eq!(h.state().views[0].current, 1);
+    assert_eq!(h.state().views[0].zoom, z1, "another size scrolls past at the same zoom");
+}
+
+#[test]
+fn single_page_fit_page_fits_the_largest_page() {
+    // Single-page view scrolls through every page, so it fits the largest one and keeps that
+    // zoom: each page fits the window on its own.
+    let mut h = mixed_harness(&[("layout", "single")]);
+    let vp = h.state().views[0].viewport_rect();
+    let z1 = h.state().views[0].zoom;
+    let r1 = rect(&h, 0).expect("page 1");
+    assert!(r1.width() <= vp.width() && r1.height() <= vp.height(), "page 1 fits: {r1:?} in {vp:?}");
+    h.state_mut().set_option("page", "2").unwrap();
+    h.run_steps(4);
+    let r2 = rect(&h, 1).expect("page 2");
+    assert!(r2.width() <= vp.width() && r2.height() <= vp.height(), "page 2 fits: {r2:?} in {vp:?}");
+    assert_eq!(h.state().views[0].zoom, z1, "the zoom holds");
 }
 
 #[test]
@@ -131,9 +395,9 @@ endstream endobj
 trailer << /Root 1 0 R >>
 %%EOF";
 
-fn form_harness() -> Harness<'static, PrintCraftApp> {
+fn form_harness() -> Harness<'static, PdfCraftApp> {
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
-        let mut app = PrintCraftApp::new();
+        let mut app = PdfCraftApp::new();
         app.open_bytes("form.pdf", None, FORM.to_vec()).expect("opens");
         app.set_option("left", "closed").unwrap();
         app
@@ -170,7 +434,7 @@ fn highlight_fields_tints_the_field_area() {
     let r = rect(&h, 0).expect("page 1");
     // The field spans x 50..250, y 300..330 (PDF space, y up) on a 300×400 page; sample inside it.
     let at = egui::pos2(r.min.x + r.width() * (60.0 / 300.0), r.min.y + r.height() * (1.0 - 305.0 / 400.0));
-    let pixel = |h: &mut Harness<'static, PrintCraftApp>| {
+    let pixel = |h: &mut Harness<'static, PdfCraftApp>| {
         let img = h.render().expect("renders");
         let ppp = h.ctx.pixels_per_point();
         *img.get_pixel((at.x * ppp) as u32, (at.y * ppp) as u32)
@@ -221,8 +485,8 @@ fn required_fields_get_a_red_border_when_highlighting() {
     let mut h = form_harness();
     h.state_mut().set_option("panel", "none").unwrap();
     h.state_mut().set_option("fields", "on").unwrap();
-    let props = printcraft_engine::FieldProps { required: Some(true), ..Default::default() };
-    h.state_mut().apply_edit(printcraft_engine::Edit::SetFieldProps { name: "fullname".into(), props: Box::new(props) });
+    let props = pdfcraft_engine::FieldProps { required: Some(true), ..Default::default() };
+    h.state_mut().apply_edit(pdfcraft_engine::Edit::SetFieldProps { name: "fullname".into(), props: Box::new(props) });
     for _ in 0..100 {
         h.run_steps(2);
         if !h.state().render_pending() {
@@ -237,4 +501,203 @@ fn required_fields_get_a_red_border_when_highlighting() {
     let img = h.render().expect("renders");
     let px = *img.get_pixel((at.x * ppp) as u32, (at.y * ppp) as u32);
     assert!(px[0] > 180 && px[1] < 100 && px[2] < 100, "a red border: {px:?}");
+}
+
+/// The top of page `page` on screen.
+fn top(h: &Harness<'static, PdfCraftApp>, page: usize) -> f32 {
+    rect(h, page).expect("page on screen").top()
+}
+
+#[test]
+fn space_scrolls_exactly_one_screen_where_pages_scroll() {
+    // At 200% each page is taller than the window, so page 1 stays on screen.
+    const LAYOUTS: [&[(&str, &str)]; 2] = [&[("layout", "continuous"), ("zoom", "200")], &[("layout", "two-up"), ("zoom", "200")]];
+    for options in LAYOUTS {
+        let layout = options[0].1;
+        let mut h = harness(options);
+        h.run_steps(4);
+        let before = top(&h, 0);
+        let screen = h.state().views[0].viewport_rect().height();
+        h.key_press(Key::Space);
+        h.run_steps(3);
+        let after = top(&h, 0);
+        assert!((before - after - screen).abs() < 0.5, "{layout}: moved {} for a {screen} screen", before - after);
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Space);
+        h.run_steps(3);
+        assert!((top(&h, 0) - before).abs() < 0.5, "{layout}: Shift+Space goes back up the same distance");
+    }
+}
+
+#[test]
+fn space_turns_the_page_in_single_page_view() {
+    let mut h = harness(&[("layout", "single")]);
+    h.key_press(Key::Space);
+    h.run_steps(3);
+    assert_eq!(h.state().views[0].current, 1);
+    h.key_press(Key::Space);
+    h.run_steps(3);
+    assert_eq!(h.state().views[0].current, 2);
+    h.key_press(Key::Space);
+    h.run_steps(3);
+    assert_eq!(h.state().views[0].current, 2, "the last page stays");
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Space);
+    h.run_steps(3);
+    assert_eq!(h.state().views[0].current, 1);
+}
+
+#[test]
+fn space_is_left_alone_while_something_else_has_the_keyboard() {
+    use pdfcraft_ui_egui::{Dialog, QuickTool};
+    let blockers: [fn(&mut PdfCraftApp); 5] = [
+        |app| app.dialog = Some(Dialog::Preferences),
+        |app| app.set_option("palette", "zoom").unwrap(),
+        |app| app.views[0].open_find(),
+        |app| app.quick_tool = QuickTool::EditText,
+        |app| app.set_option("organize", "on").unwrap(),
+    ];
+    for (n, block) in blockers.into_iter().enumerate() {
+        let mut h = harness(&[("layout", "single")]);
+        block(h.state_mut());
+        h.run_steps(4);
+        h.key_press(Key::Space);
+        h.run_steps(3);
+        assert_eq!(h.state().views[0].current, 0, "blocker {n}: Space didn't page");
+    }
+}
+
+/// One A4 page after another (the user's invoices).
+const A4: &[u8] = b"%PDF-1.7
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 /MediaBox [0 0 595 842] >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R >> endobj
+5 0 obj << /Type /Page /Parent 2 0 R >> endobj
+trailer << /Root 1 0 R >>
+%%EOF";
+
+/// The gap single-page view leaves above and below the page (canvas.rs `GAP`).
+const GAP: f32 = 14.0;
+
+fn a4_harness(size: egui::Vec2, setup: fn(&mut PdfCraftApp)) -> Harness<'static, PdfCraftApp> {
+    let mut h = Harness::builder().with_size(size).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("left", "closed").unwrap();
+        setup(&mut app);
+        app.open_bytes("invoice.pdf", None, A4.to_vec()).expect("opens");
+        app.set_option("panel", "none").unwrap();
+        app
+    });
+    h.run_steps(8);
+    h
+}
+
+/// Page `page` fills the document area exactly: whole, with one gap above and below.
+#[track_caller]
+fn fills_the_window(h: &Harness<'static, PdfCraftApp>, page: usize) {
+    let vp = h.state().views[0].viewport_rect();
+    let r = rect(h, page).expect("page on screen");
+    assert!((r.top() - (vp.top() + GAP)).abs() < 1.0, "page {} starts a gap below the top: {r:?} in {vp:?}", page + 1);
+    assert!((r.bottom() - (vp.bottom() - GAP)).abs() < 1.0, "page {} ends a gap above the bottom, not cut: {r:?} in {vp:?}", page + 1);
+}
+
+#[test]
+fn single_page_view_opens_with_one_whole_page_per_window() {
+    // The default zoom is Fit to width, which cut the bottom of an A4 page off (97%): the
+    // default page display Single page fits the page instead.
+    let mut h = a4_harness(egui::vec2(1440.0, 900.0), |app| app.set_option("default-layout", "single").unwrap());
+    use pdfcraft_ui_egui::canvas::{Fit, PageLayout};
+    assert_eq!((h.state().views[0].layout, h.state().views[0].fit), (PageLayout::Single, Fit::Page));
+    fills_the_window(&h, 0);
+    // The same through the page display command, from a scrolled continuous view.
+    let mut c = a4_harness(egui::vec2(1440.0, 900.0), |_| {});
+    c.key_press(Key::Space);
+    c.run_steps(3);
+    c.state_mut().execute("view.layout.single");
+    c.run_steps(4);
+    let page = c.state().views[0].current;
+    fills_the_window(&c, page);
+    h.run_steps(2);
+}
+
+#[test]
+fn single_page_view_refits_when_the_window_changes_size() {
+    let mut h = a4_harness(egui::vec2(1440.0, 900.0), |app| app.set_option("default-layout", "single").unwrap());
+    fills_the_window(&h, 0);
+    let mut heights = vec![h.state().views[0].viewport_rect().height()];
+    for size in [egui::vec2(1200.0, 640.0), egui::vec2(1600.0, 1100.0), egui::vec2(900.0, 600.0)] {
+        h.set_size(size);
+        h.run_steps(6);
+        fills_the_window(&h, 0);
+        heights.push(h.state().views[0].viewport_rect().height());
+    }
+    assert!(heights.windows(2).all(|w| (w[0] - w[1]).abs() > 100.0), "the window really changed size: {heights:?}");
+    // On a later page too.
+    h.key_press(Key::Space);
+    h.run_steps(3);
+    h.set_size(egui::vec2(1300.0, 800.0));
+    h.run_steps(6);
+    fills_the_window(&h, 1);
+}
+
+#[test]
+fn single_page_view_scrolls_continuously_and_space_lands_on_page_tops() {
+    let mut h = a4_harness(egui::vec2(1440.0, 900.0), |app| app.set_option("default-layout", "single").unwrap());
+    fills_the_window(&h, 0);
+    // The wheel scrolls smoothly, without turning a page.
+    let at = h.state().views[0].viewport_rect().center();
+    h.hover_at(at);
+    h.run_steps(1);
+    let before = top(&h, 0);
+    h.event(wheel(MouseWheelUnit::Point, -120.0, TouchPhase::Move));
+    h.run_steps(6);
+    let moved = before - top(&h, 0);
+    assert!(moved > 20.0 && moved < 300.0, "the wheel scrolled {moved} points, not a page");
+    assert!(rect(&h, 1).is_some(), "the next page shows below as the view scrolls");
+    // Space goes to the top of the next page, which fills the window.
+    h.key_press(Key::Space);
+    h.run_steps(4);
+    assert_eq!(h.state().views[0].current, 1);
+    fills_the_window(&h, 1);
+    h.key_press(Key::PageDown);
+    h.run_steps(4);
+    fills_the_window(&h, 2);
+    h.key_press(Key::Space);
+    h.run_steps(4);
+    fills_the_window(&h, 2);
+    h.key_press(Key::PageUp);
+    h.run_steps(4);
+    fills_the_window(&h, 1);
+    // Scrolled part way into page 2, Shift+Space returns to its top, then to page 1.
+    h.hover_at(at);
+    h.event(wheel(MouseWheelUnit::Point, -120.0, TouchPhase::Move));
+    h.run_steps(6);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Space);
+    h.run_steps(4);
+    fills_the_window(&h, 1);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Space);
+    h.run_steps(4);
+    fills_the_window(&h, 0);
+}
+
+#[test]
+fn zooming_leaves_one_page_per_window_until_single_page_is_chosen_again() {
+    use pdfcraft_ui_egui::canvas::Fit;
+    let mut h = a4_harness(egui::vec2(1440.0, 900.0), |app| app.set_option("default-layout", "single").unwrap());
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Plus);
+    h.run_steps(4);
+    assert_eq!(h.state().views[0].fit, Fit::None, "zooming by hand leaves the fit");
+    let zoomed = h.state().views[0].zoom;
+    h.set_size(egui::vec2(1200.0, 700.0));
+    h.run_steps(6);
+    assert_eq!(h.state().views[0].zoom, zoomed, "a hand-set zoom stays when the window changes");
+    // Space still lands on the next page's top.
+    h.key_press(Key::Space);
+    h.run_steps(4);
+    assert_eq!(h.state().views[0].current, 1);
+    let (r, vp) = (rect(&h, 1).expect("page 2"), h.state().views[0].viewport_rect());
+    assert!((r.top() - (vp.top() + GAP)).abs() < 1.0, "{r:?} in {vp:?}");
+    h.state_mut().execute("view.layout.single");
+    h.run_steps(4);
+    assert_eq!(h.state().views[0].fit, Fit::Page);
+    fills_the_window(&h, 1);
 }

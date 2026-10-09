@@ -1,4 +1,4 @@
-//! Appearance streams (§12.5.5) for the comment types PrintCraft creates, execution plan M5.2.
+//! Appearance streams (§12.5.5) for the comment types PdfCraft creates, execution plan M5.2.
 //!
 //! [`build`] draws a normal appearance (`/AP /N`) from the annotation dictionary alone, so the
 //! same code serves new comments and restyled ones. Drawings are in page space with
@@ -6,13 +6,13 @@
 //! It returns `None` for anything it cannot draw faithfully (cloudy borders, unknown line
 //! endings, indirect geometry), so callers never replace an appearance with a worse one.
 //!
-//! The note icons are PrintCraft's own drawings (AGENTS.md §1). Text boxes use the standard
+//! The note icons are PdfCraft's own drawings (AGENTS.md §1). Text boxes use the standard
 //! Helvetica font with WinAnsi encoding; line breaking uses [`text_width`], an approximation of
 //! Helvetica's proportions by character class (no font program or metrics file is bundled).
 
-use printcraft_cos::{Dict, Object, PdfString, Stream};
-pub use printcraft_fonts::{helvetica_width as text_width, wrap};
-use printcraft_fonts::{literal, win_ansi};
+use pdfcraft_cos::{Dict, Object, PdfString, Stream};
+pub use pdfcraft_fonts::{helvetica_width as text_width, wrap};
+use pdfcraft_fonts::{literal, win_ansi};
 
 use crate::{NOTE_SIZE, Rgb, n};
 
@@ -181,6 +181,11 @@ fn form(bbox: [f64; 4], content: &[u8], resources: Dict) -> Stream {
 
 /// Draw the normal appearance of an annotation, or `None` if this subtype/variant isn't supported.
 pub fn build(d: &Dict) -> Option<Stream> {
+    // Imported measurement appearances may include leaders, captions and formatting that
+    // this builder cannot reproduce. Preserve them rather than silently losing detail.
+    if d.contains(b"Measure") && !d.contains(b"PCMeasureValue") {
+        return None;
+    }
     let subtype = d.name(b"Subtype")?.to_vec();
     let rect = nums(d, b"Rect").filter(|r| r.len() == 4)?;
     let rect = [rect[0].min(rect[2]), rect[1].min(rect[3]), rect[0].max(rect[2]), rect[1].max(rect[3])];
@@ -435,7 +440,7 @@ pub fn build(d: &Dict) -> Option<Stream> {
                 res.set(b"XObject".to_vec(), Object::Dict(xo));
                 return Some(form(rect, c.as_bytes(), res));
             }
-            // Only PrintCraft's own Fill & Sign marks are drawn here.
+            // Only PdfCraft's own Fill & Sign marks are drawn here.
             let name = d.name(b"Name")?;
             let col = stroke.unwrap_or([0.0; 3]);
             let [x0, y0, x1, y1] = rect;
@@ -482,7 +487,7 @@ pub fn build(d: &Dict) -> Option<Stream> {
                     n(y0 + h / 2.0)
                 )),
                 other => {
-                    // Only stamps PrintCraft made: others keep their own artwork.
+                    // Only stamps PdfCraft made: others keep their own artwork.
                     if !matches!(d.get(b"PCStamp"), Some(Object::Bool(true))) {
                         return None;
                     }
@@ -582,7 +587,31 @@ pub fn build(d: &Dict) -> Option<Stream> {
         }
         _ => return None,
     }
-    Some(form(rect, c.as_bytes(), res))
+    // PdfCraft measurement captions are kept separate from the comment's free-form text.
+    // A restyle regenerates the path and its value together.
+    let mut out = c.into_bytes();
+    if let Some(value) = d.get(b"PCMeasureValue").and_then(Object::as_string) {
+        let value = value.to_text();
+        if value.chars().count() <= 256 && matches!(subtype.as_slice(), b"Line" | b"PolyLine" | b"Polygon") {
+            let size = 10.0;
+            let x = (rect[0] + rect[2] - text_width(&value, size)) * 0.5;
+            let y = rect[3] - 12.0;
+            let col = stroke.unwrap_or([0.0, 0.47, 0.84]);
+            out.extend(format!("{}BT /Helv {} Tf {} {} Td ", rg(col), n(size), n(x), n(y)).bytes());
+            // WinAnsi bytes (e.g. 0xB2 for "²") go into the stream as-is, not through UTF-8.
+            out.extend(literal(&win_ansi(&value)));
+            out.extend_from_slice(b" Tj ET\n");
+            let mut font = Dict::new();
+            font.set(b"Type".to_vec(), Object::name("Font"));
+            font.set(b"Subtype".to_vec(), Object::name("Type1"));
+            font.set(b"BaseFont".to_vec(), Object::name("Helvetica"));
+            font.set(b"Encoding".to_vec(), Object::name("WinAnsiEncoding"));
+            let mut fonts = Dict::new();
+            fonts.set(b"Helv".to_vec(), Object::Dict(font));
+            res.set(b"Font".to_vec(), Object::Dict(fonts));
+        }
+    }
+    Some(form(rect, &out, res))
 }
 
 /// A rubber stamp: a rounded frame (a pointed tag for sign-here stamps) with the label in bold
@@ -727,9 +756,9 @@ fn ellipse(x0: f64, y0: f64, x1: f64, y1: f64) -> String {
     s
 }
 
-/// PrintCraft's note icons, drawn in a 20 × 20 box: a speech bubble for `/Comment`, a page
+/// PdfCraft's note icons, drawn in a 20 × 20 box: a speech bubble for `/Comment`, a page
 /// with a folded corner for everything else, both filled with the note colour.
-/// File attachment icons in a 20 × 20 box: PrintCraft's own drawings.
+/// File attachment icons in a 20 × 20 box: PdfCraft's own drawings.
 fn attach_icon(name: &str, col: Rgb) -> String {
     let mut s = format!("{}{}1.2 w 1 j 1 J\n", rg(col), rg_stroke(col));
     match name {

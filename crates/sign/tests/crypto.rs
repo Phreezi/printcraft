@@ -1,8 +1,8 @@
 //! The cryptographic core against files made by OpenSSL 3 (tests/data/README.md).
 
-use printcraft_sign::der::Time;
-use printcraft_sign::keys::DigestAlg;
-use printcraft_sign::{Certificate, Name, PublicKey, SignError, cms, pkcs12};
+use pdfcraft_sign::der::Time;
+use pdfcraft_sign::keys::DigestAlg;
+use pdfcraft_sign::{Certificate, Name, PublicKey, SignError, cms, pkcs12};
 
 fn data(name: &str) -> Vec<u8> {
     std::fs::read(format!("{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
@@ -61,6 +61,7 @@ fn opens_every_openssl_flavour_of_pkcs12() {
 #[test]
 fn certificates_parse_as_openssl_made_them() {
     let c = Certificate::parse(&pem("rsa.crt.pem")).unwrap();
+    // The fixtures were made when the app was called PrintCraft.
     assert_eq!(c.subject.display(), "CN=Test Signer RSA, O=PrintCraft Tests, C=US");
     assert_eq!(c.serial_hex(), "03E9");
     assert!(c.is_self_signed());
@@ -97,7 +98,7 @@ fn signatures_round_trip_for_every_key_type() {
 fn new_digital_ids_are_self_signed_and_survive_a_p12_round_trip() {
     let name = Name::build("Grace Hopper", "Compilers", "Navy", "grace@example.com", "us");
     let now = Time { year: 2026, month: 10, day: 2, hour: 12, minute: 0, second: 0 };
-    for key in [printcraft_sign::PrivateKey::generate_rsa(2048).unwrap(), printcraft_sign::PrivateKey::generate_p256().unwrap()] {
+    for key in [pdfcraft_sign::PrivateKey::generate_rsa(2048).unwrap(), pdfcraft_sign::PrivateKey::generate_p256().unwrap()] {
         let cert = Certificate::self_signed(&name, &key, now, 5, &[0x42, 0x01]).unwrap();
         assert!(cert.is_self_signed());
         assert_eq!(cert.subject.display(), "C=US, O=Navy, OU=Compilers, CN=Grace Hopper, E=grace@example.com");
@@ -119,11 +120,122 @@ fn new_digital_ids_are_self_signed_and_survive_a_p12_round_trip() {
 #[test]
 fn certificates_load_from_pem_and_der_and_export_as_pem() {
     let pem_text = data("rsa.crt.pem");
-    let certs = printcraft_sign::x509::load_certificates(&pem_text).unwrap();
+    let certs = pdfcraft_sign::x509::load_certificates(&pem_text).unwrap();
     assert_eq!(certs.len(), 1);
     let der = certs[0].raw.clone();
-    assert_eq!(printcraft_sign::x509::load_certificates(&der).unwrap()[0], certs[0]);
-    let back = printcraft_sign::x509::to_pem(&certs[0]);
-    assert_eq!(printcraft_sign::x509::load_certificates(back.as_bytes()).unwrap()[0], certs[0]);
-    assert!(printcraft_sign::x509::load_certificates(b"hello").is_err());
+    assert_eq!(pdfcraft_sign::x509::load_certificates(&der).unwrap()[0], certs[0]);
+    let back = pdfcraft_sign::x509::to_pem(&certs[0]);
+    assert_eq!(pdfcraft_sign::x509::load_certificates(back.as_bytes()).unwrap()[0], certs[0]);
+    assert!(pdfcraft_sign::x509::load_certificates(b"hello").is_err());
+}
+
+// ── CRL and OCSP verification (RFC 5280, RFC 6960) ─────────────────────────────────────────
+
+use pdfcraft_sign::der::{self, tag};
+use pdfcraft_sign::revocation::{CertificateList, OcspResponse, RevocationStatus};
+
+/// A self-issued CRL from `issuer`: optional revocation entry, signed with the issuer's key.
+fn crl(issuer: &pkcs12::DigitalId, revoked_serial: Option<(&[u8], Time)>, this: Time, next: Time) -> Vec<u8> {
+    let alg = issuer.key.signature_algorithm(DigestAlg::Sha256);
+    let mut tbs = vec![der::int(1), alg.clone(), issuer.certificate.subject.raw.clone(), this.encode(), next.encode()];
+    if let Some((serial, at)) = revoked_serial {
+        tbs.push(der::seq(&[&der::seq(&[&der::uint(serial), &at.encode()])]));
+    }
+    let refs: Vec<&[u8]> = tbs.iter().map(Vec::as_slice).collect();
+    let tbs = der::seq(&refs);
+    let sig = issuer.key.sign(DigestAlg::Sha256, &tbs).unwrap();
+    der::seq(&[&tbs, &alg, &der::bit_string(&sig)])
+}
+
+/// A self-issued OCSP response from `issuer` answering for its own serial.
+fn ocsp(issuer: &pkcs12::DigitalId, status: RevocationStatus, this: Time, next: Time) -> Vec<u8> {
+    let cert_id = der::seq(&[
+        &DigestAlg::Sha1.algorithm(),
+        &der::octets(&DigestAlg::Sha1.digest(&[&issuer.certificate.issuer.raw])),
+        &der::octets(&DigestAlg::Sha1.digest(&[&issuer.certificate.public_key.key_bits()])),
+        &der::uint(&issuer.certificate.serial),
+    ]);
+    // RFC 6960's real encodings: good [0] IMPLICIT NULL, revoked [1] IMPLICIT RevokedInfo,
+    // unknown [2] IMPLICIT; nextUpdate [0] EXPLICIT GeneralizedTime.
+    let status = match status {
+        RevocationStatus::Good => der::tlv(tag::ctx_prim(0), &[]),
+        RevocationStatus::Revoked { at } => der::tlv(tag::ctx(1), &at.encode()),
+        RevocationStatus::Unknown => der::tlv(tag::ctx_prim(2), &[]),
+    };
+    let single = der::seq(&[&cert_id, &status, &this.encode(), &der::tlv(tag::ctx(0), &next.encode())]);
+    let responder_id = der::tlv(tag::ctx(1), &issuer.certificate.subject.raw);
+    let tbs = der::seq(&[&responder_id, &this.encode(), &der::seq(&[&single])]);
+    let alg = issuer.key.signature_algorithm(DigestAlg::Sha256);
+    let sig = issuer.key.sign(DigestAlg::Sha256, &tbs).unwrap();
+    let basic = der::seq(&[&tbs, &alg, &der::bit_string(&sig)]);
+    let basic_type = der::oid("1.3.6.1.5.5.7.48.1.1");
+    der::seq(&[&der::int(0), &der::explicit(0, &der::seq(&[&basic_type, &der::octets(&basic)]))])
+}
+
+fn mid_june() -> Time {
+    Time { year: 2026, month: 6, day: 15, hour: 12, minute: 0, second: 0 }
+}
+
+#[test]
+fn crls_verify_and_report_revocation() {
+    let id = pkcs12::open(&data("ec-p256.p12"), "test").unwrap();
+    let (this, next) = (mid_june(), Time { year: 2026, month: 7, day: 15, hour: 12, minute: 0, second: 0 });
+    let issuer = &id.certificate;
+    let at = mid_june();
+    // Not on the list: good.
+    let clean = CertificateList::parse(&crl(&id, None, this, next)).unwrap();
+    assert_eq!(clean.check(issuer, issuer, at), RevocationStatus::Good);
+    // On the list: revoked with its date.
+    let revoked =
+        CertificateList::parse(&crl(&id, Some((&issuer.serial, Time { year: 2026, month: 6, day: 1, hour: 8, minute: 0, second: 0 })), this, next))
+            .unwrap();
+    assert_eq!(
+        revoked.check(issuer, issuer, at),
+        RevocationStatus::Revoked { at: Time { year: 2026, month: 6, day: 1, hour: 8, minute: 0, second: 0 } }
+    );
+    // Outside the validity window: unknown.
+    let later = Time { year: 2026, month: 8, day: 1, hour: 0, minute: 0, second: 0 };
+    assert_eq!(clean.check(issuer, issuer, later), RevocationStatus::Unknown);
+    // A tampered CRL does not verify: unknown, never a false "good".
+    let mut tampered = crl(&id, None, this, next);
+    let t = tampered.windows(4).position(|w| w == &[0x6F, 0x6B, 0x00, 0x00][..]).unwrap_or(20);
+    tampered[t] ^= 0xFF;
+    assert_ne!(CertificateList::parse(&tampered).unwrap().check(issuer, issuer, at), RevocationStatus::Good);
+    // A different issuer's key does not verify it.
+    let other = pkcs12::open(&data("rsa-aes.p12"), "test").unwrap();
+    assert_eq!(
+        CertificateList::parse(&crl(&id, None, this, next)).unwrap().check(&other.certificate, &other.certificate, at),
+        RevocationStatus::Unknown
+    );
+}
+
+#[test]
+fn ocsp_responses_verify_and_match_the_certificate() {
+    let id = pkcs12::open(&data("ec-p256.p12"), "test").unwrap();
+    let (this, next) = (mid_june(), Time { year: 2026, month: 7, day: 15, hour: 12, minute: 0, second: 0 });
+    let issuer = &id.certificate;
+    let at = mid_june();
+    let good = OcspResponse::parse(&ocsp(&id, RevocationStatus::Good, this, next)).unwrap();
+    assert_eq!(good.check(issuer, issuer, at), RevocationStatus::Good);
+    let revoked = OcspResponse::parse(&ocsp(
+        &id,
+        RevocationStatus::Revoked { at: Time { year: 2026, month: 6, day: 2, hour: 9, minute: 0, second: 0 } },
+        this,
+        next,
+    ))
+    .unwrap();
+    assert_eq!(
+        revoked.check(issuer, issuer, at),
+        RevocationStatus::Revoked { at: Time { year: 2026, month: 6, day: 2, hour: 9, minute: 0, second: 0 } }
+    );
+    // Outside the window: unknown.
+    let later = Time { year: 2026, month: 8, day: 1, hour: 0, minute: 0, second: 0 };
+    assert_eq!(good.check(issuer, issuer, later), RevocationStatus::Unknown);
+    // Signed by a different key than the named responder: unknown.
+    let other = pkcs12::open(&data("rsa-aes.p12"), "test").unwrap();
+    let wrong_key = OcspResponse::parse(&ocsp(&other, RevocationStatus::Good, this, next)).unwrap();
+    assert_eq!(wrong_key.check(issuer, issuer, at), RevocationStatus::Unknown);
+    // An error response is rejected at parse time.
+    let error = der::seq(&[&der::int(6)]);
+    assert!(OcspResponse::parse(&error).is_err());
 }

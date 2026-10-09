@@ -1,11 +1,16 @@
-PrintCraft
-Copyright (c) 2026 ArtCraft Team and the PrintCraft contributors.
+PeDeeFe
+A modified version of PdfCraft (formerly PrintCraft; https://github.com/storytold/pdfcraft) by the
+ArtCraft team.
+
+PdfCraft: Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors.
+PeDeeFe changes: Copyright (c) 2026 Phreezi.
 Licensed under the MIT License or the Apache License, Version 2.0, at your option
 (LICENSE-MIT, LICENSE-APACHE).
 
-The ArtCraft name, wordmark and logos in docs/brand/ are trademarks of the ArtCraft Team. They are
-not open source and are not covered by the license above; their terms are in
-docs/brand/LICENSE-brand.txt.
+PeDeeFe is not made, sponsored or endorsed by the ArtCraft Team. As PdfCraft's brand licence
+asks of modified versions, it does not include the ArtCraft name, wordmark or logos (the ArtCraft
+Marks, which are trademarks of the ArtCraft Team and were never covered by the license above), and
+it is not presented as an ArtCraft product.
 
 Third-party material
 

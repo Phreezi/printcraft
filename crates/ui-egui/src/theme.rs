@@ -12,6 +12,29 @@ pub enum ThemeKind {
     Dark,
 }
 
+/// The saved user choice, independent of the light/dark colours currently displayed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum ThemePreference {
+    System,
+    #[default]
+    Light,
+    Dark,
+}
+
+impl ThemePreference {
+    pub fn resolve(self, system: Option<egui::Theme>, fallback: ThemeKind) -> ThemeKind {
+        match self {
+            Self::Light => ThemeKind::Light,
+            Self::Dark => ThemeKind::Dark,
+            Self::System => match system {
+                Some(egui::Theme::Light) => ThemeKind::Light,
+                Some(egui::Theme::Dark) => ThemeKind::Dark,
+                None => fallback,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Tokens {
     pub kind: ThemeKind,
@@ -38,6 +61,13 @@ pub struct Tokens {
     pub field: Color32,
     pub badge_new: Color32,
     pub page_shadow: Color32,
+    /// Grouped panels inside a dialog (the Print dialog's sections), set off from `card`.
+    pub group_fill: Color32,
+    /// Behind sheets and pages shown in a preview or picker, so white paper stands out.
+    pub preview_fill: Color32,
+    /// Marker hues for a dialog's sections, told apart at a glance (Print: printer, pages,
+    /// sizing, orientation, comments & forms).
+    pub section: [Color32; 5],
     pub radius: u8,
 }
 
@@ -66,6 +96,15 @@ impl Tokens {
                 field: Color32::from_rgb(0xFF, 0xFF, 0xFF),
                 badge_new: Color32::from_rgb(0x1B, 0x63, 0xE0),
                 page_shadow: Color32::from_black_alpha(34),
+                group_fill: Color32::from_rgb(0xF5, 0xF6, 0xF8),
+                preview_fill: Color32::from_rgb(0xE6, 0xE7, 0xEB),
+                section: [
+                    Color32::from_rgb(0x1B, 0x63, 0xE0),
+                    Color32::from_rgb(0x0E, 0x8C, 0x80),
+                    Color32::from_rgb(0x7B, 0x4B, 0xD6),
+                    Color32::from_rgb(0xC2, 0x7A, 0x0E),
+                    Color32::from_rgb(0xC2, 0x41, 0x6F),
+                ],
                 radius: 6,
             },
             ThemeKind::Dark => Self {
@@ -90,28 +129,70 @@ impl Tokens {
                 field: Color32::from_rgb(0x1E, 0x1E, 0x22),
                 badge_new: Color32::from_rgb(0x3D, 0x7D, 0xEE),
                 page_shadow: Color32::from_black_alpha(120),
+                group_fill: Color32::from_rgb(0x24, 0x24, 0x28),
+                preview_fill: Color32::from_rgb(0x1A, 0x1A, 0x1D),
+                section: [
+                    Color32::from_rgb(0x4B, 0x8B, 0xF5),
+                    Color32::from_rgb(0x34, 0xC3, 0xB3),
+                    Color32::from_rgb(0xA5, 0x84, 0xF2),
+                    Color32::from_rgb(0xE5, 0xA9, 0x3F),
+                    Color32::from_rgb(0xEC, 0x7F, 0xA5),
+                ],
                 radius: 6,
             },
         }
     }
 
     pub fn get(ctx: &egui::Context) -> Self {
-        ctx.data(|d| d.get_temp::<Tokens>(egui::Id::new("printcraft-theme"))).unwrap_or_else(|| Self::for_kind(ThemeKind::Light))
+        ctx.data(|d| d.get_temp::<Tokens>(egui::Id::new("pdfcraft-theme"))).unwrap_or_else(|| Self::for_kind(ThemeKind::Light))
     }
 
     pub fn dark(&self) -> bool {
         self.kind == ThemeKind::Dark
     }
+
+    /// The header band of a section panel: `group_fill` tinted with the section's hue.
+    pub fn section_band(&self, hue: Color32) -> Color32 {
+        mix(self.group_fill, hue, if self.dark() { 0.16 } else { 0.10 })
+    }
+
+    /// A selected segment (or a badge on a selection): its fill and text colour. White on the
+    /// light accent; the dark accent is too light for white text, so it uses the soft accent.
+    pub fn selected_pair(&self) -> (Color32, Color32) {
+        if self.dark() { (self.accent_soft, self.accent_text) } else { (self.accent, Color32::WHITE) }
+    }
+}
+
+/// `a` blended towards `b` by `k` (0..=1), opaque.
+pub fn mix(a: Color32, b: Color32, k: f32) -> Color32 {
+    let k = if k.is_finite() { k.clamp(0.0, 1.0) } else { 0.0 };
+    let ch = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * k).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgb(ch(a.r(), b.r()), ch(a.g(), b.g()), ch(a.b(), b.b()))
 }
 
 pub fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(font_definitions());
 }
 
+/// Install the interface fonts with the CJK fallback order for the UI language (Chinese
+/// first for Simplified Chinese, Japanese first otherwise). Call it when the language
+/// changes; the new faces take effect next frame.
+pub fn install_fonts_for(ctx: &egui::Context, prefer_hans: bool) {
+    ctx.set_fonts(font_definitions_for(prefer_hans));
+}
+
 /// The interface fonts: Inter (and JetBrains Mono for code) first, then egui's defaults, then
-/// the Japanese faces of the optional craft-fonts build input (BIZ UDPGothic first) as the last
-/// fallback in every family. Without craft-fonts there is no Japanese face.
+/// the CJK faces of the optional craft-fonts build input as the last fallback in every family.
+/// Without craft-fonts there is no Japanese or Chinese face.
 pub fn font_definitions() -> FontDefinitions {
+    font_definitions_for(false)
+}
+
+/// [`font_definitions`] with the CJK fallback order for the UI language. Simplified Chinese
+/// must come first in Chinese mode: otherwise shared characters render in the Japanese face
+/// while Simplified-only characters (e.g. U+6B22 欢) fall through to the Chinese face, and
+/// the mixed vertical metrics sink them below the line.
+pub fn font_definitions_for(prefer_hans: bool) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     let add = |fonts: &mut FontDefinitions, name: &str, bytes: &'static [u8]| {
         fonts.font_data.insert(name.to_owned(), Arc::new(FontData::from_static(bytes)));
@@ -122,10 +203,13 @@ pub fn font_definitions() -> FontDefinitions {
     add(&mut fonts, "JetBrainsMono", include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf"));
     fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "Inter".to_owned());
     fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "JetBrainsMono".to_owned());
-    // The same static bytes printcraft-fonts uses for Japanese text in PDFs: one copy, not two.
-    for face in printcraft_fonts::ui_japanese_fonts() {
+    // The same static bytes pdfcraft-fonts uses for Japanese/Chinese text in PDFs: one copy, not two.
+    for face in pdfcraft_fonts::ui_cjk_fonts(prefer_hans) {
         let name = face.name();
-        add(&mut fonts, &name, face.bytes);
+        // Japanese and Chinese faces have distinct family names, so no collision here.
+        if !fonts.font_data.contains_key(&name) {
+            add(&mut fonts, &name, face.bytes);
+        }
         for family in [FontFamily::Proportional, FontFamily::Monospace] {
             fonts.families.entry(family).or_default().push(name.clone());
         }
@@ -150,8 +234,10 @@ pub fn semibold(size: f32) -> FontId {
 }
 
 pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
+    // egui must use the same theme for popup/menu styles as our custom chrome.
+    ctx.set_theme(if kind == ThemeKind::Dark { egui::Theme::Dark } else { egui::Theme::Light });
     let t = Tokens::for_kind(kind);
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new("printcraft-theme"), t));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("pdfcraft-theme"), t));
     let mut v = if t.dark() { Visuals::dark() } else { Visuals::light() };
     v.panel_fill = t.panel;
     v.window_fill = t.card;
@@ -189,8 +275,13 @@ pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
     if !t.dark() {
         v.text_options.color_transfer_function = egui::epaint::FontColorTransferFunction::Gamma(0.75);
     }
-    ctx.set_visuals(v);
-    ctx.global_style_mut(|s| {
+    // egui keeps a light and a dark style and draws with the one the system theme picks. The app
+    // has its own theme setting, so both hold the app's look: the desktop app styles egui before
+    // the first pass, when egui doesn't know the system theme yet (it would style only the dark
+    // one, and a light system would then get egui's default look all session).
+    ctx.set_visuals_of(egui::Theme::Dark, v.clone());
+    ctx.set_visuals_of(egui::Theme::Light, v);
+    ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = egui::vec2(8.0, 6.0);
         s.spacing.button_padding = egui::vec2(10.0, 5.0);
         s.spacing.menu_margin = egui::Margin::same(6);
@@ -227,11 +318,85 @@ mod tests {
         for kind in [ThemeKind::Light, ThemeKind::Dark] {
             let t = Tokens::for_kind(kind);
             for (name, fg) in [("text", t.text), ("text_muted", t.text_muted), ("text_faint", t.text_faint)] {
-                for bg in [t.chrome, t.panel, t.card, t.pasteboard] {
+                for bg in [t.chrome, t.panel, t.card, t.pasteboard, t.group_fill] {
                     let r = contrast(fg, bg);
                     assert!(r >= 4.5, "{kind:?} {name} on {bg:?}: {r:.2}:1, WCAG AA needs 4.5:1");
                 }
             }
+            // Previews and section headers carry text and muted text (never the faint one).
+            let bands = t.section.map(|h| t.section_band(h));
+            for (name, fg) in [("text", t.text), ("text_muted", t.text_muted)] {
+                for bg in std::iter::once(t.preview_fill).chain(bands) {
+                    let r = contrast(fg, bg);
+                    assert!(r >= 4.5, "{kind:?} {name} on {bg:?}: {r:.2}:1, WCAG AA needs 4.5:1");
+                }
+            }
+            // A selected segment and the print area's size badge.
+            let (fill, text) = t.selected_pair();
+            let r = contrast(text, fill);
+            assert!(r >= 4.5, "{kind:?} selected segment: {r:.2}:1");
+            // The section markers stand out from their panel (non-text: 3:1).
+            for hue in t.section {
+                let r = contrast(hue, t.group_fill);
+                assert!(r >= 3.0, "{kind:?} marker {hue:?}: {r:.2}:1");
+            }
         }
+    }
+
+    /// The desktop app styles egui before its first pass, when egui doesn't know the system's theme
+    /// yet; from the first pass egui picks its light or dark style by the system theme (Windows and
+    /// macOS always report one). The app's look must hold whichever it picks, in the first frame,
+    /// after it, and after switching the theme in Preferences.
+    #[test]
+    fn the_app_theme_holds_whatever_theme_the_system_reports() {
+        // A fixed preference holds whatever the system reports; System follows it. Either way the
+        // style is the app's own (colours, spacing, text sizes), never egui's defaults.
+        for preference in [ThemePreference::Light, ThemePreference::Dark, ThemePreference::System] {
+            for system in [Some(egui::Theme::Light), Some(egui::Theme::Dark), None] {
+                let ctx = egui::Context::default();
+                let mut app = crate::PdfCraftApp::new();
+                app.theme_preference = preference;
+                app.prepare(&ctx);
+                let mut f = eframe::Frame::_new_kittest();
+                let mut want = preference.resolve(system, ThemeKind::Light);
+                for pass in 0..3 {
+                    if pass == 2 {
+                        let other = if want == ThemeKind::Light { ThemePreference::Dark } else { ThemePreference::Light };
+                        want = other.resolve(system, want);
+                        app.set_theme_preference(other);
+                    }
+                    let input = egui::RawInput { system_theme: system, ..Default::default() };
+                    let mut seen = None;
+                    let mut out = ctx.run_ui(input, |ui| {
+                        eframe::App::logic(&mut app, ui.ctx(), &mut f);
+                        let s = ui.ctx().global_style();
+                        seen = Some((
+                            s.visuals.panel_fill,
+                            s.visuals.dark_mode,
+                            s.spacing.item_spacing,
+                            s.text_styles.get(&egui::TextStyle::Body).cloned(),
+                        ));
+                    });
+                    out.textures_delta.clear();
+                    let (panel, dark, spacing, body) = seen.unwrap_or_default();
+                    let t = Tokens::for_kind(want);
+                    let at = format!("preference {preference:?}, now {want:?}, system {system:?}, pass {pass}");
+                    assert_eq!(panel, t.panel, "{at}: the app's panel colour");
+                    assert_eq!(dark, t.dark(), "{at}");
+                    assert_eq!(spacing, egui::vec2(8.0, 6.0), "{at}: the app's spacing");
+                    assert_eq!(body, Some(regular(13.0)), "{at}: the app's text sizes");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mixing_colours() {
+        let (a, b) = (Color32::from_rgb(0, 100, 200), Color32::from_rgb(200, 100, 0));
+        assert_eq!(mix(a, b, 0.0), a);
+        assert_eq!(mix(a, b, 1.0), b);
+        assert_eq!(mix(a, b, 0.5), Color32::from_rgb(100, 100, 100));
+        assert_eq!(mix(a, b, f32::NAN), a);
+        assert_eq!(mix(a, b, 7.0), b);
     }
 }
