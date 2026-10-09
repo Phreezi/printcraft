@@ -1579,8 +1579,28 @@ impl PdfCraftApp {
             {
                 self.views[i].select_all();
             }
-            canvas::shortcuts(&mut self.views[i], ctx);
+            let space = self.space_pages(ctx);
+            canvas::shortcuts(&mut self.views[i], ctx, space);
         }
+    }
+
+    /// Whether Space pages through the active document now: nothing else has the keyboard (a
+    /// dialog, the palette, a menu, a text field or a focused button, which Space would press),
+    /// and no mode types or edits with it (Edit a PDF, Add text, Edit text, Prepare a form, the
+    /// page grid).
+    fn space_pages(&self, ctx: &egui::Context) -> bool {
+        let organizing = self.active.and_then(|i| self.views.get(i)).is_none_or(|v| v.organize);
+        let editing = (self.left_open && self.left == LeftPanel::Tool("edit"))
+            || matches!(self.quick_tool, QuickTool::AddText | QuickTool::EditText)
+            || self.is_preparing();
+        self.dialog.is_none()
+            && !self.palette_open
+            && !self.modal_open()
+            && !organizing
+            && !editing
+            && !egui::Popup::is_any_open(ctx)
+            && !ctx.egui_wants_keyboard_input()
+            && ctx.memory(|m| m.focused().is_none())
     }
 }
 

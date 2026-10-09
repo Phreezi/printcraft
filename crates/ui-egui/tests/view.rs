@@ -567,3 +567,65 @@ fn required_fields_get_a_red_border_when_highlighting() {
     let px = *img.get_pixel((at.x * ppp) as u32, (at.y * ppp) as u32);
     assert!(px[0] > 180 && px[1] < 100 && px[2] < 100, "a red border: {px:?}");
 }
+
+/// The top of page `page` on screen.
+fn top(h: &Harness<'static, PdfCraftApp>, page: usize) -> f32 {
+    rect(h, page).expect("page on screen").top()
+}
+
+#[test]
+fn space_scrolls_exactly_one_screen_where_pages_scroll() {
+    // At 200% each page is taller than the window, so page 1 stays on screen.
+    const LAYOUTS: [&[(&str, &str)]; 2] = [&[("layout", "continuous"), ("zoom", "200")], &[("layout", "two-up"), ("zoom", "200")]];
+    for options in LAYOUTS {
+        let layout = options[0].1;
+        let mut h = harness(options);
+        h.run_steps(4);
+        let before = top(&h, 0);
+        let screen = h.state().views[0].viewport_rect().height();
+        h.key_press(Key::Space);
+        h.run_steps(3);
+        let after = top(&h, 0);
+        assert!((before - after - screen).abs() < 0.5, "{layout}: moved {} for a {screen} screen", before - after);
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Space);
+        h.run_steps(3);
+        assert!((top(&h, 0) - before).abs() < 0.5, "{layout}: Shift+Space goes back up the same distance");
+    }
+}
+
+#[test]
+fn space_turns_the_page_in_single_page_view() {
+    let mut h = harness(&[("layout", "single")]);
+    h.key_press(Key::Space);
+    h.run_steps(3);
+    assert_eq!(h.state().views[0].current, 1);
+    h.key_press(Key::Space);
+    h.run_steps(3);
+    assert_eq!(h.state().views[0].current, 2);
+    h.key_press(Key::Space);
+    h.run_steps(3);
+    assert_eq!(h.state().views[0].current, 2, "the last page stays");
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Space);
+    h.run_steps(3);
+    assert_eq!(h.state().views[0].current, 1);
+}
+
+#[test]
+fn space_is_left_alone_while_something_else_has_the_keyboard() {
+    use pdfcraft_ui_egui::{Dialog, QuickTool};
+    let blockers: [fn(&mut PdfCraftApp); 5] = [
+        |app| app.dialog = Some(Dialog::Preferences),
+        |app| app.set_option("palette", "zoom").unwrap(),
+        |app| app.views[0].open_find(),
+        |app| app.quick_tool = QuickTool::EditText,
+        |app| app.set_option("organize", "on").unwrap(),
+    ];
+    for (n, block) in blockers.into_iter().enumerate() {
+        let mut h = harness(&[("layout", "single")]);
+        block(h.state_mut());
+        h.run_steps(4);
+        h.key_press(Key::Space);
+        h.run_steps(3);
+        assert_eq!(h.state().views[0].current, 0, "blocker {n}: Space didn't page");
+    }
+}

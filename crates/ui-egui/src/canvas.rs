@@ -1070,7 +1070,10 @@ impl PageXform {
     }
 }
 
-pub fn shortcuts(view: &mut DocView, ctx: &egui::Context) {
+/// The document's keys. `space` says whether Space may page through the document: not while a
+/// dialog, the palette, a menu or a text field has the keyboard, nor in modes where Space is
+/// typed or edits something (see `PdfCraftApp::space_pages`).
+pub fn shortcuts(view: &mut DocView, ctx: &egui::Context, space: bool) {
     use egui::{Key, KeyboardShortcut, Modifiers};
     if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::F))) {
         view.open_find();
@@ -1146,6 +1149,17 @@ pub fn shortcuts(view: &mut DocView, ctx: &egui::Context) {
     }
     if key(Key::ArrowLeft) || (key(Key::PageUp) && (command || !scrolls)) {
         view.step_page(false);
+    }
+    // Space / Shift+Space, as in Acrobat: where the pages scroll, a whole screen down / up, so the
+    // new view starts exactly where the previous one ended; in single-page view, the next /
+    // previous page. Held down, it repeats.
+    if space && !command && key(Key::Space) {
+        let back = ctx.input(|i| i.modifiers.shift);
+        if scrolls {
+            view.key_scroll += if back { -view.viewport_h } else { view.viewport_h };
+        } else {
+            view.step_page(!back);
+        }
     }
     // ↓ / ↑ scroll a line, and Page Down / Page Up a screen where the pages scroll.
     if !command {

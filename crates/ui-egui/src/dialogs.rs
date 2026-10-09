@@ -1040,6 +1040,7 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
                     ("⇧⌘+ / ⇧⌘−", tl!("Rotate view")),
                     ("Home / End", tl!("First / last page")),
                     ("← / →, ⌘← / ⌘→", tl!("Previous / next page")),
+                    ("Space / ⇧Space", tl!("Next / previous screen (next / previous page in single-page view)")),
                     ("Delete", tl!("Delete selected pages (Organize)")),
                     ("⌘A", tl!("Select all pages (Organize)")),
                     // PeDeeFe's Edit text & images keys.
