@@ -49,7 +49,9 @@ A lista de pedidos para a próxima ronda. Plano para 4.ª feira, 14/10, a partir
 
 ## Ideias por decidir
 
-- **Ver desenhos DWG/DXF/DWF/DWFx (só visualização).** Pedido de 13/10: rodar em 2D, medir e
+- **Ver desenhos DWG/DXF/DWF/DWFx (só visualização).** **Decisão de 13/10: adiado 2 a 3 meses
+  (por volta de janeiro de 2027), com o CADCraft como base, quando os projetos Craft estiverem
+  mais maduros; nessa altura decidimos como juntar os dois.** Pedido de 13/10: rodar em 2D, medir e
   imprimir (sobretudo a Janela) como nos PDF, para substituir o DWG TrueView 2022 e o Design
   Review (usa mais DWF, por vezes DWFx).
   - Abordagem: ao abrir, o desenho é convertido em memória numa página PDF vetorial (com a escala
