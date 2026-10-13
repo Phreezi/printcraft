@@ -32,6 +32,21 @@ A lista de pedidos para a próxima ronda. Plano para 4.ª feira, 14/10, a partir
      larguras (como fazem os outros leitores); ver porque falha a imagem em linha do QR.
    - Ver primeiro se o PdfCraft original já corrigiu isto (está a mudar de renderizador).
 
+3. **Aviso de atualizações em cada abertura.** Hoje a verificação automática corre no máximo uma
+   vez por dia e só mostra um aviso passageiro. Pedido:
+   - sempre que o PeDeeFe abre, verifica em segundo plano se há versão nova, sem atrasar a
+     abertura nem gastar recursos (um único pedido pequeno ao GitHub, numa tarefa à parte, com
+     limite de tempo; sem rede, falha em silêncio);
+   - se houver versão nova, mostra uma janela (pop-up) a dizer que versão é, com "Transferir e
+     instalar", "Mais tarde" e "Não voltar a avisar";
+   - "Mais tarde" (ou fechar a janela): volta a aparecer em cada abertura até atualizar;
+   - "Não voltar a avisar": deixa de aparecer. A decidir: só para essa versão (volta a avisar
+     quando sair outra) ou de vez (como desligar "Procurar atualizações automaticamente" nas
+     Preferências). Proposta: só para essa versão, porque desligar de vez já existe nas
+     Preferências;
+   - a janela não aparece por cima de uma impressão rápida (`--print`) nem de outra janela aberta;
+     espera que ela feche.
+
 ## Pendentes de rondas anteriores
 
 - **Impressão Rápida do Outlook:** à espera do teu teste com a test.14 e o PeDeeFe como app
