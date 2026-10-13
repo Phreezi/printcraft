@@ -47,6 +47,17 @@ A lista de pedidos para a próxima ronda. Plano para 4.ª feira, 14/10, a partir
    - a janela não aparece por cima de uma impressão rápida (`--print`) nem de outra janela aberta;
      espera que ela feche.
 
+4. **Imprimir: "Páginas" volta a "Todas" no documento seguinte.** Pedido de 13/10: imprimiu as
+   páginas 1-2 de um documento e, no documento seguinte, a janela Imprimir continuava com
+   "Páginas 1-2". Esperado: cada documento começa em **Todas**.
+   - Causa: `open_print` (crates/ui-egui/src/print_ui.rs) guarda as escolhas da janela anterior
+     (`..keep` do `print_draft`), incluindo `which` (Todas / Página atual / Páginas) e o intervalo.
+   - Correção proposta: guardar a que documento pertence a escolha de páginas; noutro documento
+     volta a Todas com o intervalo vazio. No mesmo documento mantém o que escolheu (como no
+     Acrobat). Impressora, papel, qualidade e o resto continuam lembrados.
+   - Ver também a mudança automática para "Página atual" ao escolher Janela (linha ~976): também
+     não deve passar para o documento seguinte.
+
 ## Ideias por decidir
 
 - **Ver desenhos DWG/DXF/DWF/DWFx (só visualização).** **Decisão de 13/10: adiado 2 a 3 meses
