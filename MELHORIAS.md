@@ -1,7 +1,12 @@
 # PeDeeFe: lista de melhorias
 
-A lista de pedidos para a próxima ronda. Na próxima sessão começamos por juntar o código original
-(PdfCraft, storytold/pdfcraft) com as nossas alterações e depois tratamos estes pontos.
+A lista de pedidos para a próxima ronda. Plano para 4.ª feira, 14/10, a partir das 14h00:
+1. juntar o código original (PdfCraft, storytold/pdfcraft), que mudou muito, com as nossas
+   alterações; onde ambos fizeram o mesmo, ficar com a melhor versão para o que o utilizador
+   precisa;
+2. corrigir os pontos desta lista;
+3. enviar e publicar uma versão de teste, para experimentar a atualização automática
+   (Preferências › Atualizações) a partir da test.14.
 
 ## Por fazer
 
@@ -14,6 +19,18 @@ A lista de pedidos para a próxima ronda. Na próxima sessão começamos por jun
    - Esperado: abre sempre no topo da página 1, como no Acrobat.
    - Pista: pode ter vindo da Página única / ajuste ao abrir (commit 0e4b451) ou do restauro da
      última posição de leitura; verificar com 1, 2 e 3 páginas, a vários zooms.
+
+2. **Documento 1905.pdf (orçamento N.F. Pegado) mal mostrado.** No PeDeeFe só aparecem o logótipo
+   e as caixas vazias; faltam todo o texto e o código QR. Noutros leitores aparece bem.
+   - O ficheiro (enviado a 13/10) é do utilizador e tem dados reais: usar só para verificar,
+     **nunca o pôr no repositório**; fazer um ficheiro de teste sintético com as mesmas
+     características.
+   - O que o ficheiro tem: gerado por QuickReports; letras Arial e Arial,Bold TrueType **não
+     incorporadas**, com codificação própria (Custom); imagens em linha (inline) de 383×100
+     (logótipo, aparece) e 130×130 (QR, não aparece).
+   - Pistas: substituir letras não incorporadas por uma letra do sistema/embutida com as mesmas
+     larguras (como fazem os outros leitores); ver porque falha a imagem em linha do QR.
+   - Ver primeiro se o PdfCraft original já corrigiu isto (está a mudar de renderizador).
 
 ## Pendentes de rondas anteriores
 
