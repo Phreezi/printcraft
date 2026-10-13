@@ -49,20 +49,25 @@ A lista de pedidos para a próxima ronda. Plano para 4.ª feira, 14/10, a partir
 
 ## Ideias por decidir
 
-- **Ver desenhos DWG/DXF (só visualização).** Pedido de 13/10: rodar em 2D, medir e imprimir
-  (sobretudo a Janela) como nos PDF, para substituir o DWG TrueView 2022 e o Design Review.
-  Proposta:
-  - **DXF**: formato aberto e documentado. Ao abrir, o desenho é convertido em memória numa
-    página PDF vetorial (com a escala do desenho para as medições), e o resto do PeDeeFe
-    (rodar, medir, imprimir com Janela/Cartaz) funciona sem código novo. Biblioteca Rust `dxf`
-    (MIT), carregada só ao abrir um DXF: não pesa no arranque.
-  - **DWG**: formato fechado; as bibliotecas livres são GPL (proibidas aqui) e um leitor próprio é
-    um projeto grande. Proposta: se o ODA File Converter (gratuito) estiver instalado, o PeDeeFe
-    usa-o por trás para converter DWG em DXF e abre o resultado.
-  - Limites: letras SHX trocadas por uma letra parecida; começar pelo Modelo e pelas Folhas
-    (layouts); camadas visíveis como no ficheiro.
-  - Por saber: que extensões abre no Design Review (DWF/DWFx?) e se aceita instalar o ODA File
-    Converter.
+- **Ver desenhos DWG/DXF/DWF/DWFx (só visualização).** Pedido de 13/10: rodar em 2D, medir e
+  imprimir (sobretudo a Janela) como nos PDF, para substituir o DWG TrueView 2022 e o Design
+  Review (usa mais DWF, por vezes DWFx).
+  - Abordagem: ao abrir, o desenho é convertido em memória numa página PDF vetorial (com a escala
+    do desenho para as medições), e o resto do PeDeeFe (rodar, medir, imprimir com
+    Janela/Cartaz) funciona sem código novo. Cada leitor só corre ao abrir esse tipo de ficheiro
+    (não pesa no arranque nem nos PDF); pode ficar como opção de compilação (Cargo feature).
+  - **DWG e DXF**: biblioteca `acadrust` (Rust puro, lê DWG R13–R2018 e DXF; licença MPL-2.0,
+    derivada do ACadSharp, MIT). É a que usa o CADCraft (storytold/cadcraft), projeto da mesma
+    equipa do PdfCraft: ver o que dele se pode aproveitar para desenhar entidades (MIT/Apache, a
+    confirmar). MPL-2.0 não está na lista de licenças permitidas (deny.toml): é preciso o
+    utilizador aceitar juntá-la no fork (obriga só a publicar alterações aos ficheiros da
+    própria biblioteca). Sem ela, alternativa: ODA File Converter (gratuito) por trás.
+  - **DWFx**: baseado em XPS (norma aberta ECMA-388: ZIP com páginas XML vetoriais); viável.
+  - **DWF** (o mais usado pelo utilizador): formato da Autodesk com especificação e toolkit
+    publicados, mas sem bibliotecas Rust; leitor próprio, maior esforço. Investigar primeiro com
+    ficheiros reais do utilizador (sem os pôr no repositório).
+  - Limites: letras SHX trocadas por uma letra parecida; Modelo e Folhas (layouts); camadas como
+    no ficheiro; versões DWG anteriores a R13 ou posteriores a 2018 podem não abrir.
 
 ## Pendentes de rondas anteriores
 
