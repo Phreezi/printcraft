@@ -47,6 +47,23 @@ A lista de pedidos para a próxima ronda. Plano para 4.ª feira, 14/10, a partir
    - a janela não aparece por cima de uma impressão rápida (`--print`) nem de outra janela aberta;
      espera que ela feche.
 
+## Ideias por decidir
+
+- **Ver desenhos DWG/DXF (só visualização).** Pedido de 13/10: rodar em 2D, medir e imprimir
+  (sobretudo a Janela) como nos PDF, para substituir o DWG TrueView 2022 e o Design Review.
+  Proposta:
+  - **DXF**: formato aberto e documentado. Ao abrir, o desenho é convertido em memória numa
+    página PDF vetorial (com a escala do desenho para as medições), e o resto do PeDeeFe
+    (rodar, medir, imprimir com Janela/Cartaz) funciona sem código novo. Biblioteca Rust `dxf`
+    (MIT), carregada só ao abrir um DXF: não pesa no arranque.
+  - **DWG**: formato fechado; as bibliotecas livres são GPL (proibidas aqui) e um leitor próprio é
+    um projeto grande. Proposta: se o ODA File Converter (gratuito) estiver instalado, o PeDeeFe
+    usa-o por trás para converter DWG em DXF e abre o resultado.
+  - Limites: letras SHX trocadas por uma letra parecida; começar pelo Modelo e pelas Folhas
+    (layouts); camadas visíveis como no ficheiro.
+  - Por saber: que extensões abre no Design Review (DWF/DWFx?) e se aceita instalar o ODA File
+    Converter.
+
 ## Pendentes de rondas anteriores
 
 - **Impressão Rápida do Outlook:** à espera do teu teste com a test.14 e o PeDeeFe como app
