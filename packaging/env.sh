@@ -3,10 +3,12 @@
 #
 # Exports:
 #   ROOT                    workspace root
-#   VERSION                 [workspace.package] version from Cargo.toml (override: PRINTCRAFT_VERSION)
+#   VERSION                 [workspace.package] version from Cargo.toml (override: PDFCRAFT_VERSION)
+#   PDFCRAFT_BUILD_LABEL    optional label for a local or patched build (letters, digits, dots);
+#                           compiled into `--version` and About, and appended to the package release
 #   DIST                    output directory for release artifacts (default: $ROOT/dist/release)
-#   PRINTCRAFT_BUILD_SHA    git commit, recorded in the macOS Info.plist (PrintCraftBuildCommit)
-#   PRINTCRAFT_BUILD_DATE   UTC build date, YYYY-MM-DD
+#   PDFCRAFT_BUILD_SHA    git commit, recorded in the macOS Info.plist (PdfCraftBuildCommit)
+#   PDFCRAFT_BUILD_DATE   UTC build date, YYYY-MM-DD
 #   CARGO_TARGET_DIR        cargo's target dir (default: $ROOT/target)
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,22 +23,34 @@ workspace_version() {
   ' "$ROOT/Cargo.toml"
 }
 
-VERSION="${PRINTCRAFT_VERSION:-$(workspace_version)}"
+VERSION="${PDFCRAFT_VERSION:-$(workspace_version)}"
 if [ -z "$VERSION" ]; then
   echo "error: could not read [workspace.package] version from $ROOT/Cargo.toml" >&2
   exit 1
 fi
 export VERSION
 
+# A labelled build says so in `--version` and About (pdfcraft_engine::build_info) and in its
+# package release (packaging/linux/nfpm.yaml), so it can't be mistaken for the release.
+if [ -n "${PDFCRAFT_BUILD_LABEL:-}" ]; then
+  case "$PDFCRAFT_BUILD_LABEL" in
+    *[!A-Za-z0-9.]* | .* | *.)
+      echo "error: PDFCRAFT_BUILD_LABEL may hold only letters, digits and inner dots: $PDFCRAFT_BUILD_LABEL" >&2
+      exit 1
+      ;;
+  esac
+  export PDFCRAFT_BUILD_LABEL
+fi
+
 DIST="${DIST:-$ROOT/dist/release}"
 mkdir -p "$DIST"
 export DIST
 
-if [ -z "${PRINTCRAFT_BUILD_SHA:-}" ]; then
-  PRINTCRAFT_BUILD_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+if [ -z "${PDFCRAFT_BUILD_SHA:-}" ]; then
+  PDFCRAFT_BUILD_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
 fi
-export PRINTCRAFT_BUILD_SHA
-export PRINTCRAFT_BUILD_DATE="${PRINTCRAFT_BUILD_DATE:-$(date -u +%Y-%m-%d)}"
+export PDFCRAFT_BUILD_SHA
+export PDFCRAFT_BUILD_DATE="${PDFCRAFT_BUILD_DATE:-$(date -u +%Y-%m-%d)}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 
 # Emit a GitHub Actions warning (plain stderr outside Actions).
@@ -47,7 +61,7 @@ warn() {
 # Copy licence and readme files that exist into a package directory.
 copy_docs() {
   local dest="$1" f
-  for f in README.md LICENSE LICENSE-MIT LICENSE-APACHE COPYRIGHT; do
+  for f in README.md LICENSE LICENSE-MIT LICENSE-APACHE COPYRIGHT NOTICE; do
     if [ -f "$ROOT/$f" ]; then cp "$ROOT/$f" "$dest/"; fi
   done
   copy_font_licences "$dest"
@@ -63,6 +77,25 @@ copy_font_licences() {
     family="$(basename "$(dirname "$f")")"
     cp "$f" "$dest/OFL-$family.txt"
   done
+}
+
+# Fetch the OCR models into a package directory (#103): `cargo xtask models DEST` downloads every
+# ATTRIBUTION.toml `kind = "model"` file, verified by SHA-256, with its licence text and an
+# ATTRIBUTION.txt crediting them. DEST must be where pdfcraft_ocr::Models::dirs_beside_exe looks
+# from the installed executable. Nothing here names a model file, so a model added to the manifest
+# later ships without changing the packaging.
+stage_models() {
+  local dest="$1"
+  mkdir -p "$dest"
+  dest="$(cd "$dest" && pwd)"
+  (cd "$ROOT" && cargo xtask models "$dest")
+  rm -f "$dest"/*.part
+  if ! ls "$dest"/*.LICENCE.txt >/dev/null 2>&1 || [ ! -s "$dest/ATTRIBUTION.txt" ]; then
+    echo "error: no OCR models in $dest after cargo xtask models" >&2
+    exit 1
+  fi
+  echo "OCR models in $dest:"
+  ls -l "$dest"
 }
 
 # Portable SHA-256 of a file (prints just the hash).

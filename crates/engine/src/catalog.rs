@@ -14,7 +14,7 @@ pub enum Availability {
     Ready,
     /// Planned; ships in the named milestone.
     Planned(&'static str),
-    /// Cloud-only in Acrobat; PrintCraft offers an optional pluggable provider instead.
+    /// Cloud-only in Acrobat; PdfCraft offers an optional pluggable provider instead.
     Provider,
 }
 
@@ -71,7 +71,7 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
             items: &[
                 item("Microsoft Word (.docx)", "file-text", "export.docx", Ready),
                 item("Spreadsheet (.xlsx)", "grid-3x3", "export.xlsx", Planned("M10")),
-                item("Presentation (.pptx)", "presentation", "export.pptx", Planned("M10")),
+                item("Presentation (.pptx)", "presentation", "export.pptx", Ready),
                 item("Image (PNG)", "image", "export.image", Ready),
                 item("Export all images", "image", "export.all_images", Ready),
                 item("HTML web page", "file-symlink", "export.html", Ready),
@@ -99,6 +99,8 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
                 item("Date", "clock-3", "sign.fill.date", Ready),
                 item("Signature", "signature", "sign.fill.signature", Ready),
                 item("Initials", "signature", "sign.fill.initials", Ready),
+                item("Change signature", "signature", "sign.fill.signature.change", Ready),
+                item("Change initials", "signature", "sign.fill.initials.change", Ready),
             ],
         }],
     },
@@ -147,7 +149,8 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
             title: "Create from",
             items: &[
                 item("Single file", "file-input", "create.file", Ready),
-                item("Multiple files", "files", "create.multiple", Planned("M10")),
+                item("Multiple files", "files", "create.multiple", Ready),
+                item("Separate PDFs", "files", "create.multiple_separate", Ready),
                 item("Images", "image", "create.images", Ready),
                 item("Clipboard", "copy-plus", "create.clipboard", Ready),
                 item("Blank page", "file-plus-2", "create.blank", Ready),
@@ -248,6 +251,7 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
                 item("In this file", "scan-text", "ocr.recognize", Ready),
                 item("In multiple files", "files", "ocr.recognize_batch", Ready),
                 item("Enhance scanned file", "sparkles", "ocr.enhance", Planned("M10")),
+                item("Enhance camera image", "camera", "ocr.enhance_camera", Ready),
                 item("Correct recognized text", "text-select", "ocr.correct", Planned("M10")),
             ],
         }],
@@ -401,11 +405,17 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
         icon: "ruler",
         hue: PINK,
         badge: None,
-        availability: Planned("M12"),
+        availability: Ready,
         sections: &[ToolSection {
             title: "Measure",
             items: &[
-                item("Measuring tool", "ruler", "measure.distance", Planned("M12")),
+                item("Distance", "ruler", "measure.distance", Ready),
+                item("Perimeter", "ruler", "measure.perimeter", Ready),
+                item("Area", "ruler", "measure.area", Ready),
+                item("Drawing scale", "ruler", "measure.scale", Ready),
+                item("Measurement information", "ruler", "measure.info", Ready),
+                item("Snapping", "ruler", "measure.snap", Ready),
+                item("Export measurements", "file-output", "measure.export", Ready),
                 item("Geospatial location", "compass", "measure.geo", Planned("M12")),
             ],
         }],
@@ -447,11 +457,12 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
         sections: &[ToolSection {
             title: "Accessibility",
             items: &[
-                item("Automatically tag PDF", "tag", "a11y.autotag", Planned("M12")),
+                item("Automatically tag PDF", "tag", "a11y.autotag", Ready),
                 item("Change reading options", "book-open", "a11y.reading_options", Ready),
                 item("Check for accessibility", "accessibility", "a11y.check", Ready),
                 item("Open accessibility report", "file-text", "a11y.report", Ready),
                 item("Add alternate text", "image", "a11y.alt_text", Ready),
+                item("Tags panel", "tag", "a11y.tags", Ready),
                 item("Fix reading order", "list-ordered", "a11y.reading_order", Planned("M12")),
             ],
         }],

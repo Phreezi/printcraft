@@ -1,4 +1,4 @@
-//! `cargo xtask demo-pdf`: build the PrintCraft showcase PDF.
+//! `cargo xtask demo-pdf`: build the PdfCraft showcase PDF.
 //!
 //! 1. Render a procedural PNG and fill the placeholders in `assets/demo/showcase.html`.
 //! 2. Print the HTML with headless Chrome (tagged PDF, outline from headings).
@@ -36,7 +36,7 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     let root = repo_root();
-    let out = out_override.unwrap_or_else(|| root.join("dist/demo/printcraft-showcase.pdf"));
+    let out = out_override.unwrap_or_else(|| root.join("dist/demo/pdfcraft-showcase.pdf"));
     let build = root.join("dist/demo/build");
     fs::create_dir_all(&build).with_context(|| format!("creating {}", build.display()))?;
     if let Some(parent) = out.parent() {
@@ -97,7 +97,13 @@ fn repo_root() -> PathBuf {
 /// A `file://` URL for an absolute path, percent-encoding unsafe bytes.
 pub(crate) fn file_url(path: &Path) -> String {
     let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let s = abs.to_string_lossy().replace('\\', "/");
+    let mut s = abs.to_string_lossy().replace('\\', "/");
+    // Windows `canonicalize` returns a verbatim `\\?\C:\...` path; after the slash swap that is
+    // `//?/C:/...`, which must not be mistaken for an absolute Unix path, or the URL Chrome is
+    // handed becomes `file:////?/C:/...` and it prints one blank page instead of the document.
+    if let Some(rest) = s.strip_prefix("//?/") {
+        s = rest.to_string();
+    }
     let mut url = String::from(if s.starts_with('/') { "file://" } else { "file:///" });
     for byte in s.bytes() {
         match byte {
@@ -184,4 +190,19 @@ fn foreign_fonts(doc: &lopdf::Document) -> Vec<String> {
         }
     }
     bad.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// On Windows `canonicalize` returns a verbatim `\?\C:\...` path; the URL must not carry the
+    /// `//?/` prefix over (regression test for `file:////?/C:/...`, which Chrome prints as one
+    /// blank page).
+    #[test]
+    fn file_url_has_no_verbatim_prefix() {
+        let url = file_url(&std::env::temp_dir());
+        assert!(!url.contains("//?/"), "{url}");
+        assert!(url.starts_with("file:///"), "{url}");
+    }
 }

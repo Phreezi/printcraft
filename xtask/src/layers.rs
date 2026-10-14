@@ -27,7 +27,7 @@ impl Class {
     }
 }
 
-/// Every workspace crate (package name without the `printcraft-` prefix) and its layer.
+/// Every workspace crate (package name without the `pdfcraft-` prefix) and its layer.
 pub const TABLE: &[(&str, Class)] = &[
     // L0 foundation (standalone, publishable)
     ("geom", Class::Standalone(0)),
@@ -55,6 +55,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("organize", Class::Layer(4)),
     ("security", Class::Layer(4)),
     ("redact", Class::Layer(4)),
+    ("audit", Class::Layer(4)),
     ("xfdf", Class::Layer(4)),
     ("sign", Class::Layer(4)),
     ("ocr", Class::Layer(4)),
@@ -84,7 +85,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("testkit", Class::Testkit),
     ("oracle", Class::Testkit),
     // L8 apps + tooling
-    ("printcraft", Class::Exempt),
+    ("pdfcraft", Class::Exempt),
     ("cli", Class::Exempt),
     ("web", Class::Exempt),
     ("xtask", Class::Exempt),
@@ -96,6 +97,7 @@ pub const STANDALONE_DEPS: &[(&str, &[&str])] = &[("cos", &["filters", "crypt", 
 /// Allowed same-layer edges (architecture §3 rule 1). `forms → js` is deliberately absent.
 pub const SIDEWAYS: &[(&str, &str)] = &[
     ("redact", "edit"),
+    ("audit", "edit"),
     ("a11y", "preflight"),
     ("prepress", "preflight"),
     ("export", "ocr"),
@@ -106,11 +108,11 @@ pub const SIDEWAYS: &[(&str, &str)] = &[
 ];
 
 /// External crates that constitute a UI toolkit / windowing dependency (prefix match with `*`).
-pub const UI_CRATES: &[&str] = &["egui", "eframe", "winit", "egui_kittest", "egui_extras", "egui_dock", "egui_tiles", "rfd", "wgpu*"];
+pub const UI_CRATES: &[&str] = &["egui", "eframe", "winit", "egui_kittest", "craft-ui", "egui_extras", "egui_dock", "egui_tiles", "rfd", "wgpu*"];
 pub const UI_MIN_LAYER: u8 = 7;
 
 pub fn short_name(pkg: &str) -> &str {
-    pkg.strip_prefix("printcraft-").unwrap_or(pkg)
+    pkg.strip_prefix("pdfcraft-").unwrap_or(pkg)
 }
 
 pub fn classify(pkg: &str) -> Option<Class> {
@@ -202,11 +204,10 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
                 }
                 match classify(&d.name) {
                     None => {}
-                    Some(Class::Testkit) => {
-                        if d.kind != DepKind::Dev && class != Class::Testkit {
-                            out.push(Violation::TestkitAsNormalDep { krate: c.name.clone(), dep: d.name.clone() });
-                        }
+                    Some(Class::Testkit) if d.kind != DepKind::Dev && class != Class::Testkit => {
+                        out.push(Violation::TestkitAsNormalDep { krate: c.name.clone(), dep: d.name.clone() });
                     }
+                    Some(Class::Testkit) => {}
                     Some(dc) => {
                         let to = dc.layer().unwrap_or(u8::MAX);
                         let ok = to < layer || (to == layer && sideways_allowed(&c.name, &d.name));
@@ -271,67 +272,68 @@ mod tests {
     #[test]
     fn current_graph_shape_passes() {
         let g = [
-            c("printcraft-geom", &[]),
-            c("printcraft-render", &[("hayro", Normal, false), ("lopdf", Normal, false)]),
-            c("printcraft-engine", &[("printcraft-render", Normal, true)]),
-            c("printcraft-ui-egui", &[("printcraft-engine", Normal, true), ("egui", Normal, false), ("egui_kittest", Dev, false)]),
-            c("printcraft", &[("printcraft-ui-egui", Normal, true)]),
+            c("pdfcraft-geom", &[]),
+            c("pdfcraft-render", &[("hayro", Normal, false), ("lopdf", Normal, false)]),
+            c("pdfcraft-engine", &[("pdfcraft-render", Normal, true)]),
+            c("pdfcraft-ui-egui", &[("pdfcraft-engine", Normal, true), ("egui", Normal, false), ("egui_kittest", Dev, false)]),
+            c("pdfcraft", &[("pdfcraft-ui-egui", Normal, true)]),
         ];
         assert!(check(&g).is_empty(), "{:?}", check(&g));
     }
 
     #[test]
     fn upward_and_sideways_edges_flagged() {
-        let v = check(&[c("printcraft-model", &[("printcraft-engine", Normal, true)])]);
+        let v = check(&[c("pdfcraft-model", &[("pdfcraft-engine", Normal, true)])]);
         assert!(matches!(v[..], [Violation::Upward { from: 2, to: 6, .. }]));
         // forms -> js must go through the ActionRunner trait, never directly.
-        let v = check(&[c("printcraft-forms", &[("printcraft-js", Normal, true)])]);
+        let v = check(&[c("pdfcraft-forms", &[("pdfcraft-js", Normal, true)])]);
         assert!(matches!(v[..], [Violation::Upward { from: 3, to: 3, .. }]));
     }
 
     #[test]
     fn listed_sideways_edges_allowed() {
-        assert!(check(&[c("printcraft-redact", &[("printcraft-edit", Normal, true)])]).is_empty());
-        assert!(!check(&[c("printcraft-edit", &[("printcraft-redact", Normal, true)])]).is_empty());
+        assert!(check(&[c("pdfcraft-redact", &[("pdfcraft-edit", Normal, true)])]).is_empty());
+        assert!(!check(&[c("pdfcraft-edit", &[("pdfcraft-redact", Normal, true)])]).is_empty());
     }
 
     #[test]
     fn cos_may_use_only_its_listed_foundation() {
-        assert!(check(&[c("printcraft-cos", &[("printcraft-filters", Normal, true), ("printcraft-crypt", Normal, true)])]).is_empty());
-        let v = check(&[c("printcraft-cos", &[("printcraft-arlington", Normal, true)])]);
+        assert!(check(&[c("pdfcraft-cos", &[("pdfcraft-filters", Normal, true), ("pdfcraft-crypt", Normal, true)])]).is_empty());
+        let v = check(&[c("pdfcraft-cos", &[("pdfcraft-arlington", Normal, true)])]);
         assert!(matches!(v[..], [Violation::StandaloneHasWorkspaceDep { .. }]));
-        let v = check(&[c("printcraft-filters", &[("printcraft-geom", Normal, true)])]);
+        let v = check(&[c("pdfcraft-filters", &[("pdfcraft-geom", Normal, true)])]);
         assert!(matches!(v[..], [Violation::StandaloneHasWorkspaceDep { .. }]));
     }
 
     #[test]
     fn ui_crates_below_l7_flagged() {
-        for dep in ["egui", "eframe", "winit", "rfd", "wgpu", "wgpu-core", "egui_dock"] {
-            let v = check(&[c("printcraft-engine", &[(dep, Normal, false)])]);
+        for dep in ["egui", "eframe", "winit", "rfd", "wgpu", "wgpu-core", "egui_dock", "craft-ui"] {
+            let v = check(&[c("pdfcraft-engine", &[(dep, Normal, false)])]);
             assert!(matches!(v[..], [Violation::UiBelowL7 { layer: 6, .. }]), "{dep}");
         }
-        assert!(check(&[c("printcraft-platform", &[("winit", Normal, false)])]).is_empty());
+        assert!(check(&[c("pdfcraft-platform", &[("winit", Normal, false)])]).is_empty());
+        assert!(check(&[c("pdfcraft-ui-egui", &[("craft-ui", Normal, false)])]).is_empty());
     }
 
     #[test]
     fn test_support_only_as_dev_dependency() {
-        let v = check(&[c("printcraft-cos", &[("printcraft-testkit", Normal, true)])]);
+        let v = check(&[c("pdfcraft-cos", &[("pdfcraft-testkit", Normal, true)])]);
         assert!(!v.is_empty());
-        assert!(check(&[c("printcraft-render", &[("printcraft-oracle", Dev, true)])]).is_empty());
-        let v = check(&[c("printcraft-render", &[("printcraft-oracle", Normal, true)])]);
+        assert!(check(&[c("pdfcraft-render", &[("pdfcraft-oracle", Dev, true)])]).is_empty());
+        let v = check(&[c("pdfcraft-render", &[("pdfcraft-oracle", Normal, true)])]);
         assert!(matches!(v[..], [Violation::TestkitAsNormalDep { .. }]));
     }
 
     #[test]
     fn unregistered_crate_is_error() {
-        let v = check(&[c("printcraft-mystery", &[])]);
-        assert!(matches!(&v[..], [Violation::Unregistered { krate }] if krate == "printcraft-mystery"));
+        let v = check(&[c("pdfcraft-mystery", &[])]);
+        assert!(matches!(&v[..], [Violation::Unregistered { krate }] if krate == "pdfcraft-mystery"));
     }
 
     #[test]
     fn apps_exempt() {
-        for app in ["printcraft", "printcraft-cli", "printcraft-web", "xtask"] {
-            assert!(check(&[c(app, &[("egui", Normal, false), ("printcraft-ui-egui", Normal, true)])]).is_empty());
+        for app in ["pdfcraft", "pdfcraft-cli", "pdfcraft-web", "xtask"] {
+            assert!(check(&[c(app, &[("egui", Normal, false), ("pdfcraft-ui-egui", Normal, true)])]).is_empty());
         }
     }
 }

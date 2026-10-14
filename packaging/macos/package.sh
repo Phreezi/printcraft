@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build, sign and (optionally) notarize the macOS release artifacts:
 #
-#   $DIST/printcraft-<version>-macos-<arch>.dmg          PrintCraft.app on a drag-to-Applications DMG
-#   $DIST/printcraft-cli-<version>-macos-<arch>.zip      the headless CLI
+#   $DIST/pdfcraft-<version>-macos-<arch>.dmg          PeDeeFe.app on a drag-to-Applications DMG
+#   $DIST/pdfcraft-cli-<version>-macos-<arch>.zip      the headless CLI
 #
 # Usage: packaging/macos/package.sh [--arch universal|aarch64|x86_64] [--skip-build]
 #
@@ -39,9 +39,9 @@ export MACOSX_DEPLOYMENT_TARGET=11.0
 IDENTITY="${MACOS_SIGN_IDENTITY:--}"
 SHORT_VERSION="${VERSION%%-*}"
 WORK="$CARGO_TARGET_DIR/macos-package"
-APP="$WORK/PrintCraft.app"
-DMG="$DIST/printcraft-$VERSION-macos-$ARCH.dmg"
-CLI_ZIP="$DIST/printcraft-cli-$VERSION-macos-$ARCH.zip"
+APP="$WORK/PeDeeFe.app"
+DMG="$DIST/pdfcraft-$VERSION-macos-$ARCH.dmg"
+CLI_ZIP="$DIST/pdfcraft-cli-$VERSION-macos-$ARCH.zip"
 
 NOTARIZE=0
 if [ "$IDENTITY" = "-" ]; then
@@ -52,18 +52,18 @@ else
   warn "macOS: APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID incomplete; signed but not notarized"
 fi
 
-echo "==> PrintCraft $VERSION for macOS ($ARCH), identity: $IDENTITY, notarize: $NOTARIZE"
+echo "==> PeDeeFe $VERSION for macOS ($ARCH), identity: $IDENTITY, notarize: $NOTARIZE"
 
 # ---- build -------------------------------------------------------------------------------------
 if [ "$SKIP_BUILD" = 0 ]; then
   args=()
   for t in "${TARGETS[@]}"; do args+=(--target "$t"); done
-  (cd "$ROOT" && cargo build --release --locked -p printcraft -p printcraft-cli "${args[@]}")
+  (cd "$ROOT" && cargo build --release --locked -p pdfcraft -p pdfcraft-cli "${args[@]}")
 fi
 
 rm -rf "$WORK"
 mkdir -p "$WORK/bin"
-for bin in printcraft printcraft-cli; do
+for bin in pdfcraft pdfcraft-cli; do
   inputs=()
   for t in "${TARGETS[@]}"; do inputs+=("$CARGO_TARGET_DIR/$t/release/$bin"); done
   lipo -create -output "$WORK/bin/$bin" "${inputs[@]}"
@@ -97,28 +97,31 @@ notarize() {
   fi
 }
 
-# ---- PrintCraft.app ----------------------------------------------------------------------------
+# ---- PeDeeFe.app -----------------------------------------------------------------------------
 echo "==> assembling $APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Executable and icon carry the display name (CFBundleExecutable / CFBundleIconFile).
-cp "$WORK/bin/printcraft" "$APP/Contents/MacOS/PrintCraft"
-cp "$ROOT/assets/app-icon/printcraft.icns" "$APP/Contents/Resources/PrintCraft.icns"
+cp "$WORK/bin/pdfcraft" "$APP/Contents/MacOS/PeDeeFe"
+cp "$ROOT/assets/app-icon/pdfcraft.icns" "$APP/Contents/Resources/PeDeeFe.icns"
 copy_font_licences "$APP/Contents/Resources"
+# OCR models: the app finds them at Contents/MacOS/../Resources/models. Before signing, so the
+# bundle's seal covers them.
+stage_models "$APP/Contents/Resources/models"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
-  -e "s/@BUILD_SHA@/${PRINTCRAFT_BUILD_SHA:-unknown}/g" \
+  -e "s/@BUILD_SHA@/${PDFCRAFT_BUILD_SHA:-unknown}/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist"
 printf 'APPL????' >"$APP/Contents/PkgInfo"
 
 # Sign inside-out: nested code first, then the bundle itself (no --deep on the final signature).
 # Today the only nested code is the main executable; frameworks/helpers would be signed here too.
-sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/PrintCraft"
+sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/PeDeeFe"
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
 
 if [ "$NOTARIZE" = 1 ]; then
-  ditto -c -k --keepParent "$APP" "$WORK/PrintCraft-notarize.zip"
-  notarize "$WORK/PrintCraft-notarize.zip"
+  ditto -c -k --keepParent "$APP" "$WORK/PeDeeFe-notarize.zip"
+  notarize "$WORK/PeDeeFe-notarize.zip"
   xcrun stapler staple "$APP"
   xcrun stapler validate "$APP"
   spctl --assess --type execute -vvv "$APP"
@@ -128,16 +131,50 @@ fi
 echo "==> building $DMG"
 STAGE="$WORK/dmg"
 mkdir -p "$STAGE"
-ditto "$APP" "$STAGE/PrintCraft.app"
+ditto "$APP" "$STAGE/PeDeeFe.app"
 ln -s /Applications "$STAGE/Applications"
-rm -f "$DMG" "$WORK/raw.dmg"
-# makehybrid + convert builds the image without attaching a device, unlike `create -srcfolder`,
-# which is flaky on CI runners ("Resource busy") and hangs in sandboxed sessions.
-hdiutil makehybrid -hfs -hfs-volume-name "PrintCraft $VERSION" -hfs-openfolder "$STAGE" -o "$WORK/raw.dmg" "$STAGE"
-hdiutil convert "$WORK/raw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG"
-rm -f "$WORK/raw.dmg"
+# Finder window layout (packaging/macos/dmg/README.md): not copied in PeDeeFe yet. Upstream's
+# background.tiff and dmg-layout.DS_Store show PdfCraft's artwork and are bound to a volume named
+# "PdfCraft" and an icon named PdfCraft.app, so they would show the wrong brand (or, with PeDeeFe's
+# names, no background at all). Regenerate them for PeDeeFe with dmg/generate.py (VOLUME and ICONS)
+# and then copy them as upstream does:
+#   mkdir -p "$STAGE/.background"
+#   cp "$HERE/dmg/background.tiff" "$STAGE/.background/background.tiff"
+#   cp "$HERE/dmg/dmg-layout.DS_Store" "$STAGE/.DS_Store"
+rm -f "$DMG"
+# `hdiutil create -srcfolder` writes the files as they are. `makehybrid -hfs` gave every file a
+# com.apple.FinderInfo (a Finder location of -1,-1), which `codesign --verify --strict` rejects as
+# "Finder information, or similar detritus" on the app in the image and on a copy installed from it,
+# so MDM and compliance checks reported a correctly notarized app as damaged (#390). `create`
+# attaches a device while it copies, which fails now and then on CI runners ("Resource busy"), so
+# it gets a few tries. The volume name has no version: .DS_Store finds the background through an
+# alias that includes it.
+# Usage: hdiutil_retry <what> <hdiutil args…>; tries five times with growing pauses.
+hdiutil_retry() {
+  local what="$1" attempt
+  shift
+  for attempt in 1 2 3 4 5; do
+    if hdiutil "$@"; then
+      return 0
+    fi
+    [ "$attempt" = 5 ] && { echo "hdiutil $what failed 5 times" >&2; return 1; }
+    warn "hdiutil $what failed (attempt $attempt of 5); retrying in $((attempt * 10))s"
+    sleep $((attempt * 10))
+  done
+}
+hdiutil_retry create create -srcfolder "$STAGE" -volname "PeDeeFe" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$DMG"
 sign "$DMG"
 codesign --verify --strict --verbose=2 "$DMG"
+# The app inside the image must still pass --strict, so a makehybrid-style regression can't ship.
+MOUNT="$WORK/dmg-check"
+rm -rf "$MOUNT"
+mkdir -p "$MOUNT"
+hdiutil_retry attach attach -nobrowse -readonly -mountpoint "$MOUNT" "$DMG" >/dev/null
+if ! codesign --verify --strict --deep --verbose=2 "$MOUNT/PeDeeFe.app"; then
+  hdiutil_retry detach detach "$MOUNT" >/dev/null || true
+  exit 1
+fi
+hdiutil_retry detach detach "$MOUNT" >/dev/null
 if [ "$NOTARIZE" = 1 ]; then
   notarize "$DMG"
   xcrun stapler staple "$DMG"
@@ -147,17 +184,17 @@ fi
 
 # ---- CLI ---------------------------------------------------------------------------------------
 echo "==> building $CLI_ZIP"
-CLI_DIR="$WORK/printcraft-cli-$VERSION-macos-$ARCH"
+CLI_DIR="$WORK/pdfcraft-cli-$VERSION-macos-$ARCH"
 mkdir -p "$CLI_DIR"
-cp "$WORK/bin/printcraft-cli" "$CLI_DIR/"
+cp "$WORK/bin/pdfcraft-cli" "$CLI_DIR/"
 copy_docs "$CLI_DIR"
-sign --options runtime "$CLI_DIR/printcraft-cli"
-codesign --verify --strict --verbose=2 "$CLI_DIR/printcraft-cli"
+sign --options runtime "$CLI_DIR/pdfcraft-cli"
+codesign --verify --strict --verbose=2 "$CLI_DIR/pdfcraft-cli"
 rm -f "$CLI_ZIP"
 ditto -c -k --keepParent "$CLI_DIR" "$CLI_ZIP"
 # A bare Mach-O can't carry a stapled ticket; Gatekeeper looks the notarization up online.
 if [ "$NOTARIZE" = 1 ]; then notarize "$CLI_ZIP"; fi
 
-"$WORK/bin/printcraft-cli" --version
+"$WORK/bin/pdfcraft-cli" --version
 echo "==> done"
 ls -lh "$DMG" "$CLI_ZIP"

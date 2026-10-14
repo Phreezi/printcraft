@@ -3,8 +3,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use printcraft_content::Matrix;
-use printcraft_cos::{Dict, Document, ObjRef, Object, PdfString, Stream};
+use pdfcraft_content::Matrix;
+use pdfcraft_cos::{Dict, Document, ObjRef, Object, PdfString, Stream};
 
 /// A Figure element (after the role map).
 #[derive(Clone, Debug, PartialEq)]
@@ -24,16 +24,16 @@ pub enum AltError {
     #[error("object {0} is not a figure")]
     NotAFigure(u32),
     #[error("{0}")]
-    Cos(#[from] printcraft_cos::CosError),
+    Cos(#[from] pdfcraft_cos::CosError),
 }
 
-fn tree_root(doc: &Document) -> Option<Dict> {
+pub(crate) fn tree_root(doc: &Document) -> Option<Dict> {
     let cat = doc.root().and_then(|r| doc.get(r).as_dict().cloned())?;
     cat.get(b"StructTreeRoot").map(|o| doc.resolve(o)).and_then(|o| o.as_dict().cloned())
 }
 
 /// The standard type of a structure type through the role map.
-fn standard(doc: &Document, role_map: &Dict, s: &[u8]) -> Vec<u8> {
+pub(crate) fn standard(doc: &Document, role_map: &Dict, s: &[u8]) -> Vec<u8> {
     let mut t = s.to_vec();
     for _ in 0..12 {
         if crate::structure::is_standard(&t) {
@@ -47,18 +47,28 @@ fn standard(doc: &Document, role_map: &Dict, s: &[u8]) -> Vec<u8> {
     t
 }
 
-/// Indirect structure elements in document order, with their page.
-fn elements(doc: &Document) -> Vec<(ObjRef, Dict, Option<ObjRef>)> {
+/// An indirect structure element and its nearest indirect parent in tree order.
+pub(crate) struct Element {
+    pub object: ObjRef,
+    pub dict: Dict,
+    pub page: Option<ObjRef>,
+    pub parent: Option<ObjRef>,
+    pub depth: usize,
+}
+
+/// Indirect structure elements in document order, with their page and hierarchy.
+pub(crate) fn elements(doc: &Document) -> Vec<Element> {
     let Some(root) = tree_root(doc) else { return Vec::new() };
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    let mut stack: Vec<(Object, Option<ObjRef>)> = root.get(b"K").map(|k| vec![(k.clone(), None)]).unwrap_or_default();
-    while let Some((k, pg)) = stack.pop() {
+    let mut stack: Vec<(Object, Option<ObjRef>, Option<ObjRef>, usize)> =
+        root.get(b"K").map(|k| vec![(k.clone(), None, None, 0)]).unwrap_or_default();
+    while let Some((k, pg, parent, depth)) = stack.pop() {
         if out.len() > 1_000_000 {
             break;
         }
         match k {
-            Object::Array(a) => stack.extend(a.into_iter().rev().map(|x| (x, pg))),
+            Object::Array(a) => stack.extend(a.into_iter().rev().map(|x| (x, pg, parent, depth))),
             Object::Ref(r) => {
                 if !seen.insert(r) {
                     continue;
@@ -67,16 +77,16 @@ fn elements(doc: &Document) -> Vec<(ObjRef, Dict, Option<ObjRef>)> {
                 if d.contains(b"S") {
                     let pg = d.get(b"Pg").and_then(Object::as_ref).or(pg);
                     if let Some(kids) = d.get(b"K") {
-                        stack.push((kids.clone(), pg));
+                        stack.push((kids.clone(), pg, Some(r), depth.saturating_add(1)));
                     }
-                    out.push((r, d, pg));
+                    out.push(Element { object: r, dict: d, page: pg, parent, depth });
                 }
             }
             Object::Dict(d) if d.contains(b"S") => {
                 // Direct elements can't be addressed; their indirect children still can.
                 let pg = d.get(b"Pg").and_then(Object::as_ref).or(pg);
                 if let Some(kids) = d.get(b"K") {
-                    stack.push((kids.clone(), pg));
+                    stack.push((kids.clone(), pg, parent, depth));
                 }
             }
             _ => {}
@@ -105,7 +115,7 @@ fn mcids(d: &Dict) -> Vec<i64> {
     out
 }
 
-fn page_content(doc: &Document, page: &Dict) -> Vec<u8> {
+pub(crate) fn page_content(doc: &Document, page: &Dict) -> Vec<u8> {
     let Some(c) = page.get(b"Contents") else { return Vec::new() };
     match &*doc.resolve(c) {
         Object::Stream(s) => s.decoded().unwrap_or_default(),
@@ -139,15 +149,13 @@ fn content_bbox(doc: &Document, page: &Dict, ids: &HashSet<i64>) -> Option<[f64;
     let mut marks: Vec<bool> = Vec::new();
     let mut bbox = None;
     let mut path: Vec<(f64, f64)> = Vec::new();
-    for op in printcraft_content::parse(&page_content(doc, page)).ops {
+    for op in pdfcraft_content::parse(&page_content(doc, page)).ops {
         let inside = marks.iter().any(|m| *m);
         let top = ctm.last().copied().unwrap_or(Matrix([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]));
         match op.op.as_slice() {
             b"q" => ctm.push(top),
-            b"Q" => {
-                if ctm.len() > 1 {
-                    ctm.pop();
-                }
+            b"Q" if ctm.len() > 1 => {
+                ctm.pop();
             }
             b"cm" => {
                 if let Some(m) = Matrix::from_operands(&op.operands)
@@ -216,17 +224,17 @@ fn content_bbox(doc: &Document, page: &Dict, ids: &HashSet<i64>) -> Option<[f64;
 pub fn figures(doc: &Document) -> Vec<Figure> {
     let Some(root) = tree_root(doc) else { return Vec::new() };
     let role_map = root.get(b"RoleMap").map(|o| doc.resolve(o)).and_then(|o| o.as_dict().cloned()).unwrap_or_default();
-    let pages = printcraft_model::pages(doc);
+    let pages = pdfcraft_model::pages(doc);
     let index: HashMap<ObjRef, usize> = pages.iter().enumerate().map(|(i, p)| (p.obj, i)).collect();
     elements(doc)
         .into_iter()
-        .filter(|(_, d, _)| d.name(b"S").is_some_and(|s| standard(doc, &role_map, s) == b"Figure"))
-        .map(|(obj, d, pg)| {
-            let page = pg.and_then(|p| index.get(&p).copied());
-            let alt = d.get(b"Alt").map(|o| doc.resolve(o)).and_then(|o| o.as_string().map(|s| s.to_text()));
-            let ids: HashSet<i64> = mcids(&d).into_iter().collect();
+        .filter(|e| e.dict.name(b"S").is_some_and(|s| standard(doc, &role_map, s) == b"Figure"))
+        .map(|e| {
+            let page = e.page.and_then(|p| index.get(&p).copied());
+            let alt = e.dict.get(b"Alt").map(|o| doc.resolve(o)).and_then(|o| o.as_string().map(|s| s.to_text()));
+            let ids: HashSet<i64> = mcids(&e.dict).into_iter().collect();
             let bbox = page.and_then(|p| content_bbox(doc, &pages[p].dict, &ids));
-            Figure { obj, page, alt, bbox }
+            Figure { obj: e.object, page, alt, bbox }
         })
         .collect()
 }
@@ -259,21 +267,21 @@ pub fn set_alt(doc: &mut Document, obj: ObjRef, alt: Option<&str>) -> Result<(),
 pub fn mark_decorative(doc: &mut Document, obj: ObjRef) -> Result<(), AltError> {
     let d = check_figure(doc, obj)?;
     let ids: HashSet<i64> = mcids(&d).into_iter().collect();
-    let pages = printcraft_model::pages(doc);
-    let pg = d.get(b"Pg").and_then(Object::as_ref).or_else(|| elements(doc).into_iter().find(|(r, _, _)| *r == obj).and_then(|(_, _, p)| p));
+    let pages = pdfcraft_model::pages(doc);
+    let pg = d.get(b"Pg").and_then(Object::as_ref).or_else(|| elements(doc).into_iter().find(|e| e.object == obj).and_then(|e| e.page));
     if let Some(page) = pg.and_then(|p| pages.iter().find(|x| x.obj == p)).filter(|_| !ids.is_empty()) {
-        let mut ops = printcraft_content::parse(&page_content(doc, &page.dict)).ops;
+        let mut ops = pdfcraft_content::parse(&page_content(doc, &page.dict)).ops;
         let mut changed = false;
         for op in ops.iter_mut() {
             let ours = op.op == b"BDC"
                 && matches!(op.operands.get(1), Some(Object::Dict(m)) if m.get(b"MCID").and_then(Object::as_int).is_some_and(|n| ids.contains(&n)));
             if ours {
-                *op = printcraft_content::Op::new("BMC", vec![Object::name("Artifact")]);
+                *op = pdfcraft_content::Op::new("BMC", vec![Object::name("Artifact")]);
                 changed = true;
             }
         }
         if changed {
-            let s = doc.add(Object::Stream(Stream::flate(Dict::new(), &printcraft_content::serialize_ops(&ops))));
+            let s = doc.add(Object::Stream(Stream::flate(Dict::new(), &pdfcraft_content::serialize_ops(&ops))));
             doc.update_dict(page.obj, |p| p.set(b"Contents".to_vec(), Object::Ref(s)))?;
             // The parent tree no longer points those ids at the figure.
             if let Some(key) = page.dict.get(b"StructParents").and_then(Object::as_int) {

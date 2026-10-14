@@ -1,0 +1,13 @@
+PeDeeFe logo and icons (every SVG, PNG, .ico and .icns in this directory and its subdirectories).
+
+Original artwork made for this project (no third-party artwork). The wordmark is set in Inter
+SemiBold (assets/fonts/Inter-SemiBold.ttf, SIL Open Font License 1.1, see
+assets/fonts/OFL-Inter.txt) and converted to outlines. Licensed like the rest of the project, under
+either of
+
+  * Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
+  * MIT license (https://opensource.org/licenses/MIT)
+
+at your option.
+
+Regenerate the PNG, .ico and .icns files with render.sh in this directory.
