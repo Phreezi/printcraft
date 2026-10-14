@@ -50,7 +50,8 @@ splitting, comments, forms, signatures, redaction, the CLI and the MCP server), 
 
 ## Install a test build (Windows)
 
-Every change pushed to this repository builds a Windows installer on GitHub Actions:
+Each batch of changes is built into a Windows installer on GitHub Actions when it is ready
+(*Actions ▸ Test build (Windows) ▸ Run workflow*):
 
 1. Open [Releases](https://github.com/Phreezi/printcraft/releases) and download the newest
    `pedeefe-…-windows-x64.msi`.

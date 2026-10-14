@@ -1,6 +1,7 @@
-# PeDeeFe test builds: every push to main or to a claude/** branch builds the Windows x64
-# installer (and the portable zip) and publishes them as a GitHub Release of this repository, so
-# each change can be installed and tried on a PC. Help ▸ Check for updates and Preferences ▸ Updates
+# PeDeeFe test builds: run by hand (Actions ▸ Test build ▸ Run workflow, on the branch to build)
+# once a batch of changes is ready, it builds the Windows x64 installer (and the portable zip) and
+# publishes them as a GitHub Release of this repository, so the batch can be installed and tried on
+# a PC. Pushes alone only run CI. Help ▸ Check for updates and Preferences ▸ Updates
 # in the app read these releases (crates/ui-egui/src/updates.rs) and, on Windows, download the MSI
 # and install it, after checking it against the release's SHA256SUMS (apps/pdfcraft/src/updates.rs):
 # every release must carry that file, or the app refuses to install from it.
@@ -15,9 +16,6 @@
 name: Test build (Windows)
 
 on:
-  push:
-    branches: [main, "claude/**"]
-    paths-ignore: ["**/*.md", "parity/**", "docs/**"]
   workflow_dispatch:
 
 permissions:
