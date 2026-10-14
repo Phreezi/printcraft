@@ -45,7 +45,7 @@ pub fn write_sheets(pdf: &[u8], dpi: u32, gray: bool, dir: &Path) -> Result<Vec<
     let mut renderer = PageRenderer::new(bytes, RenderConfig::default());
     let mut out = Vec::with_capacity(sizes.len());
     for (i, &size) in sizes.iter().enumerate() {
-        let page = renderer.render(RenderRequest { page: i, kind: RequestKind::Pixels, tile: None, scale, tag: 0 });
+        let page = renderer.render(RenderRequest { page: i, kind: RequestKind::Pixels, tile: None, scale, tag: 0, preview: false });
         if let Some(e) = page.error {
             return Err(PrintError::Spool(format!("sheet {} could not be drawn: {e}", i + 1)));
         }

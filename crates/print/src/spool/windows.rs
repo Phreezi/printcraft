@@ -1,12 +1,10 @@
-//! Printing on Windows.
+//! Print as image, on Windows.
 //!
-//! The workspace forbids `unsafe`, so PeDeeFe doesn't call the Win32 printing API itself. It
-//! runs Windows PowerShell (part of every Windows 10 and 11) with a fixed script that uses .NET's
-//! `System.Drawing.Printing`:
-//! - [`LIST_SCRIPT`] lists the installed printers and the default one;
-//! - [`PRINT_SCRIPT`] prints the sheet images [`crate::raster`] wrote, one per page, at the
-//!   sheet's paper size (the printer's matching paper, or a custom size), turned per sheet, with
-//!   copies, collation, two-sided printing and colour mode.
+//! The normal path is craft-print's native spooler. This one draws the sheets as images and runs
+//! Windows PowerShell (part of every Windows 10 and 11) with a fixed script that uses .NET's
+//! `System.Drawing.Printing`: [`PRINT_SCRIPT`] prints the sheet images [`crate::raster`] wrote,
+//! one per page, at the sheet's paper size (the printer's matching paper, or a custom size),
+//! turned per sheet, with copies, collation, two-sided printing and colour mode.
 //!
 //! Nothing from the document reaches the script's text: the job's options (printer name, title,
 //! folder) travel in environment variables, and the script only reads them as values. Names and
@@ -18,23 +16,7 @@
 
 use std::path::Path;
 
-use super::{Duplex, Job, Printer};
-
-/// Lists the printers: one `default <base64 name>` or `printer <base64 name>` line each.
-pub const LIST_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
-function Enc([string] $s) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s)) }
-try {
-  Add-Type -AssemblyName System.Drawing
-  $default = (New-Object System.Drawing.Printing.PrinterSettings).PrinterName
-  foreach ($name in [System.Drawing.Printing.PrinterSettings]::InstalledPrinters) {
-    if ($name -eq $default) { Write-Output ('default ' + (Enc $name)) } else { Write-Output ('printer ' + (Enc $name)) }
-  }
-  exit 0
-} catch {
-  Write-Output ('error ' + (Enc $_.Exception.Message))
-  exit 1
-}
-"#;
+use super::{Duplex, ImageJob, Job};
 
 /// Prints the `sheet-*.png` files of `PDFCRAFT_JOB_DIR` in name order. Reports `note <base64>`
 /// lines (worth showing the user), `done <sheets>`, or `error <base64>` with exit code 1.
@@ -53,14 +35,14 @@ try {
   if ($env:PDFCRAFT_OUTPUT) { $ps.PrintToFile = $true; $ps.PrintFileName = $env:PDFCRAFT_OUTPUT }
   $ps.Copies = [int16]$env:PDFCRAFT_COPIES
   $ps.Collate = ($env:PDFCRAFT_COLLATE -eq '1')
-  if ($env:PDFCRAFT_DUPLEX -ne 'off') {
+  if ($env:PDFCRAFT_DUPLEX -eq 'long' -or $env:PDFCRAFT_DUPLEX -eq 'short') {
     if ($ps.CanDuplex) {
       if ($env:PDFCRAFT_DUPLEX -eq 'short') { $ps.Duplex = [System.Drawing.Printing.Duplex]::Horizontal } else { $ps.Duplex = [System.Drawing.Printing.Duplex]::Vertical }
     } else {
       Write-Output ('note ' + (Enc ($ps.PrinterName + ' cannot print on both sides; the sheets print one-sided.')))
       $ps.Duplex = [System.Drawing.Printing.Duplex]::Simplex
     }
-  } else {
+  } elseif ($env:PDFCRAFT_DUPLEX -eq 'off') {
     $ps.Duplex = [System.Drawing.Printing.Duplex]::Simplex
   }
   # Paper: the printer's own size closest to the sheet (hundredths of an inch, portrait).
@@ -140,22 +122,6 @@ fn decode_text(b64: &str) -> Option<String> {
     base64_decode(b64).map(|b| String::from_utf8_lossy(&b).trim().to_string())
 }
 
-/// Parse [`LIST_SCRIPT`]'s output. Lines that don't decode are skipped.
-pub fn parse_printers(out: &str) -> Vec<Printer> {
-    out.lines()
-        .filter_map(|l| {
-            let (kind, name) = l.trim().split_once(' ')?;
-            let default = match kind {
-                "default" => true,
-                "printer" => false,
-                _ => return None,
-            };
-            let name = decode_text(name).filter(|n| !n.is_empty())?;
-            Some(Printer { name, default })
-        })
-        .collect()
-}
-
 /// What a script reported: its notes, or the error to show.
 pub fn parse_report(stdout: &str, stderr: &str, success: bool) -> Result<Vec<String>, String> {
     let mut notes = Vec::new();
@@ -197,7 +163,7 @@ pub fn paper_name(paper: (f64, f64)) -> String {
 
 /// The environment [`PRINT_SCRIPT`] reads for `job`, with its sheets in `dir` on `paper`
 /// (points, either way round).
-pub fn job_env(job: &Job, dir: &Path, paper: (f64, f64)) -> Vec<(&'static str, String)> {
+pub fn job_env(job: &Job, image: &ImageJob, dir: &Path, paper: (f64, f64)) -> Vec<(&'static str, String)> {
     let (w, h) = (paper.0.min(paper.1), paper.0.max(paper.1));
     let mut env = vec![
         ("PDFCRAFT_JOB_DIR", dir.to_string_lossy().into_owned()),
@@ -207,10 +173,12 @@ pub fn job_env(job: &Job, dir: &Path, paper: (f64, f64)) -> Vec<(&'static str, S
         ("PDFCRAFT_COLLATE", if job.collate { "1" } else { "0" }.into()),
         (
             "PDFCRAFT_DUPLEX",
+            // No choice made: the printer's own default.
             match job.duplex {
-                Duplex::Off => "off",
-                Duplex::LongEdge => "long",
-                Duplex::ShortEdge => "short",
+                None => "",
+                Some(Duplex::Off) => "off",
+                Some(Duplex::LongEdge) => "long",
+                Some(Duplex::ShortEdge) => "short",
             }
             .into(),
         ),
@@ -218,7 +186,7 @@ pub fn job_env(job: &Job, dir: &Path, paper: (f64, f64)) -> Vec<(&'static str, S
         ("PDFCRAFT_PAPER_W", hundredths(w).to_string()),
         ("PDFCRAFT_PAPER_H", hundredths(h).to_string()),
         ("PDFCRAFT_PAPER_NAME", paper_name((w, h))),
-        ("PDFCRAFT_OUTPUT", job.print_to_file.clone().unwrap_or_default()),
+        ("PDFCRAFT_OUTPUT", image.print_to_file.clone().unwrap_or_default()),
     ];
     env.retain(|(_, v)| !v.contains('\0'));
     env
@@ -295,26 +263,15 @@ fn run_powershell(
     Ok((status.success(), out, err))
 }
 
-/// The installed printers.
-#[cfg(windows)]
-pub fn list() -> Result<Vec<Printer>, crate::PrintError> {
-    let dir = job_dir("printers")?;
-    let run = run_powershell(LIST_SCRIPT, &dir, &[], std::time::Duration::from_secs(60));
-    let _ = std::fs::remove_dir_all(&dir);
-    let (ok, out, err) = run?;
-    parse_report(&out, &err, ok).map_err(crate::PrintError::Spool)?;
-    Ok(parse_printers(&out))
-}
-
 /// Draw the sheets of `pdf` and print them. Returns the notes worth showing (empty when all went
 /// as asked).
 #[cfg(windows)]
-pub fn submit(pdf: &[u8], job: &Job) -> Result<String, crate::PrintError> {
+pub fn submit(pdf: &[u8], job: &Job, image: &ImageJob) -> Result<String, crate::PrintError> {
     let dir = job_dir("print")?;
     let result = (|| {
-        let sheets = crate::raster::write_sheets(pdf, job.dpi, job.grayscale, &dir)?;
+        let sheets = crate::raster::write_sheets(pdf, image.dpi, job.grayscale, &dir)?;
         let paper = sheets.first().map(|s| s.size).ok_or(crate::PrintError::NoPages)?;
-        let env = job_env(job, &dir, paper);
+        let env = job_env(job, image, &dir, paper);
         // Big jobs take a while to draw into the spooler; a stuck driver doesn't hang forever.
         let (ok, out, err) = run_powershell(PRINT_SCRIPT, &dir, &env, std::time::Duration::from_secs(30 * 60))?;
         parse_report(&out, &err, ok).map(|notes| notes.join(" ")).map_err(crate::PrintError::Spool)

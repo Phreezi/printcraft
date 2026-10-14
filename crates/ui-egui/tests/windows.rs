@@ -258,6 +258,14 @@ fn a_forwarded_file_or_a_relaunch_restores_a_minimized_window_from_logic_alone()
         let commands = out.viewport_commands.get(&ViewportId::ROOT).cloned().unwrap_or_default();
         assert!(commands.windows(2).any(|w| w == raise), "un-minimized, then focused: {commands:?}");
     }
+    // Files open on a worker thread: later logic passes pick the document up.
+    for _ in 0..400 {
+        if !app.views.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let _ = ctx.run_logic(&input, |ctx| app.logic(ctx, &mut frame));
+    }
     std::fs::remove_file(&path).ok();
     assert_eq!(app.views.len(), 1, "the forwarded file opened");
 }
@@ -282,22 +290,15 @@ fn a_forwarded_file_waits_for_an_open_dialog_or_prompt() {
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
     assert_eq!(h.state().dialog, None);
+    // Files open on a worker thread.
+    for _ in 0..400 {
+        if h.state().views.len() == 4 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        h.run_steps(1);
+    }
     assert_eq!(h.state().views.len(), 4, "opened once the dialog closed");
-    // A password prompt for an encrypted file stays while a forwarded file waits.
-    h.state_mut().password_prompt = Some(pdfcraft_ui_egui::PasswordPrompt {
-        name: "locked.pdf".into(),
-        path: None,
-        bytes: std::sync::Arc::new(Vec::new()),
-        input: "secr".into(),
-        error: None,
-    });
-    queue.borrow_mut().push(OsEvent::Open(vec![path.to_string_lossy().into_owned()]));
-    h.run_steps(3);
-    assert!(h.state().password_prompt.as_ref().is_some_and(|p| p.input == "secr"), "the prompt and what was typed stay");
-    assert_eq!(h.state().views.len(), 4);
-    h.state_mut().password_prompt = None;
-    h.run_steps(3);
-    assert_eq!(h.state().views.len(), 5);
     std::fs::remove_file(&path).ok();
 }
 

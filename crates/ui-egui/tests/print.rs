@@ -13,11 +13,74 @@ use pdfcraft_ui_egui::{Dialog, PdfCraftApp, PrintArea, PrintDraft, PrintHandling
 fn harness() -> Harness<'static, PdfCraftApp> {
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
         let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
         app.open_bytes("form.pdf", None, include_bytes!("data/form.pdf").to_vec()).unwrap();
         app
     });
     h.run_steps(4);
     h
+}
+
+#[test]
+fn current_print_page_saves_the_viewed_page_when_labels_restart() {
+    // Five distinct painted pages, labelled i, ii, iii, 1, 2.
+    let mut objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /PageLabels << /Nums [0 << /S /r >> 3 << /S /D /St 1 >>] >> >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R 11 0 R] /Count 5 /MediaBox [0 0 200 300] >>".to_owned(),
+    ];
+    for (i, color) in ["1 0 0", "0 1 0", "0 0 1", "1 1 0", "1 0 1"].iter().enumerate() {
+        objects.push(format!("<< /Type /Page /Parent 2 0 R /Resources << >> /Contents {} 0 R >>", 4 + i * 2));
+        let content = format!("{color} rg 0 0 200 300 re f");
+        objects.push(format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()));
+    }
+    let mut bytes = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, object) in objects.iter().enumerate() {
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = bytes.len();
+    bytes.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    for offset in offsets {
+        bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    bytes.extend_from_slice(format!("trailer << /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("labelled.pdf", None, bytes).unwrap();
+        app
+    });
+    h.run_steps(4);
+    let id = h.state().views[0].id;
+    let labels: Vec<_> = h.state().session.get(id).unwrap().info.pages.iter().map(|p| p.label.as_str()).collect();
+    assert_eq!(labels, ["i", "ii", "iii", "1", "2"]);
+    for (current, expected) in [[255, 0, 0], [0, 255, 0]].into_iter().enumerate() {
+        h.state_mut().set_option("page", &(current + 1).to_string()).unwrap();
+        h.run_steps(3);
+        assert!(h.state_mut().execute("print.dialog"));
+        h.run_steps(3);
+        h.get_by_label("Current page").click();
+        h.run_steps(3);
+        assert_eq!(h.state().print_draft.current_page, current);
+        h.get_by_label("Sheet 1 of 1");
+        let out = std::env::temp_dir().join(format!("pdfcraft-print-current-{}-{current}.pdf", std::process::id()));
+        h.state_mut().save_override = Some(out.to_string_lossy().into_owned());
+        h.state_mut().print_draft.printer = None;
+        h.run_steps(1);
+        h.get_by_label("Save as PDF").click();
+        h.run_steps(3);
+        assert_eq!(h.state().dialog, None);
+        let saved = std::sync::Arc::new(std::fs::read(&out).unwrap());
+        std::fs::remove_file(out).unwrap();
+        let doc = pdfcraft_cos::Document::open(saved.clone()).unwrap();
+        assert_eq!(pdfcraft_model::pages(&doc).len(), 1);
+        let mut renderer = pdfcraft_render::PageRenderer::new(saved, Default::default());
+        let shot = renderer.render(pdfcraft_render::RenderRequest { page: 0, scale: 1.0, ..Default::default() });
+        assert!(shot.error.is_none(), "{:?}", shot.error);
+        let center = ((shot.height / 2 * shot.width + shot.width / 2) * 4) as usize;
+        assert_eq!(&shot.rgba[center..center + 3], &expected, "saved the wrong physical page for {current}");
+    }
 }
 
 #[test]
@@ -49,6 +112,49 @@ fn print_dialog_lays_out_sheets_and_saves_a_pdf() {
     let doc = pdfcraft_cos::Document::open(std::sync::Arc::new(bytes)).unwrap();
     assert_eq!(pdfcraft_model::pages(&doc).len(), 1);
     let _ = std::fs::remove_file(out);
+}
+
+/// Pages picked beforehand are what the dialog offers to print (Acrobat's "Selected pages").
+#[test]
+fn print_dialog_prints_the_selected_pages() {
+    use pdfcraft_ui_egui::PrintWhich;
+    let mut h = harness();
+    let bytes = h.state().session.create_blank(200.0, 300.0, 5).unwrap();
+    h.state_mut().open_bytes("five.pdf", None, bytes.as_ref().clone()).unwrap();
+    h.run_steps(3);
+    let tab = h.state().views.len() - 1;
+    // Nothing picked: the whole document, and no "Selected pages" choice.
+    assert!(h.state_mut().execute("print.dialog"));
+    h.run_steps(3);
+    assert_eq!(h.state().print_draft.which, PrintWhich::All);
+    assert!(h.query_by_label_contains("Selected pages").is_none());
+    h.get_by_label("Sheet 1 of 5");
+    h.state_mut().dialog = None;
+    h.run_steps(2);
+    // Pages 2 and 4 picked.
+    h.state_mut().views[tab].select_pages(&[1, 3]);
+    assert!(h.state_mut().execute("print.dialog"));
+    h.run_steps(3);
+    assert_eq!(h.state().print_draft.which, PrintWhich::Selected);
+    h.get_by_label("Selected pages (2)");
+    h.get_by_label("Sheet 1 of 2");
+    let out = std::env::temp_dir().join(format!("pdfcraft-print-selected-{}.pdf", std::process::id()));
+    h.state_mut().save_override = Some(out.to_string_lossy().into_owned());
+    h.state_mut().print_draft.printer = None;
+    h.run_steps(1);
+    h.get_by_label("Save as PDF").click();
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, None);
+    let saved = std::fs::read(&out).expect("saved");
+    let doc = pdfcraft_cos::Document::open(std::sync::Arc::new(saved)).unwrap();
+    assert_eq!(pdfcraft_model::pages(&doc).len(), 2);
+    let _ = std::fs::remove_file(out);
+    // The selection gone, the remembered choice falls back to the whole document.
+    h.state_mut().views[tab].select_pages(&[]);
+    assert!(h.state_mut().execute("print.dialog"));
+    h.run_steps(3);
+    assert_eq!(h.state().print_draft.which, PrintWhich::All);
+    assert!(h.state().print_draft.selected.is_empty());
 }
 
 #[test]
@@ -341,7 +447,7 @@ fn print_settings_are_remembered() {
 #[test]
 fn a_printer_list_arriving_keeps_the_users_choice() {
     use pdfcraft_engine::print::spool::Printer;
-    let list = || vec![Printer { name: "A".into(), default: false }, Printer { name: "B".into(), default: true }];
+    let list = || vec![Printer { name: "A".into(), default: false, two_sided: None }, Printer { name: "B".into(), default: true, two_sided: None }];
     let mut d = pdfcraft_ui_egui::PrintDraft { listing: true, ..Default::default() };
     d.printers_arrived(list());
     assert_eq!(d.printer.as_deref(), Some("B"), "nothing chosen: the default");
@@ -802,4 +908,169 @@ fn quick_print_prepares_fit_sheets_on_a4_without_the_dialog() {
     let sheet = sheets[0].size;
     assert!((sheet.0 - print::A3.1).abs() < 0.01 && (sheet.1 - print::A3.0).abs() < 0.01, "a landscape A3 sheet: {sheet:?}");
     assert!((sheets[0].placed[0].scale() - 1.0).abs() < 1e-6, "A3 on A3 prints at 100 %");
+}
+
+/// Properties… shows the printer driver's own options (CUPS) and sends only those changed.
+#[test]
+fn print_dialog_shows_the_printer_driver_options() {
+    use pdfcraft_engine::print::spool;
+    let mut h = harness();
+    assert!(h.state_mut().execute("print.dialog"));
+    h.run_steps(3);
+    h.state_mut().print_draft.printer = None;
+    h.run_steps(1);
+    assert!(h.query_by(|n| n.label().as_deref() == Some("Properties…") && n.is_disabled()).is_some(), "Save as PDF has no driver");
+    let tray = spool::PrinterOption {
+        key: "InputSlot".into(),
+        label: "Paper tray".into(),
+        group: "Media".into(),
+        choices: vec![("AutoSelect".into(), "Auto tray select".into()), ("Tray2".into(), "Tray 2".into())],
+        default: "AutoSelect".into(),
+    };
+    {
+        let d = &mut h.state_mut().print_draft;
+        d.printer = Some("Test_Queue".into());
+        d.driver_options = Some(("Test_Queue".into(), vec![tray]));
+        d.driver_choices.insert("InputSlot".into(), "Tray2".into());
+        d.show_driver_options = true;
+    }
+    h.run_steps(2);
+    h.get_by_label("Printer properties");
+    h.get_by_label("Media");
+    h.get_by_label("Paper tray");
+    assert_eq!(h.state().print_draft.job("form.pdf").options, [("InputSlot".to_string(), "Tray2".to_string())]);
+    h.get_by_label("Reset to printer defaults").click();
+    h.run_steps(2);
+    assert!(h.state().print_draft.job("form.pdf").options.is_empty(), "defaults are not sent");
+    // Options read for another printer never go with this one's job.
+    h.state_mut().print_draft.driver_choices.insert("InputSlot".into(), "Tray2".into());
+    h.state_mut().print_draft.printer = Some("Other_Queue".into());
+    assert!(h.state().print_draft.job("form.pdf").options.is_empty());
+}
+
+/// The desktop app lists printers in the background (PowerShell on Windows takes a second or
+/// more): the dialog opens at once, then preselects the default when the list arrives — unless
+/// the user has already picked a printer.
+#[test]
+fn printers_listed_in_the_background_preselect_the_default_unless_one_was_picked() {
+    use pdfcraft_engine::print::spool::Printer;
+    use std::sync::{Arc, Mutex};
+    let mut h = harness();
+    // The source waits until the test lets it answer, so the dialog is seen while it looks.
+    let gate = Arc::new(Mutex::new(()));
+    let hold = gate.lock().unwrap();
+    let wait = gate.clone();
+    h.state_mut().printer_source = Some(Arc::new(move || {
+        let _open = wait.lock();
+        vec![
+            Printer { name: "Office".into(), default: false, two_sided: None },
+            Printer { name: "Front Desk".into(), default: true, two_sided: None },
+        ]
+    }));
+    assert!(h.state_mut().execute("print.dialog"));
+    h.run_steps(2);
+    assert_eq!(h.state().dialog, Some(Dialog::Print), "the dialog doesn't wait for the printers");
+    assert!(h.state().print_draft.listing);
+    assert_eq!(h.state().print_draft.printer, None);
+    drop(hold);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while h.state().print_draft.listing && std::time::Instant::now() < deadline {
+        h.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(!h.state().print_draft.listing);
+    assert_eq!(h.state().print_draft.printers.len(), 2);
+    assert_eq!(h.state().print_draft.printer.as_deref(), Some("Front Desk"));
+
+    // Opened again: last time's list shows at once; a choice made before the fresh list
+    // arrives is kept.
+    h.state_mut().dialog = None;
+    let hold = gate.lock().unwrap();
+    assert!(h.state_mut().execute("print.dialog"));
+    h.run_steps(2);
+    assert_eq!(h.state().print_draft.printers.len(), 2, "the last list shows while looking");
+    {
+        let d = &mut h.state_mut().print_draft;
+        d.printer = None;
+        d.printer_chosen = true;
+    }
+    drop(hold);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while h.state().print_draft.listing && std::time::Instant::now() < deadline {
+        h.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(!h.state().print_draft.listing);
+    assert_eq!(h.state().print_draft.printer, None, "Save as PDF, as picked");
+}
+
+/// A driver Windows reports without two-sided printing keeps its own setting whatever Two-sided
+/// says (some print both sides with it Off), so the dialog says where to change it.
+#[test]
+fn a_printer_without_two_sided_printing_points_to_its_properties() {
+    use pdfcraft_engine::print::spool::Printer;
+    let mut h = harness();
+    h.state_mut().printer_source = Some(std::sync::Arc::new(|| {
+        vec![
+            Printer { name: "Office PCL".into(), default: true, two_sided: Some(true) },
+            Printer { name: "Office PS".into(), default: false, two_sided: Some(false) },
+        ]
+    }));
+    assert!(h.state_mut().execute("print.dialog"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while h.state().print_draft.printers.is_empty() && std::time::Instant::now() < deadline {
+        h.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    h.run_steps(2);
+    let note = "doesn't take two-sided settings";
+    assert!(h.query_by_label_contains(note).is_none(), "a driver that prints two-sided as asked");
+    h.state_mut().print_draft.printer = Some("Office PS".into());
+    h.run_steps(2);
+    h.get_by_label_contains(note);
+}
+
+/// MELHORIAS item 4: pages 1-2 printed from one document; the next document's Print starts at
+/// All again (and without the first one's window). The printer and the rest stay remembered.
+#[test]
+fn the_next_document_prints_all_pages_again() {
+    use pdfcraft_ui_egui::PrintWhich;
+    let mut h = harness();
+    let first = h.state().session.create_blank(200.0, 300.0, 5).unwrap();
+    h.state_mut().open_bytes("first.pdf", None, first.as_ref().clone()).unwrap();
+    h.run_steps(3);
+    assert!(h.state_mut().execute("print.dialog"));
+    h.run_steps(3);
+    {
+        let d = &mut h.state_mut().print_draft;
+        d.which = PrintWhich::Range;
+        d.range = "1-2".into();
+        d.area = PrintArea::Window;
+        d.region = Some([0.0, 0.0, 100.0, 100.0]);
+        d.copies = 2;
+    }
+    h.run_steps(2);
+    h.get_by_label("Sheet 1 of 2");
+    h.state_mut().dialog = None;
+    h.run_steps(2);
+    // The same document keeps its choice.
+    assert!(h.state_mut().execute("print.dialog"));
+    h.run_steps(3);
+    assert_eq!(h.state().print_draft.which, PrintWhich::Range);
+    assert_eq!(h.state().print_draft.range, "1-2");
+    h.state_mut().dialog = None;
+    h.run_steps(2);
+    // The next document starts at All.
+    let second = h.state().session.create_blank(200.0, 300.0, 3).unwrap();
+    h.state_mut().open_bytes("second.pdf", None, second.as_ref().clone()).unwrap();
+    h.run_steps(3);
+    assert!(h.state_mut().execute("print.dialog"));
+    h.run_steps(3);
+    let d = &h.state().print_draft;
+    assert_eq!(d.which, PrintWhich::All);
+    assert!(d.range.is_empty());
+    assert_eq!(d.area, PrintArea::FullPage);
+    assert_eq!(d.region, None);
+    assert_eq!(d.copies, 2, "the other settings are remembered");
+    h.get_by_label("Sheet 1 of 3");
 }

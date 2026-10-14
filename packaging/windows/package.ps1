@@ -5,7 +5,7 @@
 .DESCRIPTION
   Produces, in $env:DIST (default: dist/release):
     pedeefe-<version>-windows-<arch>.msi            per-machine installer (WiX v5)
-    pedeefe-<version>-windows-<arch>-portable.zip   pedeefe.exe + pdfcraft-cli.exe
+    pedeefe-<version>-windows-<arch>-portable.zip   pedeefe.exe + pdfcraft-cli.exe + models\ + portable.txt
 
   The app is built as pdfcraft.exe (the crate keeps upstream's name, so upstream changes merge
   cleanly) and installed or zipped as pedeefe.exe.
@@ -14,7 +14,7 @@
   zip needs the Visual C++ redistributable. Signing is delegated to sign.ps1 (skipped with a
   warning when no signing secrets are set).
 
-  Needs: Rust (MSVC toolchain + the target), the Windows SDK (rc.exe, signtool.exe),
+  Needs: Rust (MSVC toolchain + the target), curl and the network (the OCR models), the Windows SDK (rc.exe, signtool.exe),
   and WiX v5: dotnet tool install --global wix --version 5.0.2
 
 .EXAMPLE
@@ -90,15 +90,33 @@ $Stage = Join-Path $TargetDir "windows-package\$Arch"
 Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
 Copy-Item (Join-Path $Bin 'pdfcraft.exe'), (Join-Path $Bin 'pdfcraft-cli.exe') $Stage
+# The project licences, and upstream's PDF document icon notice (LICENSE-document.txt), travel
+# beside the binaries in both distributions.
+foreach ($f in 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE') {
+  Copy-Item (Join-Path $Root $f) $Stage
+}
+Copy-Item (Join-Path $Root 'assets\app-icon\LICENSE-document.txt') $Stage
 
 & (Join-Path $PSScriptRoot 'sign.ps1') (Join-Path $Stage 'pdfcraft.exe') (Join-Path $Stage 'pdfcraft-cli.exe')
+
+# OCR models (#103): the app looks in models\ beside pedeefe.exe. `cargo xtask models` fetches every
+# ATTRIBUTION.toml `kind = "model"` file (verified by SHA-256) with its licence and ATTRIBUTION.txt;
+# the MSI and the portable zip take the whole folder, so new models ship without naming them here.
+$Models = Join-Path $Stage 'models'
+New-Item -ItemType Directory -Force -Path $Models | Out-Null
+Push-Location $Root
+try { Invoke-Native 'cargo xtask models' { cargo xtask models $Models } } finally { Pop-Location }
+Remove-Item -Force (Join-Path $Models '*.part') -ErrorAction SilentlyContinue
+if (-not (Test-Path (Join-Path $Models 'ATTRIBUTION.txt')) -or -not (Get-ChildItem (Join-Path $Models '*.LICENCE.txt'))) {
+  throw "no OCR models in $Models after cargo xtask models"
+}
 
 # ---- MSI ---------------------------------------------------------------------------------------
 $Msi = Join-Path $Dist "pedeefe-$Version-windows-$Arch.msi"
 Invoke-Native 'wix build' {
   wix build (Join-Path $PSScriptRoot 'pdfcraft.wxs') -arch $Arch `
     (Join-Path $PSScriptRoot 'installer-ui.wxs') `
-    -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "IconPath=$(Join-Path $Root 'assets\app-icon\pdfcraft.ico')" `
+    -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "ModelsDir=$Models" -d "IconPath=$(Join-Path $Root 'assets\app-icon\pdfcraft.ico')" `
     -d "DocIconPath=$(Join-Path $Root 'assets\brand\pedeefe\document\pedeefe-document.ico')" `
     -o $Msi
 }
@@ -115,7 +133,11 @@ Remove-Item -Recurse -Force $Portable -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Portable | Out-Null
 Copy-Item (Join-Path $Stage 'pdfcraft.exe') (Join-Path $Portable 'pedeefe.exe')
 Copy-Item (Join-Path $Stage 'pdfcraft-cli.exe') $Portable
-foreach ($f in 'README.md', 'NOTICE', 'LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE') {
+foreach ($f in 'NOTICE', 'LICENSE-document.txt') {
+  Copy-Item (Join-Path $Stage $f) $Portable
+}
+Copy-Item -Recurse $Models (Join-Path $Portable 'models')
+foreach ($f in 'README.md', 'LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE') {
   $p = Join-Path $Root $f
   if (Test-Path $p) { Copy-Item $p $Portable }
 }
@@ -127,6 +149,10 @@ if ($env:CRAFT_FONTS_DIR) {
     if (Test-Path $ofl) { Copy-Item $ofl (Join-Path $Portable "OFL-$($_.Name).txt") }
   }
 }
+# portable.txt beside pedeefe.exe switches on portable mode: settings, logs, recovery files and new
+# digital IDs go to the data folder next to the exe instead of %APPDATA% (#157; see
+# crates/ui-egui/src/portable.rs).
+Copy-Item (Join-Path $PSScriptRoot 'portable.txt') $Portable
 $Zip = Join-Path $Dist "pedeefe-$Version-windows-$Arch-portable.zip"
 Remove-Item -Force $Zip -ErrorAction SilentlyContinue
 Compress-Archive -Path $Portable -DestinationPath $Zip

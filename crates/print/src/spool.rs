@@ -1,63 +1,84 @@
-//! The system print spooler.
+//! System print spooler supplied by craft-print. PDF composition and permission checks
+//! stay in PdfCraft; these adapters retain the application's print-error surface.
 //!
-//! - **macOS and Linux**: CUPS. Printers come from `lpstat`, jobs go to `lp` with the job options
-//!   (copies, collation, duplex, colour).
-//! - **Windows**: Windows' own printing. The sheets are drawn as images at the job's resolution
-//!   ([`crate::raster`]) and printed through `System.Drawing.Printing`, driven by Windows
-//!   PowerShell, which every Windows 10 and 11 has ([`windows`]). Every printer driver takes an
-//!   image; only some understand PDF.
-//! - Elsewhere (the web): printing to a printer isn't available; the print-ready PDF can still be
-//!   saved.
+//! PeDeeFe adds **Print as image** on Windows ([`windows`], [`submit_as_image`]): the sheets are
+//! drawn as images at the chosen quality ([`crate::raster`]) and printed through
+//! `System.Drawing.Printing`, driven by Windows PowerShell. It is the way PeDeeFe printed before
+//! craft-print's native spooler, kept for drivers or files the native path prints badly (as
+//! Acrobat's Advanced ▸ Print as image).
 
-use crate::PrintError;
+pub use craft_print::{
+    Duplex, HANDLED_OPTIONS, HAS_PRINTER_PREFERENCES, Job, Printer, PrinterOption, Scaling, lp_args, lpstat_command, parse_lpoptions, parse_lpstat,
+    parse_lpstat_e, parse_ppd, parse_windows_printers, ppd_text, printers, printers_parsed,
+};
+
+/// The driver's job options for a printer (CUPS: its PPD, with the queue's current defaults);
+/// empty when it has none or on other platforms. Reads files and runs `lpoptions`, so call it
+/// when the user asks, not every frame.
+pub fn printer_options(printer: &str) -> Vec<PrinterOption> {
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    {
+        printer_options_via(printer, std::path::Path::new("/etc/cups/ppd"), std::process::Command::new("lpoptions"))
+    }
+    #[cfg(not(all(unix, not(target_arch = "wasm32"))))]
+    {
+        craft_print::printer_options(printer)
+    }
+}
+
+/// Read a destination's options with the PPD directory and command supplied, so tests need
+/// neither a system queue nor a physical printer. CUPS instances share their queue's PPD but
+/// have their own defaults, queried with the complete `queue/instance` destination.
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub(crate) fn printer_options_via(printer: &str, ppd_dir: &std::path::Path, mut lpoptions: std::process::Command) -> Vec<PrinterOption> {
+    let (queue, instance) = printer.split_once('/').map_or((printer, None), |(q, i)| (q, Some(i)));
+    // Retain the conservative name checks, applied to each component. Neither component is
+    // a path: reject dot components, backslashes and any additional separator before I/O.
+    let valid = |name: &str| {
+        !name.is_empty()
+            && name.len() <= 64
+            && !matches!(name, "." | "..")
+            && name.bytes().all(|b| b.is_ascii_graphic() && !matches!(b, b'/' | b'\\' | b':' | b'=' | b'"'))
+    };
+    if !valid(queue) || instance.is_some_and(|name| !valid(name)) {
+        return Vec::new();
+    }
+    const PPD_CAP: u64 = 16 << 20;
+    let ppd = std::fs::File::open(ppd_dir.join(format!("{queue}.ppd"))).ok().and_then(|f| {
+        use std::io::Read as _;
+        let mut bytes = Vec::new();
+        f.take(PPD_CAP).read_to_end(&mut bytes).ok().map(|_| bytes)
+    });
+    let mut options = ppd.map(|b| parse_ppd(&ppd_text(&b))).unwrap_or_default();
+    let current = lpoptions.args(["-p", printer, "-l"]).output().map(|o| parse_lpoptions(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default();
+    for (key, value) in current {
+        if let Some(o) = options.iter_mut().find(|o| o.key == key)
+            && o.choices.iter().any(|(c, _)| *c == value)
+        {
+            o.default = value;
+        }
+    }
+    options
+}
 
 pub mod windows;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Printer {
-    pub name: String,
-    pub default: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum Duplex {
-    #[default]
-    Off,
-    LongEdge,
-    ShortEdge,
-}
-
-/// Print quality choices (dots per inch) for spoolers that print sheets as images (Windows).
+/// Print quality choices (dots per inch) for Print as image.
 pub const QUALITIES: [(u32, &str); 2] = [(300, "Standard (300 dpi)"), (600, "High (600 dpi)")];
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Job {
-    /// `None` = the system default printer.
-    pub printer: Option<String>,
-    pub copies: u32,
-    pub collate: bool,
-    pub duplex: Duplex,
-    pub grayscale: bool,
-    pub title: String,
-    /// Resolution of the sheet images, where sheets print as images (Windows); see [`QUALITIES`].
+/// How Print as image draws and sends the sheets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImageJob {
+    /// Resolution of the sheet images; see [`QUALITIES`].
     pub dpi: u32,
-    /// Windows: print into this file instead of through the printer's port (for example with
-    /// "Microsoft Print to PDF"). Ignored by CUPS.
+    /// Print into this file instead of through the printer's port (for example with
+    /// "Microsoft Print to PDF").
     pub print_to_file: Option<String>,
 }
 
-impl Default for Job {
+impl Default for ImageJob {
     fn default() -> Self {
-        Job {
-            printer: None,
-            copies: 1,
-            collate: true,
-            duplex: Duplex::Off,
-            grayscale: false,
-            title: "PeDeeFe".into(),
-            dpi: QUALITIES[0].0,
-            print_to_file: None,
-        }
+        ImageJob { dpi: QUALITIES[0].0, print_to_file: None }
     }
 }
 
@@ -66,107 +87,29 @@ pub const fn available() -> bool {
     cfg!(any(windows, all(unix, not(target_arch = "wasm32"))))
 }
 
-/// Whether sheets go to the printer as images (and print quality matters).
+/// Whether Print as image is available here (Windows).
 pub const fn prints_images() -> bool {
     cfg!(windows)
 }
 
-/// Parse `lpstat -p -d` output.
-pub fn parse_lpstat(out: &str) -> Vec<Printer> {
-    let default = out.lines().find_map(|l| l.strip_prefix("system default destination:")).map(|s| s.trim().to_string());
-    out.lines()
-        .filter_map(|l| l.strip_prefix("printer "))
-        .filter_map(|l| l.split_whitespace().next())
-        .map(|n| Printer { name: n.to_string(), default: default.as_deref() == Some(n) })
-        .collect()
-}
-
-/// The `lp` arguments for a job printing `file`.
-pub fn lp_args(job: &Job, file: &str) -> Vec<String> {
-    let mut a = Vec::new();
-    if let Some(p) = &job.printer {
-        a.extend(["-d".to_string(), p.clone()]);
-    }
-    a.extend(["-n".to_string(), job.copies.clamp(1, 999).to_string()]);
-    a.extend(["-t".to_string(), job.title.clone()]);
-    let mut opt = |o: &str| a.extend(["-o".to_string(), o.to_string()]);
-    opt(if job.collate { "collate=true" } else { "collate=false" });
-    opt(match job.duplex {
-        Duplex::Off => "sides=one-sided",
-        Duplex::LongEdge => "sides=two-sided-long-edge",
-        Duplex::ShortEdge => "sides=two-sided-short-edge",
-    });
-    if job.grayscale {
-        opt("print-color-mode=monochrome");
-    }
-    // The sheets are already laid out at their final size.
-    opt("fit-to-page=false");
-    a.push("--".into());
-    a.push(file.to_string());
-    a
-}
-
-/// `lpstat -p -d`, forced to print untranslated messages so [`parse_lpstat`] can read them.
-///
-/// `LC_ALL`/`LANG=C` is enough on Linux. macOS CUPS ignores them and follows the user's
-/// interface language (`AppleLanguages`) unless `SOFTWARE` is set, in which case it uses `LANG`.
-pub fn lpstat_command() -> std::process::Command {
-    let mut c = std::process::Command::new("lpstat");
-    c.args(["-p", "-d"]).env("LC_ALL", "C").env("LANG", "C").env("SOFTWARE", "PeDeeFe");
-    c
-}
-
-/// The printers the system knows (empty when there are none or no spooler). This can take a
-/// second on Windows: call it off the UI thread.
-pub fn printers() -> Vec<Printer> {
-    list_printers().unwrap_or_default()
-}
-
-/// The printers the system knows, or why they couldn't be listed.
-pub fn list_printers() -> Result<Vec<Printer>, PrintError> {
-    #[cfg(all(unix, not(target_arch = "wasm32")))]
-    {
-        match lpstat_command().output() {
-            Ok(o) => Ok(parse_lpstat(&String::from_utf8_lossy(&o.stdout))),
-            Err(e) => Err(PrintError::Spool(format!("the print spooler is not available: {e}"))),
-        }
-    }
+/// Print a print-ready PDF as images ([`windows`]). Blocking: it draws every sheet first, so
+/// run it off the UI thread. Elsewhere than Windows it refuses.
+pub fn submit_as_image(pdf: &[u8], job: &Job, image: &ImageJob) -> Result<String, crate::PrintError> {
     #[cfg(windows)]
     {
-        windows::list()
+        windows::submit(pdf, job, image)
     }
-    #[cfg(not(any(windows, all(unix, not(target_arch = "wasm32")))))]
+    #[cfg(not(windows))]
     {
-        Ok(Vec::new())
+        let _ = (pdf, job, image);
+        Err(crate::PrintError::Spool("Print as image is only available on Windows".into()))
     }
 }
 
-/// Send a print-ready PDF to the spooler. Returns the spooler's message (the job id, or notes
-/// worth showing). Blocking: on Windows it draws every sheet first, so run it off the UI thread.
-pub fn submit(pdf: &[u8], job: &Job) -> Result<String, PrintError> {
-    #[cfg(all(unix, not(target_arch = "wasm32")))]
-    {
-        let dir = std::env::temp_dir().join(format!("pdfcraft-print-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).map_err(|e| PrintError::Spool(e.to_string()))?;
-        let file = dir.join(format!("job-{}.pdf", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())));
-        std::fs::write(&file, pdf).map_err(|e| PrintError::Spool(e.to_string()))?;
-        let out = std::process::Command::new("lp").args(lp_args(job, &file.to_string_lossy())).output();
-        let _ = std::fs::remove_file(&file);
-        let out = out.map_err(|e| PrintError::Spool(format!("the print spooler is not available: {e}")))?;
-        if out.status.success() {
-            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-        } else {
-            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            Err(PrintError::Spool(if err.is_empty() { "the print job was refused".into() } else { err }))
-        }
-    }
-    #[cfg(windows)]
-    {
-        windows::submit(pdf, job)
-    }
-    #[cfg(not(any(windows, all(unix, not(target_arch = "wasm32")))))]
-    {
-        let _ = (pdf, job);
-        Err(PrintError::Spool("printing to a printer isn't available here; save the print-ready PDF instead".into()))
-    }
+pub fn submit(pdf: &[u8], job: &Job) -> Result<String, crate::PrintError> {
+    craft_print::submit(pdf, job).map_err(|e| crate::PrintError::Spool(e.to_string()))
+}
+
+pub fn open_printer_preferences(printer: &str) -> Result<(), crate::PrintError> {
+    craft_print::open_printer_preferences(printer).map_err(|e| crate::PrintError::Spool(e.to_string()))
 }

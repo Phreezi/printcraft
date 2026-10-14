@@ -2,17 +2,18 @@
 <!--
   PeDeeFe MSI (WiX Toolset v5: `dotnet tool install -g wix`). Built by package.ps1:
 
-    wix build pdfcraft.wxs installer-ui.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -d DocIconPath=... -o out.msi
+    wix build pdfcraft.wxs installer-ui.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d ModelsDir=... -d IconPath=... -d DocIconPath=... -o out.msi
 
   PeDeeFe is a fork of PdfCraft with its own identity (name, manufacturer, UpgradeCode, component
   GUIDs, executable name, ProgID and registry keys), so it installs next to an official PdfCraft
   instead of replacing it, and carries none of the ArtCraft marks or links.
 
   Per-machine install into Program Files, a Start Menu shortcut, a desktop shortcut (on by default,
-  optional), an App Paths entry, and PeDeeFe registered as a PDF handler (offered under "Open with"
-  and in Default apps, never forced as the default). Files opened with PeDeeFe arrive on its
-  command line; its "print" and "printto" verbs (Explorer's Print, Outlook's Quick Print) print
-  them without opening a window.
+  optional, and an update keeps it only if it is still there), an App Paths entry, PeDeeFe
+  registered as a PDF handler (offered under "Open with" and in Default apps, never forced as the
+  default), "Edit with PeDeeFe" on PDF files' right-click menu (on by default, optional), and the
+  OCR models in models\. Files opened with PeDeeFe arrive on its command line; its "print" and
+  "printto" verbs (Explorer's Print, Outlook's Quick Print) print them without opening a window.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
@@ -24,6 +25,10 @@
       Compressed="yes"
       Language="1033">
     <SummaryInformation Description="PeDeeFe PDF workbench" Manufacturer="Phreezi" />
+    <!-- HKLM registrations must never point into a per-user installation (#305). Allow removal
+         of an existing installation even if an older MSI let it install per-user. -->
+    <Launch Condition="ALLUSERS = 1 OR (Installed AND REMOVE = &quot;ALL&quot;)"
+        Message="PeDeeFe must be installed for all users. Run setup with administrator privileges and ALLUSERS=1; per-user installation is not supported." />
     <!-- Same-version upgrades let successive pre-releases of one X.Y.Z replace each other
          (MSI versions are numeric, so 1.2.3-rc.1 and 1.2.3-rc.2 are both 1.2.3). -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
@@ -37,20 +42,37 @@
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/Phreezi/printcraft" />
     <Property Id="ARPURLUPDATEINFO" Value="https://github.com/Phreezi/printcraft/releases" />
     <Property Id="ARPHELPLINK" Value="https://github.com/Phreezi/printcraft/issues" />
-    <!-- Desktop shortcut (#143): on by default, a checkbox in the full-UI welcome dialog, and
-         INSTALLDESKTOPSHORTCUT=0 on the msiexec command line for unattended installs. Secure, so the
-         choice made in the (unelevated) UI reaches the elevated install. -->
-    <Property Id="INSTALLDESKTOPSHORTCUT" Value="1" Secure="yes" />
+    <!-- Desktop shortcut (#143): on by default for a first install, a checkbox in the full-UI
+         welcome dialog, and INSTALLDESKTOPSHORTCUT=0 on the msiexec command line for unattended
+         installs. Secure, so the choice made in the (unelevated) UI reaches the elevated install.
+         An update keeps the shortcut only if it is still on the desktop (#1058): the in-app
+         updater installs with /passive and no properties, so deleting the shortcut is the only
+         way its users can say no. A value given on the command line wins. The search looks for
+         PeDeeFe's own shortcut (PeDeeFe.lnk), never an official PdfCraft's. -->
+    <Property Id="INSTALLDESKTOPSHORTCUT" Secure="yes" />
+    <Property Id="EXISTINGDESKTOPSHORTCUT">
+      <DirectorySearch Id="DesktopSearch" Path="[DesktopFolder]" Depth="0">
+        <FileSearch Name="PeDeeFe.lnk" />
+      </DirectorySearch>
+    </Property>
+    <SetProperty Id="INSTALLDESKTOPSHORTCUT" Value="1" After="AppSearch" Sequence="first"
+        Condition="NOT INSTALLDESKTOPSHORTCUT AND (NOT WIX_UPGRADE_DETECTED OR EXISTINGDESKTOPSHORTCUT)" />
+    <!-- "Edit with PeDeeFe" on the right-click menu of PDF files in File Explorer (#682): on by
+         default, the same way, and INSTALLPDFCONTEXTMENU=0 for unattended installs without it. -->
+    <Property Id="INSTALLPDFCONTEXTMENU" Value="1" Secure="yes" />
     <UIRef Id="PdfcraftInstallerUI" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
-      <Directory Id="INSTALLFOLDER" Name="PeDeeFe" />
+      <Directory Id="INSTALLFOLDER" Name="PeDeeFe">
+        <Directory Id="ModelsFolder" Name="models" />
+      </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
     <StandardDirectory Id="DesktopFolder" />
 
     <Feature Id="Main" Title="PeDeeFe" Level="1">
       <ComponentGroupRef Id="PdfcraftFiles" />
+      <ComponentGroupRef Id="PdfcraftModels" />
     </Feature>
   </Package>
 
@@ -68,7 +90,9 @@
              entry to pick was the advertised Start Menu shortcut, which Windows can't run as a
              file handler ("This app can't run on your PC"). -->
         <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document" Value="PDF Document" Type="string" />
-        <!-- PDF files opened with PeDeeFe show its document icon (assets/brand/pedeefe/document). -->
+        <!-- PDF files opened with PeDeeFe show its document icon (assets/brand/pedeefe/document),
+             installed as its own file. pedeefe.exe also carries it as icon resource 2 (build.rs),
+             but the installed .ico keeps working whatever the executable embeds. -->
         <File Id="PedeefeDocIcon" Source="$(var.DocIconPath)" Name="pedeefe-document.ico" />
         <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\DefaultIcon" Value="[#PedeefeDocIcon]" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\shell" Value="open" Type="string" />
@@ -83,6 +107,7 @@
         <RegistryValue Root="HKLM" Key="Software\Classes\PeDeeFe.Document\shell\printto\command" Value="&quot;[#PdfcraftExe]&quot; --print-to &quot;%2&quot; &quot;%1&quot; --printer-driver &quot;%3&quot; --printer-port &quot;%4&quot;" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\.pdf\OpenWithProgids" Name="PeDeeFe.Document" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe" Name="FriendlyAppName" Value="PeDeeFe" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\DefaultIcon" Value="[#PedeefeDocIcon]" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\SupportedTypes" Name=".pdf" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\shell\open\command" Value="&quot;[#PdfcraftExe]&quot; &quot;%1&quot;" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\pedeefe.exe\shell\print\command" Value="&quot;[#PdfcraftExe]&quot; --print &quot;%1&quot;" Type="string" />
@@ -146,9 +171,46 @@
         <RegistryValue Root="HKLM" Key="Software\PeDeeFe\Shortcuts" Name="Desktop" Type="integer" Value="1" KeyPath="yes" />
       </Component>
 
+      <!-- PDF context menu (#682): "Edit with PeDeeFe" opens the file in PeDeeFe whichever app is
+           the default for .pdf, which it leaves alone (SystemFileAssociations, like the image
+           menu). Several PDFs selected (up to 15, Windows' limit for this kind of entry) start one
+           launch each, and the single-instance hand-off opens them as tabs of one window. On
+           Windows 11 the entry is under "Show more options": the first-level menu only takes
+           packaged apps' (IExplorerCommand) entries. Its own component with an HKLM key path, so
+           INSTALLPDFCONTEXTMENU=0 leaves it out and uninstall removes it. The verb (PeDeeFe.Edit)
+           and the GUID are PeDeeFe's own, so it sits next to an official PdfCraft's entry. -->
+      <Component Id="PdfcraftPdfContextMenu" Guid="92277AD2-B216-4E23-9B80-062143D3D4E4"
+          Condition="INSTALLPDFCONTEXTMENU = 1">
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PeDeeFe.Edit" Value="Edit with PeDeeFe" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PeDeeFe.Edit" Name="Icon" Value="&quot;[#PdfcraftExe]&quot;,0" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PeDeeFe.Edit" Name="MultiSelectModel" Value="Document" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PeDeeFe.Edit\command" Value="&quot;[#PdfcraftExe]&quot; &quot;%1&quot;" Type="string" />
+      </Component>
+
       <Component Id="PdfcraftCli">
         <File Id="PdfcraftCliExe" Source="$(var.BinDir)\pdfcraft-cli.exe" KeyPath="yes" />
       </Component>
+      <!-- Project licences travel with the binaries, with upstream's PDF document icon notice
+           (LICENSE-document.txt, as package.ps1 stages it). -->
+      <Component Id="PdfcraftDocumentIconLicense">
+        <File Id="PdfcraftDocumentIconLicenseFile" Source="$(var.BinDir)\LICENSE-document.txt" KeyPath="yes" />
+      </Component>
+      <Component Id="PdfcraftMitLicense">
+        <File Id="PdfcraftMitLicenseFile" Source="$(var.BinDir)\LICENSE-MIT" KeyPath="yes" />
+      </Component>
+      <Component Id="PdfcraftApacheLicense">
+        <File Id="PdfcraftApacheLicenseFile" Source="$(var.BinDir)\LICENSE-APACHE" KeyPath="yes" />
+      </Component>
+      <Component Id="PdfcraftNotice">
+        <File Id="PdfcraftNoticeFile" Source="$(var.BinDir)\NOTICE" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- OCR models (#103), with their licences and ATTRIBUTION.txt, in models\ beside pedeefe.exe
+         where the app looks for them: every file `cargo xtask models` fetched (package.ps1), one
+         component each, so new models ship without naming them here. -->
+    <ComponentGroup Id="PdfcraftModels" Directory="ModelsFolder">
+      <Files Include="$(var.ModelsDir)\*" />
     </ComponentGroup>
   </Fragment>
 </Wix>

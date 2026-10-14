@@ -104,7 +104,8 @@ fn only_an_explicit_choice_of_an_offered_language_skips_the_prompt() {
 
 /// Open the Preferences language selector, which shows `current`.
 fn open_language_menu(h: &mut Harness<'static, PdfCraftApp>, current: &str) {
-    let shows = |text: Option<String>| text.is_some_and(|t| t.contains(current));
+    // Exactly `current`: the date language's selector says "same as the interface (…)".
+    let shows = |text: Option<String>| text.is_some_and(|t| t == current);
     h.get_by(|n| n.role() == Role::ComboBox && (shows(n.label()) || shows(n.value()))).click();
     h.run_steps(2);
 }

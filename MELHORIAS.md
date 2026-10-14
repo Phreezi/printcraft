@@ -1,62 +1,41 @@
 # PeDeeFe: lista de melhorias
 
-A lista de pedidos para a próxima ronda. Plano para 4.ª feira, 14/10, a partir das 14h00:
-1. juntar o código original (PdfCraft, storytold/pdfcraft), que mudou muito, com as nossas
-   alterações; onde ambos fizeram o mesmo, ficar com a melhor versão para o que o utilizador
-   precisa;
-2. corrigir os pontos desta lista;
-3. enviar e publicar uma versão de teste, para experimentar a atualização automática
-   (Preferências › Atualizações) a partir da test.14.
+A lista de pedidos de melhorias. A ronda de 14/10 juntou o código original (PdfCraft) com as
+nossas alterações e corrigiu os pontos 1 a 4 (ver abaixo); a versão de teste publicada serve
+para experimentar a atualização a partir da test.14 (Preferências › Atualizações).
 
 ## Por fazer
 
-1. **Abrir um documento no topo da 1.ª página.** Ao abrir um documento (talvez sempre, ainda por
-   confirmar), a vista não fica no topo da primeira página:
-   - com 2 ou mais páginas fica numa zona ao acaso (na captura de 12/10: um PDF de 3 páginas
-     abriu a 139% no fim da página 1 / início da página 2, com a página 2 marcada no painel
-     Páginas);
-   - um ficheiro novo de 1 página abre no fim da página em vez de no topo.
-   - Esperado: abre sempre no topo da página 1, como no Acrobat.
-   - Pista: pode ter vindo da Página única / ajuste ao abrir (commit 0e4b451) ou do restauro da
-     última posição de leitura; verificar com 1, 2 e 3 páginas, a vários zooms.
+(Nada por agora.)
 
-2. **Documento 1905.pdf (um orçamento enviado pelo utilizador) mal mostrado.** No PeDeeFe só aparecem o logótipo
-   e as caixas vazias; faltam todo o texto e o código QR. Noutros leitores aparece bem.
-   - O ficheiro (enviado a 13/10) é do utilizador e tem dados reais: usar só para verificar,
-     **nunca o pôr no repositório**; fazer um ficheiro de teste sintético com as mesmas
-     características.
-   - O que o ficheiro tem: gerado por QuickReports; letras Arial e Arial,Bold TrueType **não
-     incorporadas**, com codificação própria (Custom); imagens em linha (inline) de 383×100
-     (logótipo, aparece) e 130×130 (QR, não aparece).
-   - Pistas: substituir letras não incorporadas por uma letra do sistema/embutida com as mesmas
-     larguras (como fazem os outros leitores); ver porque falha a imagem em linha do QR.
-   - Ver primeiro se o PdfCraft original já corrigiu isto (está a mudar de renderizador).
+## Feito na ronda de 14/10 (junção com o PdfCraft original)
 
-3. **Aviso de atualizações em cada abertura.** Hoje a verificação automática corre no máximo uma
-   vez por dia e só mostra um aviso passageiro. Pedido:
-   - sempre que o PeDeeFe abre, verifica em segundo plano se há versão nova, sem atrasar a
-     abertura nem gastar recursos (um único pedido pequeno ao GitHub, numa tarefa à parte, com
-     limite de tempo; sem rede, falha em silêncio);
-   - se houver versão nova, mostra uma janela (pop-up) a dizer que versão é, com "Transferir e
-     instalar", "Mais tarde" e "Não voltar a avisar";
-   - "Mais tarde" (ou fechar a janela): volta a aparecer em cada abertura até atualizar;
-   - "Não voltar a avisar": deixa de aparecer. A decidir: só para essa versão (volta a avisar
-     quando sair outra) ou de vez (como desligar "Procurar atualizações automaticamente" nas
-     Preferências). Proposta: só para essa versão, porque desligar de vez já existe nas
-     Preferências;
-   - a janela não aparece por cima de uma impressão rápida (`--print`) nem de outra janela aberta;
-     espera que ela feche.
+O código original (PdfCraft) foi juntado com as nossas alterações. Onde ambos fizeram o mesmo,
+ficou o que serve melhor: no Windows continua predefinida a nossa "Imprimir como imagem" (a que
+testaste na Epson), e a impressão nativa do PdfCraft (vetorial, com o botão Propriedades… da
+impressora) fica a um clique, desmarcando essa opção; a nossa Página única (uma página por janela, a rolar), o
+arrastar do separador para outra janela, a instância única e a rolagem com o botão do meio
+mantêm-se; Ctrl+Tab e a reordenação de separadores vêm do PdfCraft.
 
-4. **Imprimir: "Páginas" volta a "Todas" no documento seguinte.** Pedido de 13/10: imprimiu as
-   páginas 1-2 de um documento e, no documento seguinte, a janela Imprimir continuava com
-   "Páginas 1-2". Esperado: cada documento começa em **Todas**.
-   - Causa: `open_print` (crates/ui-egui/src/print_ui.rs) guarda as escolhas da janela anterior
-     (`..keep` do `print_draft`), incluindo `which` (Todas / Página atual / Páginas) e o intervalo.
-   - Correção proposta: guardar a que documento pertence a escolha de páginas; noutro documento
-     volta a Todas com o intervalo vazio. No mesmo documento mantém o que escolheu (como no
-     Acrobat). Impressora, papel, qualidade e o resto continuam lembrados.
-   - Ver também a mudança automática para "Página atual" ao escolher Janela (linha ~976): também
-     não deve passar para o documento seguinte.
+1. **Abrir no topo da 1.ª página.** Teste novo com 1 e 3 páginas, Ajustar largura, Ajustar
+   página, 139% e 400%, contínuo e Página única, e a janela a crescer nos primeiros instantes
+   (como ao abrir maximizada): abre sempre no topo da página 1.
+2. **1905.pdf.** Causa: ao procurar o fim da imagem do código QR (imagem "em linha"), o leitor
+   via acentos mais à frente no texto ("Nº", "ç") e julgava que ainda estava dentro da imagem; a
+   palavra "SUJEITO" (tem "EI", o marcador de fim de imagem) fazia a imagem "engolir" o resto da
+   página: o QR e todo o texto desapareciam. Corrigido no leitor, com testes sintéticos (o teu
+   ficheiro não foi para o repositório). As letras Arial não incorporadas são trocadas por uma
+   letra sem serifa embutida.
+3. **Aviso de atualizações em cada abertura.** Sempre que o PeDeeFe abre, verifica em segundo
+   plano (um pedido pequeno; sem rede, falha em silêncio). Se houver versão nova, abre uma janela
+   com "Transferir e instalar", "Mais tarde" e "Não voltar a avisar". "Mais tarde" volta a
+   aparecer na abertura seguinte; "Não voltar a avisar" é só para essa versão (volta a avisar
+   quando sair outra; desligar de vez continua nas Preferências). A janela espera que outra
+   janela (Imprimir, Preferências, palavra-passe…) feche; a impressão rápida (`--print`) não a
+   mostra.
+4. **Imprimir: cada documento começa em "Todas".** A escolha de páginas (e a Janela) fica
+   ligada ao documento; noutro documento volta a Todas. Impressora, papel, cópias e o resto
+   continuam lembrados.
 
 ## Ideias por decidir
 
@@ -87,5 +66,5 @@ A lista de pedidos para a próxima ronda. Plano para 4.ª feira, 14/10, a partir
 - **Impressão Rápida do Outlook:** à espera do teu teste com a test.14 e o PeDeeFe como app
   predefinida para `.pdf`. Hipótese: um botão nas Preferências "Tornar o PeDeeFe a aplicação
   predefinida para PDF", que abre essa página das Definições do Windows.
-- **Por enviar para o GitHub:** Ctrl+Tab / Ctrl+Shift+Tab entre separadores e botão do meio
-  para fechar um separador (commit bb6cdc8). Só envio quando disseres.
+- Ctrl+Tab / Ctrl+Shift+Tab entre separadores e botão do meio para fechar um separador: enviado
+  nesta ronda (Ctrl+Tab passou a ser o do PdfCraft original).

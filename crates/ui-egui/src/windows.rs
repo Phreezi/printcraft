@@ -348,13 +348,22 @@ impl PdfCraftApp {
         self.all_views_mut().find(|v| v.id == doc)
     }
 
-    /// A modal (dialog, save prompt, password, palette, link prompt, the first-run language
-    /// prompt) is open in the focus window.
+    /// A modal (dialog, save prompt, password or unlock prompt, palette, link prompt, the update
+    /// dialog, the first-run language prompt) is open in the focus window: the keyboard is its own,
+    /// and nothing may act on the document underneath it.
     pub(crate) fn modal_open(&self) -> bool {
+        self.other_modal_open() || self.updates.notice.is_some()
+    }
+
+    /// [`Self::modal_open`] without the automatic update check's window, which waits for these.
+    pub(crate) fn other_modal_open(&self) -> bool {
         self.dialog.is_some()
             || self.close_request.is_some()
             || self.password_prompt.is_some()
+            || self.unlock_prompt.is_some()
             || self.pending_link.is_some()
+            || self.pending_remote_link.is_some()
+            || self.updates.open
             || self.palette_open
             || self.language_prompt
     }
@@ -496,7 +505,9 @@ impl PdfCraftApp {
         let current = self.windows.current;
         std::iter::once(current).chain(self.windows.keys().into_iter().filter(|k| *k != current)).find(|k| {
             let dirty = |views: &[DocView]| views.iter().any(|v| self.session.get(v.id).is_some_and(|d| d.dirty));
-            if *k == current { dirty(&self.views) } else { self.windows.tabs_of(*k).is_some_and(|t| dirty(&t.views)) }
+            // In the current window, text still being typed into a field counts too
+            // (`first_dirty`), as an unsaved change.
+            if *k == current { self.first_dirty().is_some() } else { self.windows.tabs_of(*k).is_some_and(|t| dirty(&t.views)) }
         })
     }
 

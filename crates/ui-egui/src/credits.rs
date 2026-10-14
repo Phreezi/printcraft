@@ -12,6 +12,9 @@ use crate::theme::Tokens;
 /// The About dialog is a modal that sizes to its content; the lists scroll inside this height.
 const LIST_HEIGHT: f32 = 380.0;
 
+/// English lookup keys for the model table, also checked by catalog coverage tests.
+pub const MODEL_COLUMNS: [&str; 6] = ["Company", "Model", "Version", "Commits", "% of all commits", "Lines +/−"];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Contributor {
     pub login: &'static str,
@@ -128,18 +131,29 @@ impl Contributor {
 
     /// One line with everything we know, for tooltips.
     pub fn summary(&self) -> String {
-        format!(
-            "@{}: {} PRs, {} commits, +{} / −{} lines (Δ {}), +{} / −{} binary assets, {} – {}",
-            self.login,
-            self.prs,
-            self.commits,
-            group(self.lines_added),
-            group(self.lines_deleted),
-            signed(self.lines_delta()),
-            self.binary_added,
-            self.binary_deleted,
-            day(self.first_commit),
-            day(self.last_commit),
+        let prs = group(self.prs);
+        let commits = group(self.commits);
+        let added = group(self.lines_added);
+        let deleted = group(self.lines_deleted);
+        let delta = signed(self.lines_delta());
+        let bin_added = self.binary_added.to_string();
+        let bin_deleted = self.binary_deleted.to_string();
+        crate::i18n::fmt(
+            crate::i18n::t(
+                "@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{bin_added} / −{bin_deleted} binary assets, {first} – {last}",
+            ),
+            &[
+                ("login", self.login),
+                ("prs", &prs),
+                ("commits", &commits),
+                ("added", &added),
+                ("deleted", &deleted),
+                ("delta", &delta),
+                ("bin_added", &bin_added),
+                ("bin_deleted", &bin_deleted),
+                ("first", day(self.first_commit)),
+                ("last", day(self.last_commit)),
+            ],
         )
     }
 }
@@ -221,40 +235,40 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
     let id = egui::Id::new("credits_view");
     let mut v = ui.data_mut(|d| d.get_temp::<View>(id)).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
-        ui.label(tl!("Show"));
+        ui.label(crate::i18n::t("Show"));
         for m in NameMode::ALL {
-            if ui.selectable_label(v.names == m, tl!(m.label())).clicked() {
+            if ui.selectable_label(v.names == m, crate::i18n::t(m.label())).clicked() {
                 v.names = m;
             }
         }
         ui.separator();
-        ui.label(tl!("Sort"));
-        egui::ComboBox::from_id_salt("credits_sort").selected_text(tl!(v.key.label().0)).show_ui(ui, |ui| {
+        ui.label(crate::i18n::t("Sort"));
+        egui::ComboBox::from_id_salt("credits_sort").selected_text(crate::i18n::t(v.key.label().0)).show_ui(ui, |ui| {
             for k in SortKey::ALL {
-                if ui.selectable_label(v.key == k, tl!(k.label().0)).clicked() {
+                if ui.selectable_label(v.key == k, crate::i18n::t(k.label().0)).clicked() {
                     v.key = k;
                     v.ascending = k.default_ascending();
                 }
             }
         });
-        if ui.button(if v.ascending { "▲" } else { "▼" }).on_hover_text(tl!("Reverse the order")).clicked() {
+        if ui.button(if v.ascending { "▲" } else { "▼" }).on_hover_text(crate::i18n::t("Reverse the order")).clicked() {
             v.ascending = !v.ascending;
         }
         ui.separator();
-        if ui.selectable_label(!v.table, tl!("Grab bag")).clicked() {
+        if ui.selectable_label(!v.table, crate::i18n::t("Grab bag")).clicked() {
             v.table = false;
         }
-        if ui.selectable_label(v.table, tl!("Table")).clicked() {
+        if ui.selectable_label(v.table, crate::i18n::t("Table")).clicked() {
             v.table = true;
         }
     });
     let list = sorted(CONTRIBUTORS, v.names, v.key, v.ascending);
-    let count = crate::i18n::fmt(tl!("{n} contributors · {c} commits"), &[("n", &list.len().to_string()), ("c", &group(TOTAL_COMMITS))]);
-    ui.label(RichText::new(count).small().color(t.text_muted));
+    let counts = crate::i18n::fmt(crate::i18n::t("{n} contributors · {c} commits"), &[("n", &list.len().to_string()), ("c", &group(TOTAL_COMMITS))]);
+    ui.label(RichText::new(counts).small().color(t.text_muted));
     ui.separator();
     egui::ScrollArea::both().id_salt("credits_list").max_height(LIST_HEIGHT).auto_shrink([false, true]).show(ui, |ui| {
         if list.is_empty() {
-            ui.label(tl!("No contributor data was built into this copy."));
+            ui.label(crate::i18n::t("No contributor data was built into this copy."));
         } else if v.table {
             table(ui, &list, &mut v);
         } else {
@@ -275,7 +289,11 @@ fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
     egui::Grid::new("credits_table").striped(true).num_columns(SortKey::ALL.len()).show(ui, |ui| {
         for k in SortKey::ALL {
             let arrow = if v.key == k { if v.ascending { " ▲" } else { " ▼" } } else { "" };
-            if ui.button(RichText::new(format!("{}{arrow}", tl!(k.label().1))).strong()).on_hover_text(tl!(k.label().0)).clicked() {
+            if ui
+                .button(RichText::new(format!("{}{arrow}", crate::i18n::t(k.label().1))).strong())
+                .on_hover_text(crate::i18n::t(k.label().0))
+                .clicked()
+            {
                 if v.key == k {
                     v.ascending = !v.ascending;
                 } else {
@@ -304,14 +322,14 @@ fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
 /// About ▸ Models: AI models credited in Co-Authored-By trailers.
 pub fn models_ui(ui: &mut egui::Ui) {
     if MODELS.is_empty() {
-        ui.label(tl!("No model credits were built into this copy."));
+        ui.label(crate::i18n::t("No model credits were built into this copy."));
         return;
     }
     let assisted: u64 = MODELS.iter().map(|m| m.commits).max().unwrap_or(0).max(1);
     egui::ScrollArea::both().id_salt("credits_models").max_height(LIST_HEIGHT).auto_shrink([false, true]).show(ui, |ui| {
         egui::Grid::new("credits_models").striped(true).num_columns(6).show(ui, |ui| {
-            for h in ["Company", "Model", "Version", "Commits", "% of all commits", "Lines +/−"] {
-                ui.label(RichText::new(tl!(h)).strong());
+            for h in MODEL_COLUMNS {
+                ui.label(RichText::new(crate::i18n::t(h)).strong());
             }
             ui.end_row();
             for m in MODELS {

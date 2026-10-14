@@ -72,17 +72,24 @@ pub fn saved_quality(app: Option<&serde_json::Value>) -> u32 {
         .map_or(spool::QUALITIES[0].0, |q| q.0)
 }
 
-/// The job: one copy, one-sided, in colour, at `dpi`, on `printer` (`None`: the default printer).
-pub fn job(printer: Option<&str>, dpi: u32, title: &str) -> spool::Job {
+/// Print as image's quality when the Print dialog last printed that way (`"print":
+/// {"as_image": true}`, Windows only), else `None`: the native spooler.
+pub fn saved_image(app: Option<&serde_json::Value>) -> Option<u32> {
+    let as_image = app.and_then(|v| v["print"]["as_image"].as_bool()).unwrap_or(true);
+    (as_image && spool::prints_images()).then(|| saved_quality(app))
+}
+
+/// The job: one copy, one-sided, in colour, on `printer` (`None`: the default printer).
+pub fn job(printer: Option<&str>, title: &str) -> spool::Job {
     spool::Job {
         printer: printer.map(str::to_string),
         copies: 1,
         collate: true,
-        duplex: spool::Duplex::Off,
+        duplex: Some(spool::Duplex::Off),
+        scaling: spool::Scaling::Exact,
         grayscale: false,
         title: title.to_string(),
-        dpi,
-        print_to_file: None,
+        options: Vec::new(),
     }
 }
 
@@ -101,16 +108,21 @@ pub fn prepare(name: &str, bytes: Vec<u8>) -> Result<(Vec<u8>, usize), String> {
 }
 
 /// Print the file at `path` with Quick Print's settings on `printer` (`None`: the default
-/// printer) at `dpi`, and wait until the spooler has it. Returns the spooler's message (a job
+/// printer), as images at `image` dpi when given (Print as image), and wait until the spooler has it. Returns the spooler's message (a job
 /// id, notes worth logging). Errors are messages for the user, in the UI language.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn print_file(path: &std::path::Path, printer: Option<&str>, dpi: u32) -> Result<String, String> {
+pub fn print_file(path: &std::path::Path, printer: Option<&str>, image: Option<u32>) -> Result<String, String> {
     let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
     let failed = |e: &str| crate::i18n::fmt(tl!("Couldn't print {name}: {e}"), &[("name", &name), ("e", e)]);
     let bytes = std::fs::read(path).map_err(|e| failed(&e.to_string()))?;
     // The engine catches panics on open; imposing and spooling are plain `Result`s.
     let (pdf, _) = prepare(&name, bytes).map_err(|e| failed(&e))?;
-    spool::submit(&pdf, &job(printer, dpi, &name)).map_err(|e| failed(&e.to_string()))
+    let job = job(printer, &name);
+    let sent = match image {
+        Some(dpi) => spool::submit_as_image(&pdf, &job, &spool::ImageJob { dpi, print_to_file: None }),
+        None => spool::submit(&pdf, &job),
+    };
+    sent.map_err(|e| failed(&e.to_string()))
 }
 
 /// Tell the user something went wrong when there is no window to show it in (Quick Print): a
@@ -177,10 +189,13 @@ mod tests {
 
     #[test]
     fn one_colour_copy_on_the_chosen_printer() {
-        let j = job(None, 600, "a.pdf");
-        assert_eq!((j.printer, j.copies, j.duplex, j.grayscale, j.dpi, j.title.as_str()), (None, 1, spool::Duplex::Off, false, 600, "a.pdf"));
-        assert_eq!(job(Some("EPSON ET-16650"), 300, "b.pdf").printer.as_deref(), Some("EPSON ET-16650"));
-        assert_eq!(job(None, 300, "c").print_to_file, None);
+        let j = job(None, "a.pdf");
+        assert_eq!((j.printer, j.copies, j.duplex, j.grayscale, j.title.as_str()), (None, 1, Some(spool::Duplex::Off), false, "a.pdf"));
+        assert_eq!(job(Some("EPSON ET-16650"), "b.pdf").printer.as_deref(), Some("EPSON ET-16650"));
+        // Print as image only when the Print dialog last printed that way (and only on Windows).
+        assert_eq!(saved_image(None), None);
+        let image = serde_json::json!({ "print": { "as_image": true, "dpi": 600 } });
+        assert_eq!(saved_image(Some(&image)), spool::prints_images().then_some(600));
     }
 
     #[test]
@@ -194,7 +209,7 @@ mod tests {
     #[test]
     fn a_missing_file_is_reported_with_its_name() {
         let path = std::env::temp_dir().join(format!("pedeefe-quick-print-missing-{}.pdf", std::process::id()));
-        let err = print_file(&path, None, 300).err().unwrap_or_default();
+        let err = print_file(&path, None, None).err().unwrap_or_default();
         assert!(err.starts_with("Couldn't print pedeefe-quick-print-missing-"), "{err}");
     }
 }

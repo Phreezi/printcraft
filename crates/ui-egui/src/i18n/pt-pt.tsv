@@ -845,7 +845,6 @@
 	Searchable Image (Exact)	Imagem pesquisável (exata)
 	Adds invisible text over each word; the page image is not changed	Adiciona texto invisível sobre cada palavra; a imagem da página não é alterada
 	Downsample to	Reduzir a resolução para
-	Text recognition isn't installed: its models are missing (run `cargo xtask models`, or set PRINTCRAFT_MODELS).	O reconhecimento de texto não está instalado: faltam os respetivos modelos (execute `cargo xtask models` ou defina PRINTCRAFT_MODELS).
 	Settings	Definições
 	Protect	Proteger
 	Advanced options	Opções avançadas
@@ -1845,7 +1844,6 @@
 	the image is empty	a imagem está vazia
 	The operation failed.	A operação falhou.
 	the password is incorrect	a palavra-passe está incorreta
-	the text recognition models are not installed (run `cargo xtask models`, or set PRINTCRAFT_MODELS)	os modelos de reconhecimento de texto não estão instalados (execute `cargo xtask models` ou defina PRINTCRAFT_MODELS)
 	The title in the metadata and the document information differ	O título nos metadados e nas informações do documento são diferentes
 	the title must not be empty	o título não pode estar vazio
 	there are no pages to print	não há páginas para imprimir
@@ -2114,11 +2112,10 @@
 	You're using the latest version ({c}).	Está a usar a versão mais recente ({c}).
 	Couldn't check for updates. Check that you're connected to the internet and try again.	Não foi possível procurar atualizações. Verifique se está ligado à Internet e tente novamente.
 	Check for updates automatically	Procurar atualizações automaticamente
-	At most once a day, in the background, when PdfCraft starts. It only tells you about a new version: nothing is installed until you choose.	No máximo uma vez por dia, em segundo plano, quando o PeDeeFe inicia. Apenas avisa quando há uma nova versão: nada é instalado sem que o escolha.
+	Every time PdfCraft starts, in the background. It only tells you about a new version: nothing is installed until you choose.	Sempre que o PeDeeFe inicia, em segundo plano. Apenas avisa quando há uma nova versão: nada é instalado sem que o escolha.
 	Updates	Atualizações
 	Current version	Versão atual
 	Check now	Procurar agora
-	See update	Ver atualização
 
 # Viewer: Space and Shift+Space.
 	Next / previous screen (next / previous page in single-page view)	Ecrã seguinte / anterior (página seguinte / anterior na vista de página única)
@@ -2127,3 +2124,401 @@
 	Next / previous tab	Separador seguinte / anterior
 	Middle-click a tab	Clique do meio num separador
 	Close the tab	Fechar o separador
+	You're using PdfCraft {v}.	Está a usar o PeDeeFe {v}.
+	Don't remind me again	Não voltar a avisar
+	Delete {count} paragraphs	Eliminar {count} parágrafos
+# Upstream PdfCraft strings merged on 2026-10-14.
+	PRs	PR
+	+LOC	+Linhas
+	−LOC	−Linhas
+	ΔLOC	ΔLinhas
+	+Bin	+Binários
+	−Bin	−Binários
+	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{bin_added} / −{bin_deleted} binary assets, {first} – {last}	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} linhas (Δ {delta}), +{bin_added} / −{bin_deleted} recursos binários, {first} – {last}
+	Interface size	Tamanho da interface
+	Auto ({percent}%)	Automático ({percent}%)
+	Auto follows the system's text size. Pages always render at the display's full resolution.	«Automático» segue o tamanho do texto do sistema. As páginas são sempre apresentadas na resolução total do ecrã.
+	Open Recent	Abrir recentes
+	Clear Recent Files	Limpar ficheiros recentes
+	Remove from Recent	Remover dos recentes
+	Remove {name} from Recent	Remover {name} dos recentes
+	Pin folder to Home…	Afixar pasta no Início…
+	Folders	Pastas
+	Pin a folder…	Afixar uma pasta…
+	Pin a folder to Home	Afixar uma pasta no Início
+	Pin a folder to list its newest PDFs here, such as where your scanner or a synced cloud drive saves them.	Afixe uma pasta para listar aqui os PDF mais recentes que contém, como a pasta onde o digitalizador ou uma unidade na nuvem sincronizada os guarda.
+	Unpin	Desafixar
+	Unpin {folder}	Desafixar {folder}
+	Looking for PDFs…	A procurar PDF…
+	This folder isn't available right now. It may have moved, or its drive or cloud sync is offline.	Esta pasta não está disponível de momento. Pode ter sido movida, ou a respetiva unidade ou sincronização na nuvem está sem ligação.
+	No PDFs in this folder yet	Ainda não há PDF nesta pasta
+	Show less	Mostrar menos
+	Show {n} more	Mostrar mais {n}
+	The newest {n} of {total} PDFs	Os {n} PDF mais recentes de {total}
+	Pinned folders need the desktop app	As pastas afixadas requerem a aplicação para computador
+	Choose a folder on this computer to pin	Escolha uma pasta deste computador para afixar
+	{folder} is already pinned to Home	{folder} já está afixada no Início
+	You can pin up to {n} folders. Unpin one first.	Pode afixar até {n} pastas. Desafixe uma primeiro.
+	Pinned {folder} to Home	{folder} afixada no Início
+	No recent files	Sem ficheiros recentes
+	Create PDF from multiple files…	Criar PDF a partir de vários ficheiros…
+	Create separate PDFs…	Criar PDF separados…
+	Column select	Seleção por colunas
+	Next tab	Separador seguinte
+	Previous tab	Separador anterior
+	Flatten Fill & Sign when saving	Achatar Preencher e assinar ao guardar
+	Text, marks and signatures become part of the page. Other comments stay editable.	O texto, as marcas e as assinaturas passam a fazer parte da página. Os outros comentários continuam editáveis.
+	Rotation:	Rotação:
+	Finding document fonts…	A procurar tipos de letra do documento…
+	Installed fonts…	Tipos de letra instalados…
+	Keep source fonts	Manter tipos de letra originais
+	Load font…	Carregar tipo de letra…
+	No openly licensed document fonts found. Load a font file.	Não foram encontrados tipos de letra do documento com licença aberta. Carregue um ficheiro de tipo de letra.
+	Thai and Arabic use regular fallback fonts when available.	O tailandês e o árabe utilizam tipos de letra alternativos de estilo normal, quando disponíveis.
+	Copy Image	Copiar imagem
+	The image has been copied ({w} × {h} pixels)	A imagem foi copiada ({w} × {h} píxeis)
+	Couldn't copy the image: {e}	Não foi possível copiar a imagem: {e}
+	Copy Image in Original Format	Copiar imagem no formato original
+	The image has been copied as a {ext} file	A imagem foi copiada como ficheiro {ext}
+	The page has changed; select the image again	A página mudou; selecione novamente a imagem
+	Margins	Margens
+	Offset from centre	Desvio em relação ao centro
+	Windows store  ·  	Repositório do Windows  ·  
+	Remove "{name}" from this list? The file itself is not deleted.	Remover "{name}" desta lista? O ficheiro em si não é eliminado.
+	The existing action will be preserved.	A ação existente será mantida.
+	Graphic	Gráfico
+	Signer's name	Nome do signatário
+	Fill & Sign signature	Assinatura de Preencher e assinar
+	Choose image…	Escolher imagem…
+	The key is in the Windows certificate store, which may ask to allow PdfCraft to use it.	A chave está no repositório de certificados do Windows, que pode pedir autorização para o PeDeeFe a utilizar.
+	Line ending	Extremidade da linha
+	Open arrow	Seta aberta
+	Closed arrow	Seta fechada
+	Butt	Plana
+	Reverse open arrow	Seta aberta invertida
+	Reverse closed arrow	Seta fechada invertida
+	Slash	Barra
+	Some bookmarks are not shown here: the panel lists a limited number, nested a limited depth.	Alguns marcadores não são mostrados aqui: o painel lista um número limitado, com uma profundidade de aninhamento limitada.
+	Multiple words or phrases	Várias palavras ou expressões
+	One word or phrase per line	Uma palavra ou expressão por linha
+	Import list…	Importar lista…
+	{n} word(s) or phrase(s)	{n} palavra(s) ou expressão(ões)
+	{name} is too large for a word list (at most 1 MB).	{name} é demasiado grande para uma lista de palavras (máximo de 1 MB).
+	Redaction code:	Código de ocultação:
+	Selected pages	Páginas selecionadas
+	Also recognize pages that already have text	Reconhecer também páginas que já têm texto
+	Pictures on those pages are recognized too; words already in the page's text are not added again	As imagens dessas páginas também são reconhecidas; as palavras que já estão no texto da página não são adicionadas de novo
+	Text recognition isn't installed: its model files are missing. Reinstall PdfCraft, or set PDFCRAFT_MODELS to the folder that holds them.	O reconhecimento de texto não está instalado: faltam os ficheiros dos modelos. Reinstale o PeDeeFe ou defina PDFCRAFT_MODELS como a pasta que os contém.
+	Separate PDFs	PDF separados
+	Zoom out ({key})	Reduzir ({key})
+	Zoom in ({key})	Ampliar ({key})
+	Rotate view clockwise ({key})	Rodar vista para a direita ({key})
+	Open a PDF ({key})	Abrir um PDF ({key})
+	Appearance mode	Modo de aparência
+	Light	Claro
+	Dark	Escuro
+	Active	Ativo
+	Dark theme	Tema escuro
+	Appearance settings…	Definições de aparência…
+	Print ({key})	Imprimir ({key})
+	Save ({key})	Guardar ({key})
+	Document properties ({key})	Propriedades do documento ({key})
+	No links to remove	Não há ligações para remover
+	Removed 1 link	Foi removida 1 ligação
+	Removed {n} links	Foram removidas {n} ligações
+	New bookmark ({key})	Novo marcador ({key})
+	Set layer visibility	Definir visibilidade da camada
+	Previous ({key})	Anterior ({key})
+	Next ({key})	Seguinte ({key})
+	Zoom in / out (also pinch or {key}-scroll)	Ampliar / reduzir (também com o gesto de pinça ou {key} + roda do rato)
+	This file is already as small as it can be made ({size}). No copy was saved.	Este ficheiro já é tão pequeno quanto possível ({size}). Não foi guardada nenhuma cópia.
+	Saved {place}: {before} → {after} (not smaller){detail}	Guardado {place}: {before} → {after} (não ficou mais pequeno){detail}
+	This PDF uses the unsupported {s} action.	Este PDF utiliza a ação {s}, que não é suportada.
+	Optimizing… removing user data	A otimizar… a remover dados do utilizador
+	Optimizing… image {d} of {t}	A otimizar… imagem {d} de {t}
+	Optimizing… cleaning up	A otimizar… a limpar
+	Optimizing… merging identical objects	A otimizar… a fundir objetos idênticos
+	Optimizing… writing the copy	A otimizar… a escrever a cópia
+	Cancelling…	A cancelar…
+	Optimization is already running	A otimização já está em curso
+	Optimization cancelled	Otimização cancelada
+	Couldn't optimize the file	Não foi possível otimizar o ficheiro
+	Sending to {printer}…	A enviar para {printer}…
+	Files are combined from top to bottom. Leave Pages empty to take every page.	Os ficheiros são combinados de cima para baixo. Deixe Páginas vazio para incluir todas as páginas.
+	Unlock…	Desbloquear…
+	Select a password-protected file first	Selecione primeiro um ficheiro protegido por palavra-passe
+	Enter the permissions password to allow combining	Introduza a palavra-passe de permissões para permitir a combinação
+	Enter the password that opens it	Introduza a palavra-passe que o abre
+	Unlock {name}	Desbloquear {name}
+	Unlock {n} files	Desbloquear {n} ficheiros
+	The same password is tried on each file.	A mesma palavra-passe é experimentada em cada ficheiro.
+	Hide password	Ocultar palavra-passe
+	Show password	Mostrar palavra-passe
+	Wrong password	Palavra-passe incorreta
+	The password is only used to read the file; it isn't saved.	A palavra-passe só é utilizada para ler o ficheiro; não é guardada.
+	Unlock	Desbloquear
+	Opened, but its security settings don't allow combining. Enter the permissions password.	Aberto, mas as definições de segurança não permitem a combinação. Introduza a palavra-passe de permissões.
+	Unlocked: the combined file won't be password-protected	Desbloqueado: o ficheiro combinado não ficará protegido por palavra-passe
+	Unlocked {n} of {m} files	{n} de {m} ficheiros desbloqueados
+	Drop PDFs, images, text files or folders here, or choose them.	Largue aqui PDF, imagens, ficheiros de texto ou pastas, ou escolha-os.
+	Add folder…	Adicionar pasta…
+	Add folder and subfolders…	Adicionar pasta e subpastas…
+	More ways to add files	Mais formas de adicionar ficheiros
+	Every PDF, image and text file in the folder	Todos os PDF, imagens e ficheiros de texto da pasta
+	Every PDF, image and text file in the folder and the folders inside it	Todos os PDF, imagens e ficheiros de texto da pasta e das pastas dentro dela
+	Add folder	Adicionar pasta
+	Add folder and subfolders	Adicionar pasta e subpastas
+	No PDFs, images or text files found in {folder}	Não foram encontrados PDF, imagens nem ficheiros de texto em {folder}
+	Added the first {n} files in {folder}	Foram adicionados os primeiros {n} ficheiros de {folder}
+	Click to sort, drag to move the column. Drag its edge to resize it.	Clique para ordenar, arraste para mover a coluna. Arraste o limite para a redimensionar.
+	Reset columns	Repor colunas
+	Remove {n} files	Remover {n} ficheiros
+	{n} selected	{n} selecionados
+	sorted ascending	ordem crescente
+	sorted descending	ordem decrescente
+	Protected: the combined file won't keep its security settings	Protegido: o ficheiro combinado não manterá as definições de segurança
+	Add open documents	Adicionar documentos abertos
+	All open documents	Todos os documentos abertos
+	No documents are open	Não há documentos abertos
+	Select a file first	Selecione primeiro um ficheiro
+	1 file	1 ficheiro
+	{n} files	{n} ficheiros
+	1 file needs attention	1 ficheiro requer atenção
+	{n} files need attention	{n} ficheiros requerem atenção
+	{name} can't be combined: {why}	Não é possível combinar {name}: {why}
+	Check the pages of {name}: {why}	Verifique as páginas de {name}: {why}
+	Add the files to combine	Adicione os ficheiros a combinar
+	File name	Nome do ficheiro
+	Warnings	Avisos
+	Drag to reorder	Arraste para reordenar
+	{k} of {n}	{k} de {n}
+	? of {n}	? de {n}
+	Added more than once	Adicionado mais de uma vez
+	yesterday	ontem
+	{n} days ago	há {n} dias
+	No pages selected	Nenhuma página selecionada
+	Password-protected	Protegido por palavra-passe
+	Its security settings don't allow copying pages	As definições de segurança não permitem copiar páginas
+	Can't be read: {e}	Não é possível ler: {e}
+	Leave out files that can't be read?	Excluir os ficheiros que não é possível ler?
+	These files can't be read, so they won't be in the combined PDF:	Não é possível ler estes ficheiros, pelo que não serão incluídos no PDF combinado:
+	Combine the rest	Combinar os restantes
+	and {n} more	e mais {n}
+	Includes unsaved changes	Inclui alterações não guardadas
+	Portable mode is off: {folder} can't be written ({error}). Settings are kept in your user folder instead.	O modo portátil está desativado: não é possível escrever em {folder} ({error}). As definições são guardadas na sua pasta de utilizador.
+	PdfCraft is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	O PeDeeFe está a desenhar sem processador gráfico, pelo que pode ficar lento. Atualizar o controlador gráfico pode ajudar.
+	Enter permissions password…	Introduzir palavra-passe de permissões…
+	Permissions password	Palavra-passe de permissões
+	“{name}” has security restrictions. Enter its permissions password to lift them.	“{name}” tem restrições de segurança. Introduza a palavra-passe de permissões para as levantar.
+	Restrictions lifted	Restrições levantadas
+	Couldn't unlock {name}: {e}	Não foi possível desbloquear {name}: {e}
+	This document has no restrictions to lift	Este documento não tem restrições a levantar
+	The document's security settings don't allow copying text and images	As definições de segurança do documento não permitem copiar texto e imagens
+	Export to PowerPoint…	Exportar para PowerPoint…
+	New bookmarks from structure	Novos marcadores a partir da estrutura
+	Load document font	Carregar tipo de letra do documento
+	Insert pages from {name} — 1 field renamed	Inserir páginas de {name} — 1 campo com nome alterado
+	Insert pages from {name} — fields renamed	Inserir páginas de {name} — campos com nome alterado
+	the text recognition models are not installed (reinstall PdfCraft, or set PDFCRAFT_MODELS to the folder that holds them)	os modelos de reconhecimento de texto não estão instalados (reinstale o PeDeeFe ou defina PDFCRAFT_MODELS como a pasta que os contém)
+	Reopen the files that were open when PdfCraft last closed	Reabrir os ficheiros que estavam abertos quando o PeDeeFe foi fechado pela última vez
+	Reload documents when their files change on disk	Recarregar os documentos quando os ficheiros mudam no disco
+	This file changed on disk. Reload it to see the new version; your unsaved changes will be lost.	Este ficheiro mudou no disco. Recarregue-o para ver a nova versão; as alterações não guardadas serão perdidas.
+	Reload	Recarregar
+	Couldn't reload {name}: {e}	Não foi possível recarregar {name}: {e}
+	This web address mixes letters from different alphabets, a common way to imitate another site's name.	Este endereço Web mistura letras de alfabetos diferentes, uma forma comum de imitar o nome de outro site.
+	This web address uses letters from another alphabet, which can look like familiar ones.	Este endereço Web utiliza letras de outro alfabeto, que podem parecer-se com letras conhecidas.
+	This form's scripts are turned off because one ran too long. Reopen the document to run them again.	Os scripts deste formulário foram desativados porque um deles demorou demasiado. Reabra o documento para os executar novamente.
+@plural	{n} field name collides with earlier files and will be renamed: {list}|{n} field names collide with earlier files and will be renamed: {list}	{n} nome de campo coincide com o de ficheiros anteriores e será alterado: {list}|{n} nomes de campos coincidem com os de ficheiros anteriores e serão alterados: {list}
+	Created a PDF from {n} files	Foi criado um PDF a partir de {n} ficheiros
+	PDF, images and text	PDF, imagens e texto
+	Insert a file before page {label}	Inserir um ficheiro antes da página {label}
+	Insert a file at the end	Inserir um ficheiro no fim
+	Save pages	Guardar páginas
+	Save these pages as one PDF	Guardar estas páginas como um único PDF
+	No changes to save	Não há alterações para guardar
+	Created a PDF from {n} files; left out: {names}	Foi criado um PDF a partir de {n} ficheiros; excluídos: {names}
+	Created a PDF from the first {n} files	Foi criado um PDF a partir dos primeiros {n} ficheiros
+	None of those files can be made into a PDF; use PDFs, images or .txt files	Nenhum destes ficheiros pode ser convertido em PDF; utilize PDF, imagens ou ficheiros .txt
+	Choose a PNG or JPEG image (up to 4 MiB). Transparency is preserved.	Escolha uma imagem PNG ou JPEG (até 4 MiB). A transparência é preservada.
+	Couldn't import the signature image: {e}	Não foi possível importar a imagem da assinatura: {e}
+	Go to page…	Ir para a página…
+	For page sizes and margins.	Para tamanhos de página e margens.
+	The PDF text fonts can't draw “{c}” ({code}). Choose supported text.	Os tipos de letra de texto do PDF não conseguem desenhar “{c}” ({code}). Escolha texto suportado.
+	The standard fonts can't draw “{c}” ({code}). Only Western European characters can be added as text for now.	Os tipos de letra padrão não conseguem desenhar “{c}” ({code}). Por agora, só é possível adicionar como texto carateres da Europa Ocidental.
+	This field's font can't draw “{c}” ({code}), so PdfCraft shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	O tipo de letra deste campo não consegue desenhar “{c}” ({code}), pelo que o PeDeeFe mostra ? no seu lugar. O valor é guardado e os outros visualizadores de PDF redesenham o campo a partir dele.
+	The fonts PdfCraft writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	Os tipos de letra com que o PeDeeFe escreve não conseguem desenhar “{c}” ({code}), pelo que aparece como ? em todos os visualizadores de PDF. O texto é guardado.
+	Larger pages	Páginas maiores
+	Smaller pages	Páginas mais pequenas
+	Reset page size	Repor tamanho das páginas
+	Date format	Formato de data
+	Fill & Sign dates	Datas de Preencher e assinar
+	Pattern	Padrão
+	Today: {date}	Hoje: {date}
+	yyyy or yy year · m or mm month · mmm or mmmm month name · d or dd day · ddd or dddd weekday. H, h, M, s and t are time letters and can't be used on their own: put {escape} before a letter to show it as is.	yyyy ou yy ano · m ou mm mês · mmm ou mmmm nome do mês · d ou dd dia · ddd ou dddd dia da semana. H, h, M, s e t são letras de hora e não podem ser utilizadas sozinhas: coloque {escape} antes de uma letra para a mostrar tal como está.
+	Same as interface ({language})	Igual à interface ({language})
+	{chars} can't be written into the PDF yet: Fill & Sign text is Western European only. Pick a numeric format such as dd.mm.yyyy.	Ainda não é possível escrever {chars} no PDF: o texto de Preencher e assinar só suporta carateres da Europa Ocidental. Escolha um formato numérico como dd.mm.yyyy.
+	Opens the printer driver's preferences. They are saved for every print from this computer; the copies, two-sided, grayscale and paper chosen here still apply.	Abre as preferências do controlador da impressora. São guardadas para todas as impressões a partir deste computador; as cópias, a impressão frente e verso, a escala de cinzentos e o papel escolhidos aqui continuam a aplicar-se.
+	The printer driver's own settings for this print: paper tray, paper type, finishing and more.	As definições próprias do controlador da impressora para esta impressão: tabuleiro do papel, tipo de papel, acabamento e mais.
+	Couldn't open the printer's preferences: {e}	Não foi possível abrir as preferências da impressora: {e}
+	Printer properties	Propriedades da impressora
+	Reset to printer defaults	Repor as predefinições da impressora
+	This printer offers no settings of its own.	Esta impressora não oferece definições próprias.
+	Scroll tabs left	Deslocar separadores para a esquerda
+	Scroll tabs right	Deslocar separadores para a direita
+	Shared Field Properties	Propriedades comuns dos campos
+	{n} fields selected	{n} campos selecionados
+	Mixed	Misto
+	Custom font	Tipo de letra personalizado
+	Only checked properties will change. Mixed means the selected fields have different values.	Só as propriedades assinaladas serão alteradas. Misto significa que os campos selecionados têm valores diferentes.
+	Shift- or Ctrl/Command-click to select several fields.	Clique com Shift ou Ctrl/Command premido para selecionar vários campos.
+	Font size 0 uses automatic sizing.	Tamanho de letra 0 utiliza o dimensionamento automático.
+	Character limit:	Limite de carateres:
+	Character limit 0 means no limit. A comb of characters needs a limit.	Limite de carateres 0 significa sem limite. Um pente de carateres precisa de um limite.
+	To change locked fields, also set Locked to No.	Para alterar campos bloqueados, defina também Bloqueado como Não.
+	Comb of characters	Pente de carateres
+	The document changed while you were editing field properties.	O documento mudou enquanto editava as propriedades do campo.
+	The document is no longer open.	O documento já não está aberto.
+	The field properties dialog is no longer open.	A caixa de diálogo das propriedades do campo já não está aberta.
+	The field properties could not be changed.	Não foi possível alterar as propriedades do campo.
+	The selected fields could not be found. Select them again.	Não foi possível encontrar os campos selecionados. Selecione-os novamente.
+	The field {name} no longer exists.	O campo {name} já não existe.
+	A selected field has no widget on any page, so the fields can't be edited together.	Um campo selecionado não tem controlo em nenhuma página, pelo que os campos não podem ser editados em conjunto.
+	 ({n} at {dpi} dpi, the largest size they can be drawn at)	 ({n} a {dpi} ppp, o maior tamanho com que podem ser desenhadas)
+@plural	{n} object selected|{n} objects selected	{n} objeto selecionado|{n} objetos selecionados
+	Drag the selection to move it. Esc clears the selection.	Arraste a seleção para a mover. Esc limpa a seleção.
+	Shift-click to select several objects. Drag empty space to select an area.	Clique com Shift premido para selecionar vários objetos. Arraste num espaço vazio para selecionar uma área.
+	Select at most 1000 objects at a time.	Selecione no máximo 1000 objetos de cada vez.
+	Finish or discard the text being edited before selecting several objects.	Termine ou descarte o texto em edição antes de selecionar vários objetos.
+	Move object	Mover objeto
+	Move objects	Mover objetos
+	Vertical text cannot be moved with this selection.	O texto vertical não pode ser movido com esta seleção.
+	Text used as a clipping path cannot be moved with this selection.	O texto utilizado como traçado de recorte não pode ser movido com esta seleção.
+	These objects could not be moved. Select them again and try a smaller move.	Não foi possível mover estes objetos. Selecione-os novamente e experimente uma deslocação menor.
+	This page contains objects that cannot be selected together.	Esta página contém objetos que não podem ser selecionados em conjunto.
+	Fill colour	Cor de preenchimento
+	No fill	Sem preenchimento
+	Fill colour: none	Cor de preenchimento: nenhuma
+key	Ctrl	Ctrl
+key	Shift	Shift
+key	Delete	Delete
+key	Esc	Esc
+key	Home	Home
+key	End	End
+key	Space	Espaço
+	Grid view	Vista em grelha
+	List view	Vista de lista
+	Files are combined in the order shown. Drag them to change it.	Os ficheiros são combinados pela ordem apresentada. Arraste-os para a alterar.
+	Preview unavailable: {e}	Pré-visualização indisponível: {e}
+	Pages: {k} of {n}	Páginas: {k} de {n}
+	Check the pages	Verifique as páginas
+	Switch to List view to change the pages it takes.	Mude para a vista de lista para alterar as páginas que são utilizadas.
+	Expand all	Expandir tudo
+	Collapse all	Recolher tudo
+	Remove page	Remover página
+	Remove {n} pages	Remover {n} páginas
+	Reset panel layout	Repor esquema dos painéis
+	Float panel	Tornar painel flutuante
+	Move to group	Mover para o grupo
+	Panels	Painéis
+	Resize panels	Redimensionar painéis
+	Resize panel window	Redimensionar janela do painel
+	Tools	Ferramentas
+	Inspector	Inspetor
+	PDF page: {size}	Página PDF: {size}
+	Match page at 100%	Ajustar página a 100%
+	PDF scale: {scale}%	Escala PDF: {scale}%
+	Printer paper and scaling may differ. Check driver settings.	O papel e a escala da impressora podem ser diferentes. Verifique as definições do controlador.
+	Drawing scale changes. Use Actual size for full-scale plans.	A escala do desenho muda. Utilize Tamanho real para plantas à escala completa.
+	Select page {label}	Selecionar página {label}
+	Rotate page {label} counterclockwise	Rodar página {label} para a esquerda
+	Rotate page {label} clockwise	Rodar página {label} para a direita
+	Delete page {label}	Eliminar página {label}
+	Mouse wheel scroll speed	Velocidade de deslocamento da roda do rato
+scroll speed	Slow	Lenta
+scroll speed	Normal	Média
+scroll speed	Fast	Rápida
+	Animation effects	Efeitos de animação
+animation effects	On	Ligados
+animation effects	Off	Desligados
+	Enhance camera image	Melhorar imagem da câmara
+	Drag the corners onto the document's edges, then choose Enhance page.	Arraste os cantos até aos limites do documento e, em seguida, escolha Melhorar página.
+	Enhance page	Melhorar página
+	Clean-up	Limpeza
+	Original	Cores originais
+	Greyscale	Escala de cinzentos
+	Black and white	Preto e branco
+	Reading colours	Cores de leitura
+	Replace document colours	Substituir cores do documento
+	Black on white	Preto sobre branco
+	White on black	Branco sobre preto
+	Yellow on black	Amarelo sobre preto
+	Green on black	Verde sobre preto
+	Page background	Fundo da página
+	Only change the colour of black text or line art	Alterar apenas a cor do texto ou dos desenhos de linhas a preto
+	Change the colour of line art as well as text	Alterar a cor dos desenhos de linhas, além do texto
+	Colours are remapped while rendering; the document itself never changes.	As cores são remapeadas durante a composição; o próprio documento nunca muda.
+	This printer's driver doesn't take two-sided settings from other programs, so its own setting applies. Change it in Properties…	O controlador desta impressora não aceita definições de frente e verso de outros programas, pelo que se aplica a definição própria. Altere-a em Propriedades…
+	Browser's print dialog	Caixa de diálogo de impressão do browser
+	Copies, two-sided printing and colour are chosen in the browser's print dialog.	As cópias, a impressão frente e verso e a cor são escolhidas na caixa de diálogo de impressão do browser.
+	Preparing {n} sheets for printing…	A preparar {n} folhas para impressão…
+	Preparing sheet {done} of {total} for printing…	A preparar a folha {done} de {total} para impressão…
+	Opening the browser's print dialog…	A abrir a caixa de diálogo de impressão do browser…
+	Couldn't print from the browser ({e}); downloaded {name} to print instead	Não foi possível imprimir a partir do browser ({e}); em vez disso, {name} foi transferido para imprimir
+	Tools panel side	Lado do painel de ferramentas
+	Add comment	Adicionar comentário
+	Change tag properties	Alterar propriedades da etiqueta
+	Tags panel	Painel de etiquetas
+	Tags	Etiquetas
+	Tag type	Tipo de etiqueta
+	Actual text	Texto real
+	Find a tag	Localizar uma etiqueta
+	Collapse tag	Recolher etiqueta
+	Expand tag	Expandir etiqueta
+	Revert changes	Reverter alterações
+	Save tag properties	Guardar propriedades da etiqueta
+	This document has no editable structure tags.	Este documento não tem etiquetas de estrutura editáveis.
+	{n} tags	{n} etiquetas
+	Save or revert changes before selecting another tag.	Guarde ou reverta as alterações antes de selecionar outra etiqueta.
+	Left out: {names}	Excluídos: {names}
+	already a PDF	já é um PDF
+	no unused output name	não há nenhum nome de saída livre
+	no output folder was chosen	não foi escolhida uma pasta de saída
+@plural	Downloaded {n} PDF|Downloaded {n} PDFs	{n} PDF transferido|{n} PDF transferidos
+	Scan	Digitalizar
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PdfCraft finds the signature and removes the paper.	Assine uma folha de papel branco e tire-lhe uma fotografia com luz intensa e uniforme (utilize o flash). Escolha a fotografia ou largue-a aqui: o PeDeeFe encontra a assinatura e remove o papel.
+	Choose photo…	Escolher fotografia…
+	No photo chosen	Nenhuma fotografia escolhida
+	Photo	Fotografia
+	Ink sensitivity	Sensibilidade da tinta
+	No signature was found in the frame. Move the frame over the signature or raise the ink sensitivity.	Não foi encontrada nenhuma assinatura na moldura. Mova a moldura para cima da assinatura ou aumente a sensibilidade da tinta.
+	Couldn't use the photo: {e}	Não foi possível utilizar a fotografia: {e}
+	Close Tab	Fechar separador
+	Reopen Closed Tab	Reabrir separador fechado
+	Reveal in Finder	Mostrar no Finder
+	Reveal in File Explorer	Mostrar no Explorador de Ficheiros
+	Other colour…	Outra cor…
+	Recent colours	Cores recentes
+	Couldn't follow linked PDF: {reason}	Não foi possível abrir o PDF ligado: {reason}
+	The linked PDF opened, but its named destination was not applied.	O PDF ligado foi aberto, mas o destino com nome não foi aplicado.
+	The linked PDF opened, but its page destination was out of range.	O PDF ligado foi aberto, mas o destino da página estava fora do intervalo.
+	Local cross-PDF links require the desktop app	As ligações locais entre PDF requerem a aplicação para computador
+	Minimize	Minimizar
+	Maximize	Maximizar
+	Restore	Restaurar
+	Use system title bar	Utilizar barra de título do sistema
+	Show a basic title bar for the window buttons instead of the tab strip. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Mostrar uma barra de título básica para os botões da janela em vez da faixa de separadores. O GNOME não desenha barras de título para as aplicações, por isso esta não segue o respetivo tema.
+	Allow	Permitir
+	Only allow this if you trust the source document.	Só permita isto se confiar no documento de origem.
+	Open this local PDF?	Abrir este PDF local?
+	This document is trying to open a local file:	Este documento está a tentar abrir um ficheiro local:
+	Move tag earlier	Mover etiqueta para antes
+	Move tag later	Mover etiqueta para depois
+	Couldn't open {name}: the background worker stopped	Não foi possível abrir {name}: o processo em segundo plano parou
+	Couldn't open {name}: {reason}	Não foi possível abrir {name}: {reason}
+	DN:	Nome distinto (DN):
+	Draws each sheet as a picture before printing. Slower; use it when a page prints wrongly or not at all.	Desenha cada folha como imagem antes de imprimir. É mais lento; utilize-o quando uma página é impressa incorretamente ou não é impressa.
+	Panel layout could not be restored: {error}	Não foi possível restaurar o esquema dos painéis: {error}
+	Panel move was not applied: {error}	A deslocação do painel não foi aplicada: {error}
+	Print as image	Imprimir como imagem
+	The Windows store's digital IDs couldn't be listed: {e}	Não foi possível listar os IDs digitais do repositório do Windows: {e}
+@plural	Delete {n} field|Delete {n} fields	Eliminar {n} campo|Eliminar {n} campos

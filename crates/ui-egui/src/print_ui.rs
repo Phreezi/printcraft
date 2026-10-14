@@ -1,5 +1,6 @@
-//! The Print dialog (Acrobat's File ▸ Print, execution plan M10.5): printer, copies, grayscale,
-//! print quality; pages to print (all, current, range with labels; odd/even, reverse); page
+//! The Print dialog (Acrobat's File ▸ Print, execution plan M10.5): printer (with the driver's
+//! own Properties…), copies, grayscale, Print as image with its quality (Windows); pages to print
+//! (all, current, range with labels, the pages selected in the Pages panel; odd/even, reverse); page
 //! sizing & handling (Size, Poster, Multiple with its cut-and-stack order for single-sided
 //! printing, Booklet), with PeDeeFe's print area (Full page or Window) applying to all of them;
 //! orientation; comments & forms; and a live preview of the sheets, drawn sharp at the screen's
@@ -22,10 +23,13 @@
 //! Escape cancels.
 //!
 //! The printer list is fetched in the background (on Windows it takes a moment), and jobs print
-//! in the background (on Windows every sheet is drawn first): the dialog closes at once and a
-//! notice says when the job reached the printer. Printer, paper, two-sided, colour and quality
-//! are remembered between sessions; the print area and the window, for the session. "Save as PDF" writes the print-ready PDF
-//! (in a browser it downloads it).
+//! in the background: the dialog closes at once and a notice says when the job reached the
+//! printer. Jobs go to craft-print's spooler (on Windows its native, vector printing); Print as
+//! image draws the sheets as pictures first, for a driver or file the native path prints badly.
+//! Printer, paper, two-sided, colour, Print as image and quality are remembered between sessions;
+//! the print area and the window, for the session. Which pages to print belongs to the document:
+//! another document starts at All (or at the pages selected in it). "Save as PDF" writes the
+//! print-ready PDF (in a browser it downloads it).
 
 use egui::{Color32, Pos2, Rect, Stroke, pos2, vec2};
 use pdfcraft_engine::print::{self, A3, A4, Binding, BookletSubset, Content, Layout, Orientation, PageOrder, SizeMode, Subset, spool};
@@ -41,6 +45,8 @@ pub enum Which {
     All,
     Current,
     Range,
+    /// The pages picked in the Pages panel or the organize grid when the dialog opened.
+    Selected,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,8 +97,6 @@ pub struct PrintDraft {
     pub printers: Vec<spool::Printer>,
     /// The printer list is being fetched.
     pub listing: bool,
-    /// Why the printers couldn't be listed (shown in the printer menu).
-    pub list_error: Option<String>,
     /// `None` = Save as PDF.
     pub printer: Option<String>,
     /// The printer (or Save as PDF) was picked by the user, now or in an earlier session: the
@@ -102,10 +106,18 @@ pub struct PrintDraft {
     pub collate: bool,
     pub grayscale: bool,
     pub duplex: spool::Duplex,
-    /// Resolution of the sheet images where sheets print as images (Windows).
+    /// Print as image (Windows): the sheets are drawn as pictures and printed through
+    /// `System.Drawing` instead of craft-print's native spooler.
+    pub as_image: bool,
+    /// Resolution of the sheet images for Print as image.
     pub dpi: u32,
     pub which: Which,
     pub range: String,
+    /// The pages `Which::Selected` prints (0-based, in page order); empty when none were picked.
+    pub selected: Vec<usize>,
+    /// The document the page choice (`which`, `range`) was made for: another document starts at
+    /// All.
+    pub pages_for: Option<pdfcraft_engine::DocId>,
     pub subset: Subset,
     pub reverse: bool,
     pub handling: Handling,
@@ -142,6 +154,13 @@ pub struct PrintDraft {
     /// Enter that opened the dialog (from the command palette, or a focused Print button) must not
     /// also print before the user has seen it.
     pub enter_ready: bool,
+    /// The printer driver's own options and the printer they were read for (Properties…, CUPS).
+    pub driver_options: Option<(String, Vec<spool::PrinterOption>)>,
+    /// Driver options set away from the printer's defaults, for `driver_options`' printer.
+    pub driver_choices: std::collections::BTreeMap<String, String>,
+    pub show_driver_options: bool,
+    /// Why the printer's preferences window didn't open (Windows).
+    pub driver_error: Option<String>,
 }
 
 impl Default for PrintDraft {
@@ -149,16 +168,20 @@ impl Default for PrintDraft {
         PrintDraft {
             printers: Vec::new(),
             listing: false,
-            list_error: None,
             printer: None,
             printer_chosen: false,
             copies: 1,
             collate: true,
             grayscale: false,
             duplex: spool::Duplex::Off,
+            // On Windows PeDeeFe prints as images by default (the way tested on the owner's
+            // printers); craft-print's native spooler is one checkbox away.
+            as_image: spool::prints_images(),
             dpi: spool::QUALITIES[0].0,
             which: Which::All,
             range: String::new(),
+            selected: Vec::new(),
+            pages_for: None,
             subset: Subset::All,
             reverse: false,
             handling: Handling::Size,
@@ -184,6 +207,10 @@ impl Default for PrintDraft {
             picking: false,
             pick: PickView::default(),
             enter_ready: false,
+            driver_options: None,
+            driver_choices: Default::default(),
+            show_driver_options: false,
+            driver_error: None,
         }
     }
 }
@@ -384,7 +411,7 @@ pub fn error_text(e: &print::PrintError) -> String {
     use print::PrintError as E;
     match e {
         E::NoPages => tl!("There are no pages to print").to_string(),
-        E::PageOutOfRange { page, count } => {
+        E::OutOfRange(page, count) => {
             crate::i18n::fmt(tl!("Page {n} is out of range (1–{count})"), &[("n", &page.to_string()), ("count", &count.to_string())])
         }
         E::NotAPage(token) => crate::i18n::fmt(tl!("“{t}” is not a page number or label"), &[("t", token)]),
@@ -401,20 +428,23 @@ impl PrintDraft {
         if self.handling == Handling::Multiple && self.order == PageOrder::CutStack && self.duplex != spool::Duplex::Off {
             return Err(tl!("Cut and stack needs Two-sided: Off. Print single-sided sheets.").into());
         }
-        let range = match self.which {
-            Which::All => None,
-            Which::Current => Some((self.current_page + 1).to_string()),
-            Which::Range => Some(self.range.clone()),
-        };
-        let pages = print::select_pages(count, range.as_deref(), labels, self.subset, self.reverse).map_err(|e| error_text(&e))?;
+        // Selected and Current are positions, not a typed range: a range would read numbers as
+        // page labels first.
+        let pages = match self.which {
+            Which::Selected => print::select_listed(count, &self.selected, self.subset, self.reverse),
+            Which::Current => print::select_listed(count, &[self.current_page], self.subset, self.reverse),
+            Which::All => print::select_pages(count, None, labels, self.subset, self.reverse),
+            Which::Range => print::select_pages(count, Some(&self.range), labels, self.subset, self.reverse),
+        }
+        .map_err(|e| error_text(&e))?;
         let layout = match self.handling {
             Handling::Size => Layout::Size(match self.size {
                 SizeMode::Custom(_) => SizeMode::Custom(self.custom_scale),
                 m => m,
             }),
             Handling::Multiple => match Layout::multiple(self.per_sheet) {
-                Layout::Multiple { cols, rows, .. } => {
-                    Layout::Multiple { cols, rows, order: self.order, border: self.border, auto_rotate: self.auto_rotate }
+                Layout::Multiple { cols, rows, per_sheet, .. } => {
+                    Layout::Multiple { cols, rows, per_sheet, order: self.order, border: self.border, auto_rotate: self.auto_rotate }
                 }
                 other => other,
             },
@@ -431,12 +461,21 @@ impl PrintDraft {
             printer: self.printer.clone(),
             copies: self.copies.max(1),
             collate: self.collate,
-            duplex: self.duplex,
+            duplex: Some(self.duplex),
+            scaling: spool::Scaling::Exact,
             grayscale: self.grayscale,
             title: title.to_string(),
-            dpi: self.dpi,
-            print_to_file: None,
+            // Only for the printer the options were read from.
+            options: match (&self.printer, &self.driver_options) {
+                (Some(p), Some((read_for, _))) if p == read_for => self.driver_choices.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                _ => Vec::new(),
+            },
         }
+    }
+
+    /// How Print as image draws the sheets; `None` when the job goes to the native spooler.
+    pub fn image_job(&self) -> Option<spool::ImageJob> {
+        (self.as_image && spool::prints_images()).then_some(spool::ImageJob { dpi: self.dpi, print_to_file: None })
     }
 
     /// The printer list arrived: keep the chosen printer if it is still there; otherwise (or
@@ -463,6 +502,7 @@ impl PrintDraft {
             "duplex": match self.duplex { spool::Duplex::Off => "off", spool::Duplex::LongEdge => "long-edge", spool::Duplex::ShortEdge => "short-edge" },
             "grayscale": self.grayscale,
             "collate": self.collate,
+            "as_image": self.as_image,
             "dpi": self.dpi,
         })
     }
@@ -494,32 +534,78 @@ impl PrintDraft {
         if let Some(c) = v["collate"].as_bool() {
             self.collate = c;
         }
+        if let Some(a) = v["as_image"].as_bool() {
+            self.as_image = a;
+        }
         if let Some(dpi) = v["dpi"].as_u64().and_then(|d| spool::QUALITIES.iter().find(|q| u64::from(q.0) == d)) {
             self.dpi = dpi.0;
         }
     }
 }
 
+/// Lists the printers off the UI thread (the desktop app sets [`PdfCraftApp::printer_source`]):
+/// on Windows each driver's capabilities are read for its two-sided support, and CUPS' driverless
+/// discovery can wait on the network. Without a source the dialog reads them as it opens, so
+/// tests stay deterministic.
+pub type PrinterSource = std::sync::Arc<dyn Fn() -> Vec<spool::Printer> + Send + Sync>;
+
+/// The system spooler's printers, as the desktop app's [`PrinterSource`].
+pub fn system_printers() -> PrinterSource {
+    std::sync::Arc::new(spool::printers)
+}
+
 /// Background work for the Print dialog: the printer list being fetched, and jobs printing.
 #[derive(Default)]
 pub(crate) struct PrintJobs {
     #[cfg(not(target_arch = "wasm32"))]
-    listing: Option<std::sync::mpsc::Receiver<Result<Vec<spool::Printer>, String>>>,
+    listing: Option<std::sync::mpsc::Receiver<Vec<spool::Printer>>>,
     #[cfg(not(target_arch = "wasm32"))]
     running: Vec<(String, std::sync::mpsc::Receiver<Result<String, String>>)>,
 }
 
 impl PdfCraftApp {
     pub fn open_print(&mut self) {
-        let Some((i, _)) = self.active_ids() else { return };
+        let Some((i, id)) = self.active_ids() else { return };
         let current = self.views[i].current;
-        let keep = std::mem::take(&mut self.print_draft);
-        self.print_draft = PrintDraft { current_page: current, sheet: 0, picking: false, pick: PickView::default(), enter_ready: false, ..keep };
+        let selected: Vec<usize> = self.views[i].selected.iter().copied().collect();
+        let mut keep = std::mem::take(&mut self.print_draft);
+        // Which pages to print belongs to the document it was chosen for: another one starts at
+        // All, with an empty range (printing pages 1-2 of one file doesn't carry over to the next,
+        // MELHORIAS item 4).
+        // The window is drawn on that document's pages too.
+        if keep.pages_for != Some(id) {
+            keep.which = Which::All;
+            keep.range.clear();
+            keep.area = PrintArea::FullPage;
+            keep.region = None;
+            keep.region_page = 0;
+        }
+        // Picked pages are what Print is for (Acrobat's "Selected pages"); without any, Selected
+        // left over from before falls back to the whole document.
+        let which = match (selected.is_empty(), keep.which) {
+            (false, _) => Which::Selected,
+            (true, Which::Selected) => Which::All,
+            (true, other) => other,
+        };
+        self.print_draft = PrintDraft {
+            current_page: current,
+            sheet: 0,
+            picking: false,
+            pick: PickView::default(),
+            enter_ready: false,
+            selected,
+            which,
+            pages_for: Some(id),
+            show_driver_options: false,
+            driver_error: None,
+            ..keep
+        };
         self.list_printers();
         self.dialog = Some(crate::Dialog::Print);
     }
 
-    /// Fetch the printer list in the background (on Windows it takes a moment).
+    /// Fetch the printer list: in the background with the app's [`PrinterSource`] (on Windows it
+    /// takes a moment), else at once.
     fn list_printers(&mut self) {
         if !spool::available() {
             // No printers here (the web): Save as PDF, which downloads the file there, even when
@@ -529,6 +615,10 @@ impl PdfCraftApp {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let Some(source) = self.printer_source.clone() else {
+                self.print_draft.printers_arrived(spool::printers());
+                return;
+            };
             if self.print_jobs.listing.is_some() {
                 return;
             }
@@ -536,7 +626,7 @@ impl PdfCraftApp {
             let ctx = self.ctx.clone();
             std::thread::spawn(move || {
                 // The receiver may be gone (the app quit): nothing to report to then.
-                let _ = tx.send(spool::list_printers().map_err(|e| e.to_string()));
+                let _ = tx.send(source());
                 if let Some(ctx) = ctx {
                     ctx.request_repaint();
                 }
@@ -553,15 +643,9 @@ impl PdfCraftApp {
             use std::sync::mpsc::TryRecvError;
             if let Some(rx) = &self.print_jobs.listing {
                 match rx.try_recv() {
-                    Ok(Ok(list)) => {
+                    Ok(list) => {
                         self.print_jobs.listing = None;
-                        self.print_draft.list_error = None;
                         self.print_draft.printers_arrived(list);
-                    }
-                    Ok(Err(e)) => {
-                        self.print_jobs.listing = None;
-                        self.print_draft.list_error = Some(e);
-                        self.print_draft.printers_arrived(Vec::new());
                     }
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Disconnected) => {
@@ -603,6 +687,10 @@ impl PdfCraftApp {
     /// returns `true` once the save picker is showing; the file is written on a later frame, when
     /// the user has chosen where.
     pub fn print_now(&mut self) -> bool {
+        // What's typed in a form field is part of what's printed (#166).
+        if !self.commit_form_typing() {
+            return false;
+        }
         let Some((_, id)) = self.active_ids() else { return false };
         let Some(doc) = self.session.get(id) else { return false };
         let labels: Vec<String> = doc.info.pages.iter().map(|p| p.label.clone()).collect();
@@ -626,10 +714,15 @@ impl PdfCraftApp {
                 let job = self.print_draft.job(&name);
                 #[cfg(not(target_arch = "wasm32"))]
                 {
+                    let image = self.print_draft.image_job();
                     let (tx, rx) = std::sync::mpsc::channel();
                     let ctx = self.ctx.clone();
                     std::thread::spawn(move || {
-                        let _ = tx.send(spool::submit(&bytes, &job).map_err(|e| e.to_string()));
+                        let sent = match &image {
+                            Some(image) => spool::submit_as_image(&bytes, &job, image),
+                            None => spool::submit(&bytes, &job),
+                        };
+                        let _ = tx.send(sent.map_err(|e| e.to_string()));
                         if let Some(ctx) = ctx {
                             ctx.request_repaint();
                         }
@@ -706,6 +799,61 @@ impl PdfCraftApp {
     }
 }
 
+/// Properties… on CUPS: the driver's options for this print, grouped as the driver groups them.
+/// Only choices away from the printer's defaults are kept, and sent with the job.
+fn driver_options_panel(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens) {
+    let PrintDraft { driver_options: Some((_, options)), driver_choices: choices, show_driver_options: show, .. } = d else { return };
+    egui::Frame::new().fill(t.hover).corner_radius(egui::CornerRadius::same(6)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(tl!("Printer properties")).font(theme::semibold(13.0)));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(tl!("Done")).clicked() {
+                    *show = false;
+                }
+                if ui.add_enabled(!choices.is_empty(), egui::Button::new(tl!("Reset to printer defaults"))).clicked() {
+                    choices.clear();
+                }
+            });
+        });
+        if options.is_empty() {
+            ui.label(egui::RichText::new(tl!("This printer offers no settings of its own.")).small().color(t.text_muted));
+            return;
+        }
+        egui::ScrollArea::vertical().id_salt("driver-options").max_height(240.0).show(ui, |ui| {
+            for (n, chunk) in options.chunk_by(|a, b| a.group == b.group).enumerate() {
+                let group = chunk.first().map_or("", |o| o.group.as_str());
+                if !group.is_empty() {
+                    ui.add_space(4.0);
+                    // Option and group names are the driver's own text.
+                    ui.label(egui::RichText::new(group).small().color(t.text_muted));
+                }
+                egui::Grid::new(("driver-group", n)).num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
+                    for o in chunk {
+                        ui.label(&o.label);
+                        let current = choices.get(&o.key).cloned().unwrap_or_else(|| o.default.clone());
+                        let label_of = |c: &str| o.choices.iter().find(|(k, _)| k == c).map_or_else(|| c.to_string(), |(_, l)| l.clone());
+                        let mut pick = current.clone();
+                        egui::ComboBox::from_id_salt(("driver-option", &o.key)).selected_text(label_of(&current)).width(200.0).show_ui(ui, |ui| {
+                            for (k, l) in &o.choices {
+                                ui.selectable_value(&mut pick, k.clone(), l.as_str());
+                            }
+                        });
+                        if pick != current {
+                            if pick == o.default {
+                                choices.remove(&o.key);
+                            } else {
+                                choices.insert(o.key.clone(), pick);
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
+            }
+        });
+    });
+}
+
 fn combo<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, value: &mut T, choices: &[(T, &str)], width: f32) {
     let shown = choices.iter().find(|c| c.0 == *value).map_or("", |c| c.1);
     egui::ComboBox::from_id_salt(id).selected_text(shown).width(width).show_ui(ui, |ui| {
@@ -721,7 +869,7 @@ fn poster_controls(ui: &mut egui::Ui, d: &mut PrintDraft) {
         ui.add(egui::DragValue::new(&mut d.poster_scale).range(10.0..=1000.0).suffix(" %"));
         ui.label(tl!("Overlap:"));
         ui.add(egui::DragValue::new(&mut d.overlap).range(0.0..=144.0).suffix(" pt"));
-        ui.checkbox(&mut d.cut_marks, tl!("Cut marks"));
+        ui.add(widgets::checkbox(&mut d.cut_marks, tl!("Cut marks")));
     });
 }
 
@@ -870,30 +1018,50 @@ fn settings_column(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens, page_count
                 (None, _) => tl!("Save as PDF").to_string(),
             };
             let before = d.printer.clone();
-            egui::ComboBox::from_id_salt("printer").selected_text(shown).width(280.0).show_ui(ui, |ui| {
-                for p in &d.printers {
-                    let label = if p.default { crate::i18n::fmt(tl!("{name} (default)"), &[("name", &p.name)]) } else { p.name.clone() };
-                    ui.selectable_value(&mut d.printer, Some(p.name.clone()), label);
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("printer").selected_text(shown).width(230.0).show_ui(ui, |ui| {
+                    for p in &d.printers {
+                        let label = if p.default { crate::i18n::fmt(tl!("{name} (default)"), &[("name", &p.name)]) } else { p.name.clone() };
+                        ui.selectable_value(&mut d.printer, Some(p.name.clone()), label);
+                    }
+                    if d.listing {
+                        ui.label(egui::RichText::new(tl!("Looking for printers…")).color(t.text_muted));
+                    } else if d.printers.is_empty() && spool::available() {
+                        ui.label(egui::RichText::new(tl!("No printers found")).color(t.text_muted));
+                    }
+                    ui.selectable_value(&mut d.printer, None, tl!("Save as PDF"));
+                });
+                let tip = if spool::HAS_PRINTER_PREFERENCES {
+                    tl!("Opens the printer driver's preferences. They are saved for every print from this computer; the copies, two-sided, grayscale and paper chosen here still apply.")
+                } else {
+                    tl!("The printer driver's own settings for this print: paper tray, paper type, finishing and more.")
+                };
+                let properties = ui.add_enabled(d.printer.is_some(), egui::Button::new(tl!("Properties…"))).on_hover_text(tip);
+                if properties.clicked()
+                    && let Some(p) = d.printer.clone()
+                {
+                    if spool::HAS_PRINTER_PREFERENCES {
+                        d.driver_error = spool::open_printer_preferences(&p).err().map(|e| e.to_string());
+                    } else {
+                        if d.driver_options.as_ref().is_none_or(|(read_for, _)| *read_for != p) {
+                            d.driver_options = Some((p.clone(), spool::printer_options(&p)));
+                            d.driver_choices.clear();
+                        }
+                        d.show_driver_options = !d.show_driver_options;
+                    }
                 }
-                if d.listing {
-                    ui.label(egui::RichText::new(tl!("Looking for printers…")).color(t.text_muted));
-                } else if let Some(e) = &d.list_error {
-                    let why = crate::i18n::fmt(tl!("Couldn't list the printers: {e}"), &[("e", e)]);
-                    ui.label(egui::RichText::new(why).color(t.text_muted));
-                } else if d.printers.is_empty() && spool::available() {
-                    ui.label(egui::RichText::new(tl!("No printers found")).color(t.text_muted));
-                }
-                ui.selectable_value(&mut d.printer, None, tl!("Save as PDF"));
             });
             if d.printer != before {
                 d.printer_chosen = true;
+                d.show_driver_options = false;
+                d.driver_error = None;
             }
             ui.end_row();
             ui.label(tl!("Copies:"));
             ui.horizontal(|ui| {
                 ui.add(egui::DragValue::new(&mut d.copies).range(1..=999));
-                ui.checkbox(&mut d.collate, tl!("Collate"));
-                ui.checkbox(&mut d.grayscale, tl!("Print in grayscale"));
+                ui.add(widgets::checkbox(&mut d.collate, tl!("Collate")));
+                ui.add(widgets::checkbox(&mut d.grayscale, tl!("Print in grayscale")));
             });
             ui.end_row();
             ui.label(tl!("Two-sided:"));
@@ -912,23 +1080,48 @@ fn settings_column(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens, page_count
             ui.label(tl!("Paper:"));
             ui.horizontal(|ui| {
                 for (i, (name, _)) in PAPER_CHOICES.iter().enumerate() {
-                    ui.radio_value(&mut d.paper, i, *name);
-                }
-                if spool::prints_images() {
-                    ui.add_space(12.0);
-                    ui.label(tl!("Quality:"));
-                    let choices: Vec<(u32, &str)> = spool::QUALITIES.iter().map(|&(dpi, label)| (dpi, tl!(label))).collect();
-                    combo(ui, "quality", &mut d.dpi, &choices, 140.0);
+                    widgets::radio_value(ui, &mut d.paper, i, *name);
                 }
             });
             ui.end_row();
+            if spool::prints_images() {
+                ui.label("");
+                ui.horizontal(|ui| {
+                    ui.add(widgets::checkbox(&mut d.as_image, tl!("Print as image"))).on_hover_text(tl!(
+                        "Draws each sheet as a picture before printing. Slower; use it when a page prints wrongly or not at all."
+                    ));
+                    if d.as_image {
+                        ui.label(tl!("Quality:"));
+                        let choices: Vec<(u32, &str)> = spool::QUALITIES.iter().map(|&(dpi, label)| (dpi, tl!(label))).collect();
+                        combo(ui, "quality", &mut d.dpi, &choices, 140.0);
+                    }
+                });
+                ui.end_row();
+            }
         });
+        // Windows says which drivers can't print two-sided as they're asked; they keep their own
+        // setting, even when Two-sided is Off.
+        if let Some(p) = d.printers.iter().find(|p| d.printer.as_ref() == Some(&p.name))
+            && p.two_sided == Some(false)
+        {
+            let note = tl!(
+                "This printer's driver doesn't take two-sided settings from other programs, so its own setting applies. Change it in Properties…"
+            );
+            ui.label(egui::RichText::new(note).size(12.0).color(t.text_muted));
+        }
+        if let Some(e) = &d.driver_error {
+            let why = crate::i18n::fmt(tl!("Couldn't open the printer's preferences: {e}"), &[("e", e)]);
+            ui.label(egui::RichText::new(why).size(12.0).color(t.text_muted));
+        }
+        if d.show_driver_options {
+            driver_options_panel(ui, d, t);
+        }
     });
     widgets::group(ui, tl!("Pages to Print"), t.section[1], |ui| {
         ui.horizontal(|ui| {
-            ui.radio_value(&mut d.which, Which::All, tl!("All"));
-            ui.radio_value(&mut d.which, Which::Current, tl!("Current page"));
-            let pages = ui.radio_value(&mut d.which, Which::Range, tl!("Pages"));
+            widgets::radio_value(ui, &mut d.which, Which::All, tl!("All"));
+            widgets::radio_value(ui, &mut d.which, Which::Current, tl!("Current page"));
+            let pages = widgets::radio_value(ui, &mut d.which, Which::Range, tl!("Pages"));
             let r = ui
                 .add_enabled(
                     d.which == Which::Range,
@@ -940,6 +1133,11 @@ fn settings_column(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens, page_count
                 d.which = Which::Range;
             }
         });
+        // Offered only when pages were picked before the dialog opened.
+        if !d.selected.is_empty() {
+            let label = format!("{} ({})", tl!("Selected pages"), d.selected.len());
+            widgets::radio_value(ui, &mut d.which, Which::Selected, label);
+        }
         ui.horizontal(|ui| {
             ui.label(tl!("More options:"));
             combo(
@@ -949,7 +1147,7 @@ fn settings_column(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens, page_count
                 &[(Subset::All, tl!("All pages in range")), (Subset::Odd, tl!("Odd pages only")), (Subset::Even, tl!("Even pages only"))],
                 150.0,
             );
-            ui.checkbox(&mut d.reverse, tl!("Reverse pages"));
+            ui.add(widgets::checkbox(&mut d.reverse, tl!("Reverse pages")));
         });
     });
     widgets::group(ui, tl!("Page Sizing & Handling"), t.section[2], |ui| {
@@ -998,9 +1196,9 @@ fn settings_column(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens, page_count
     ui.columns_const(|[left, right]| {
         widgets::group(left, tl!("Orientation"), t.section[3], |ui| {
             ui.set_min_height(72.0);
-            ui.radio_value(&mut d.orientation, Orientation::Auto, tl!("Auto portrait/landscape"));
-            ui.radio_value(&mut d.orientation, Orientation::Portrait, tl!("Portrait"));
-            ui.radio_value(&mut d.orientation, Orientation::Landscape, tl!("Landscape"));
+            widgets::radio_value(ui, &mut d.orientation, Orientation::Auto, tl!("Auto portrait/landscape"));
+            widgets::radio_value(ui, &mut d.orientation, Orientation::Portrait, tl!("Portrait"));
+            widgets::radio_value(ui, &mut d.orientation, Orientation::Landscape, tl!("Landscape"));
         });
         widgets::group(right, tl!("Comments & Forms"), t.section[4], |ui| {
             ui.set_min_height(72.0);
@@ -1027,13 +1225,13 @@ fn tab_body(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens) {
     match d.handling {
         Handling::Size => {
             ui.horizontal(|ui| {
-                ui.radio_value(&mut d.size, SizeMode::Fit, tl!("Fit"));
-                ui.radio_value(&mut d.size, SizeMode::Actual, tl!("Actual size"));
-                ui.radio_value(&mut d.size, SizeMode::Shrink, tl!("Shrink oversized pages"));
+                widgets::radio_value(ui, &mut d.size, SizeMode::Fit, tl!("Fit"));
+                widgets::radio_value(ui, &mut d.size, SizeMode::Actual, tl!("Actual size"));
+                widgets::radio_value(ui, &mut d.size, SizeMode::Shrink, tl!("Shrink oversized pages"));
             });
             ui.horizontal(|ui| {
                 let custom = matches!(d.size, SizeMode::Custom(_));
-                if ui.radio(custom, tl!("Custom scale:")).clicked() {
+                if ui.add(widgets::radio(custom, tl!("Custom scale:"))).clicked() {
                     d.size = SizeMode::Custom(d.custom_scale);
                 }
                 ui.add_enabled(custom, egui::DragValue::new(&mut d.custom_scale).range(1.0..=1000.0).suffix(" %"));
@@ -1067,8 +1265,8 @@ fn tab_body(ui: &mut egui::Ui, d: &mut PrintDraft, t: &Tokens) {
                 );
             });
             ui.horizontal(|ui| {
-                ui.checkbox(&mut d.border, tl!("Print page border"));
-                ui.checkbox(&mut d.auto_rotate, tl!("Auto-rotate pages"));
+                ui.add(widgets::checkbox(&mut d.border, tl!("Print page border")));
+                ui.add(widgets::checkbox(&mut d.auto_rotate, tl!("Auto-rotate pages")));
             });
             if d.order == PageOrder::CutStack {
                 ui.label(
@@ -1564,4 +1762,64 @@ fn picker(
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selected_and_current_pages_are_positions() {
+        let labels: Vec<String> = ["i", "ii", "iii", "1", "2"].into_iter().map(str::to_owned).collect();
+        let mut draft = PrintDraft { which: Which::Selected, selected: vec![0, 3], ..Default::default() };
+        assert_eq!(draft.settings(5, &labels).unwrap().pages, vec![0, 3]);
+        draft.which = Which::All;
+        assert_eq!(draft.settings(5, &labels).unwrap().pages, vec![0, 1, 2, 3, 4]);
+        draft.which = Which::Current;
+        draft.reverse = true;
+        draft.subset = Subset::Odd;
+        assert_eq!(draft.settings(5, &labels).unwrap().pages, vec![0]);
+        draft.subset = Subset::Even;
+        assert!(draft.settings(5, &labels).is_err());
+        draft.subset = Subset::All;
+        for (count, current) in [(0, 0), (5, 5), (5, usize::MAX)] {
+            draft.current_page = current;
+            assert!(draft.settings(count, &labels).is_err());
+        }
+    }
+
+    #[test]
+    fn composed_sheets_keep_exact_scaling_and_the_dialogs_duplex_choice() {
+        let draft = PrintDraft { duplex: spool::Duplex::LongEdge, ..PrintDraft::default() };
+        let job = draft.job("report.pdf");
+        assert_eq!(job.scaling, spool::Scaling::Exact);
+        assert_eq!(job.duplex, Some(spool::Duplex::LongEdge));
+        assert_eq!(PrintDraft::default().job("report.pdf").duplex, Some(spool::Duplex::Off));
+        // Print as image only where it exists (Windows), and only when asked for.
+        assert_eq!(PrintDraft::default().image_job(), None);
+        let image = PrintDraft { as_image: true, dpi: 600, ..PrintDraft::default() }.image_job();
+        assert_eq!(image.map(|i| i.dpi), spool::prints_images().then_some(600));
+    }
+
+    /// Issue #1308: Current page is the page on screen, even when a later page is labelled with
+    /// its number. A typed range still reads labels first.
+    #[test]
+    fn current_page_is_the_viewed_page_not_a_label() {
+        let labels: Vec<String> = ["i", "ii", "iii", "1", "2"].map(String::from).to_vec();
+        for (current, want) in [(0, vec![0]), (1, vec![1]), (3, vec![3])] {
+            let d = PrintDraft { which: Which::Current, current_page: current, ..PrintDraft::default() };
+            assert_eq!(d.settings(5, &labels).map(|s| s.pages), Ok(want), "viewing page {}", current + 1);
+        }
+        let typed = PrintDraft { which: Which::Range, range: "1".into(), ..PrintDraft::default() };
+        assert_eq!(typed.settings(5, &labels).map(|s| s.pages), Ok(vec![3]));
+    }
+
+    #[test]
+    fn print_as_image_is_remembered() {
+        let d = PrintDraft { as_image: true, dpi: 600, ..PrintDraft::default() };
+        let mut back = PrintDraft::default();
+        back.restore_prefs(&d.prefs());
+        assert!(back.as_image);
+        assert_eq!(back.dpi, 600);
+    }
 }

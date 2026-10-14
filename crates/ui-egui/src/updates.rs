@@ -9,9 +9,12 @@
 //!
 //! - **Help ▸ Check for updates** and **Preferences ▸ Updates** check when asked.
 //! - **Check for updates automatically** (on by default, remembered): the desktop app calls
-//!   [`PdfCraftApp::start_automatic_update_check`] at start, which asks at most once a day
-//!   ([`check_due`]), in the background. It only tells the user (a notice with a button); it
-//!   never downloads or installs anything on its own.
+//!   [`PdfCraftApp::start_automatic_update_check`] at every start, which asks once, in the
+//!   background (one small request; offline it fails in silence). A newer version is offered
+//!   in a window ("Download and install", "Later", "Don't remind me again") at every start
+//!   until it is installed, or until the user says not to be reminded of that version (a later
+//!   one is offered again). The window waits for any dialog to close. It never downloads or
+//!   installs anything on its own.
 //! - **Download and install**: the installer is downloaded with a progress bar and checked
 //!   against the release's checksums (the app crate does that). Then PeDeeFe closes through the
 //!   normal close path (unsaved changes are asked about first; cancelling that cancels the
@@ -35,9 +38,6 @@ pub const APP_VERSION: &str = match option_env!("PDFCRAFT_VERSION") {
 
 /// Where every PeDeeFe build is listed (this fork's releases, not PdfCraft's).
 pub const RELEASES_PAGE: &str = pdfcraft_engine::links::RELEASES;
-
-/// The automatic check asks at most this often (seconds).
-pub const CHECK_INTERVAL: u64 = 24 * 60 * 60;
 
 /// The latest published release.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -185,12 +185,6 @@ pub struct UpdateInstaller {
     pub launch: UpdateLaunch,
 }
 
-/// Whether the automatic check is due: it is on, and the last one was at least
-/// [`CHECK_INTERVAL`] ago (or never, or the clock has gone back since). Times are Unix seconds.
-pub fn check_due(enabled: bool, last: u64, now: u64) -> bool {
-    enabled && (last == 0 || now < last || now - last >= CHECK_INTERVAL)
-}
-
 /// Whether release `latest` (a tag such as `v0.2.0`) is newer than version `current` (`0.1.1`).
 ///
 /// Versions compare by semver precedence: a pre-release comes before its release
@@ -302,8 +296,12 @@ pub(crate) struct Updates {
     pub(crate) auto: bool,
     /// When the automatic check last asked (Unix seconds; 0 never).
     pub(crate) last_check: u64,
-    /// The automatic check found this newer release: a notice offers it until dismissed.
+    /// The automatic check found this newer release: a window offers it until dismissed.
     pub(crate) notice: Option<Release>,
+    /// "Don't remind me again" was chosen for this version (remembered).
+    pub(crate) skipped: Option<String>,
+    /// The automatic check already ran in this session.
+    pub(crate) auto_checked: bool,
     pub(crate) fetch: Fetch,
     /// Install this downloaded installer once the app is allowed to close.
     pub(crate) install_on_quit: Option<PathBuf>,
@@ -313,14 +311,25 @@ pub(crate) struct Updates {
 
 impl Default for Updates {
     fn default() -> Self {
-        Self { check: Check::Idle, open: false, auto: true, last_check: 0, notice: None, fetch: Fetch::Idle, install_on_quit: None, reveal: false }
+        Self {
+            check: Check::Idle,
+            open: false,
+            auto: true,
+            last_check: 0,
+            notice: None,
+            skipped: None,
+            auto_checked: false,
+            fetch: Fetch::Idle,
+            install_on_quit: None,
+            reveal: false,
+        }
     }
 }
 
 impl Updates {
     /// The settings kept between runs.
     pub(crate) fn prefs(&self) -> serde_json::Value {
-        serde_json::json!({ "auto": self.auto, "last_check": self.last_check })
+        serde_json::json!({ "auto": self.auto, "last_check": self.last_check, "skipped": self.skipped })
     }
 
     /// Restore [`Self::prefs`]; anything malformed keeps the default.
@@ -331,6 +340,7 @@ impl Updates {
         if let Some(last) = v["last_check"].as_u64() {
             self.last_check = last;
         }
+        self.skipped = v["skipped"].as_str().filter(|s| !s.is_empty() && s.len() <= 64).map(str::to_string);
     }
 }
 
@@ -350,12 +360,13 @@ impl PdfCraftApp {
     }
 
     /// The automatic check at start (the desktop app calls this once, with the time in Unix
-    /// seconds): asks in the background when [`check_due`], and only raises a notice when a newer
-    /// release exists. Returns whether it asked.
+    /// seconds): asks in the background, once per session while it is on, and only offers a
+    /// newer release (one not dismissed with "Don't remind me again"). Returns whether it asked.
     pub fn start_automatic_update_check(&mut self, now: u64) -> bool {
-        if self.update_source.is_none() || cfg!(target_arch = "wasm32") || !check_due(self.updates.auto, self.updates.last_check, now) {
+        if self.update_source.is_none() || cfg!(target_arch = "wasm32") || !self.updates.auto || self.updates.auto_checked {
             return false;
         }
+        self.updates.auto_checked = true;
         self.updates.last_check = now;
         self.save_requested = true;
         self.start_check(false, true)
@@ -514,10 +525,13 @@ impl PdfCraftApp {
                     && quiet
                     && !self.updates.open
                     && is_newer(&r.version, APP_VERSION)
+                    && self.updates.skipped.as_deref() != Some(r.version.as_str())
                 {
                     self.updates.notice = Some(r.clone());
                 }
                 self.updates.check = Check::Done(result);
+                // The answer grows the Updates section: keep it in view in Preferences.
+                self.updates.reveal |= self.dialog == Some(Dialog::Preferences);
             }
         }
         if let Fetch::Running { rx: Some(rx), version, .. } = &self.updates.fetch {
@@ -527,6 +541,7 @@ impl PdfCraftApp {
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(UpdateError::Network("the download stopped unexpectedly".into())),
             };
             let version = version.clone();
+            self.updates.reveal |= self.dialog == Some(Dialog::Preferences);
             match result {
                 Ok(path) => {
                     self.updates.fetch = Fetch::Ready { version, path };
@@ -709,12 +724,12 @@ fn auto_toggle(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &theme::Tokens) {
     if cfg!(target_arch = "wasm32") {
         return;
     }
-    if ui.checkbox(&mut app.updates.auto, tl!("Check for updates automatically")).changed() {
+    if ui.add(widgets::checkbox(&mut app.updates.auto, tl!("Check for updates automatically"))).changed() {
         app.save_requested = true;
     }
     ui.label(
         egui::RichText::new(crate::branded(tl!(
-            "At most once a day, in the background, when PdfCraft starts. It only tells you about a new version: nothing is installed until you choose."
+            "Every time PdfCraft starts, in the background. It only tells you about a new version: nothing is installed until you choose."
         )))
         .small()
         .color(t.text_muted),
@@ -750,6 +765,8 @@ pub(crate) fn preferences_section(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &
     }
     if let Some(a) = status_action.or(action) {
         act(app, a);
+        // A download's progress or an install's outcome shows below: keep it in view.
+        app.updates.reveal = true;
     }
 }
 
@@ -761,7 +778,7 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let t = theme::Tokens::get(ctx);
     let mut close = false;
     let mut action = None;
-    let modal = egui::Modal::new(egui::Id::new("updates")).show(ctx, |ui| {
+    let modal = crate::widgets::show_modal(ctx, "updates", |ui| {
         ui.set_width(460.0);
         ui.horizontal(|ui| {
             ui.add(crate::icons::image("cloud", 22.0, t.accent));
@@ -793,49 +810,45 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
     }
 }
 
-/// The automatic check's notice: a newer version exists, with a button to see it.
+/// The automatic check's window: a newer version exists. It waits for any dialog (Quick
+/// Print's, a password, the language question…) to close first.
 pub(crate) fn notice(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let Some(release) = app.updates.notice.clone() else { return };
-    if app.updates.open || app.dialog.is_some() {
+    if app.other_modal_open() {
         return;
     }
     let t = theme::Tokens::get(ctx);
-    let screen = ctx.content_rect();
-    let (mut details, mut later) = (false, false);
-    egui::Area::new(egui::Id::new("update-notice"))
-        .order(egui::Order::Foreground)
-        .pivot(egui::Align2::RIGHT_BOTTOM)
-        .fixed_pos(screen.right_bottom() - egui::vec2(20.0, 20.0))
-        .show(ctx, |ui| {
-            egui::Frame::new()
-                .fill(t.card)
-                .stroke(egui::Stroke::new(1.0, t.border))
-                .corner_radius(egui::CornerRadius::same(10))
-                .inner_margin(egui::Margin::same(14))
-                .shadow(ui.visuals().popup_shadow)
-                .show(ui, |ui| {
-                    ui.set_max_width(320.0);
-                    ui.horizontal(|ui| {
-                        ui.add(crate::icons::image("cloud", 18.0, t.accent));
-                        ui.label(
-                            egui::RichText::new(crate::i18n::fmt(
-                                &crate::branded(tl!("PdfCraft {v} is available.")),
-                                &[("v", plain(&release.version))],
-                            ))
-                            .strong(),
-                        );
-                    });
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        details = widgets::pill_button(ui, tl!("See update"), true).clicked();
-                        later = widgets::pill_button(ui, tl!("Later"), false).clicked();
-                    });
-                });
+    let installs = app.update_installer.is_some() && release.installer.is_some() && !cfg!(target_arch = "wasm32");
+    let (mut download, mut later, mut skip) = (false, false, false);
+    let modal = crate::widgets::show_modal(ctx, "update-notice", |ui| {
+        ui.set_width(420.0);
+        ui.horizontal(|ui| {
+            ui.add(crate::icons::image("cloud", 22.0, t.accent));
+            ui.label(
+                egui::RichText::new(crate::i18n::fmt(&crate::branded(tl!("PdfCraft {v} is available.")), &[("v", plain(&release.version))]))
+                    .font(theme::semibold(16.0)),
+            );
         });
-    if details {
+        ui.add_space(6.0);
+        ui.label(crate::i18n::fmt(&crate::branded(tl!("You're using PdfCraft {v}.")), &[("v", plain(APP_VERSION))]));
+        ui.add_space(14.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            download = widgets::pill_button(ui, if installs { tl!("Download and install") } else { tl!("Download") }, true).clicked();
+            later = widgets::pill_button(ui, tl!("Later"), false).clicked();
+            skip = widgets::pill_button(ui, tl!("Don't remind me again"), false).clicked();
+        });
+    });
+    if download {
         app.updates.notice = None;
-        app.updates.open = true;
-    } else if later {
+        // The download's progress shows in the Updates dialog.
+        app.updates.open = installs;
+        act(app, Action::Download(release));
+    } else if skip {
+        app.updates.notice = None;
+        app.updates.skipped = Some(release.version);
+        app.save_requested = true;
+    } else if later || modal.should_close() {
+        // Offered again at the next start.
         app.updates.notice = None;
     }
 }

@@ -103,10 +103,12 @@ menus, toolbars, panels, every tool and dialog (the Print dialog included), edit
 Preferences, About and the home screen. Command search accepts the translated label, the English
 label and the stable command id; filenames, PDF contents, author names, custom action names and
 error details from the engine or the operating system keep their own text. PdfCraft's other
-catalogs (Japanese, Chinese, Czech, Brazilian Portuguese, Spanish) stay in the source, so merges
-stay simple, but aren't offered.
+catalogs (Japanese, Chinese, French, German, Spanish, Arabic and more than a dozen others) stay in
+the source, so merges stay simple, but aren't offered.
 
 ## Build from source
+
+Building needs Rust 1.95 or later.
 
 ```sh
 git clone https://github.com/Phreezi/printcraft

@@ -42,15 +42,57 @@ garbage-collected file (callers check the print permission).
   at that scale, and `Sheet::tile` a poster sheet's column and row in its page's tile grid, so a
   preview can draw the whole page with the grid over it.
 
-`spool` talks to CUPS on macOS and Linux (`lpstat -p -d`, `lp` with copies, collation, duplex and
-monochrome options). On Windows, `raster` draws each sheet as a PNG at the job's resolution
-(300 or 600 dpi) and `spool::windows` prints them through `System.Drawing.Printing`, driven by
-Windows PowerShell with a fixed script (no `unsafe`, nothing from the document in the script's
-text): the printer's matching paper, per-sheet orientation, copies, collation, duplex and colour.
-Each sheet image is drawn from the paper's corner at the paper's full size (zero margins, the
-hard margin offset undone), so the spooler adds no margin or scaling of its own.
-The web reports that printing to a printer isn't available; the print-ready PDF can always be
-saved.
+`spool` delegates discovery, driver options, preferences and submission to
+[`craft-print`](https://github.com/storytold/craft-libs/tree/main/crates/print).
+PdfCraft retains page selection, imposition, annotations and print-permission checks.
+CUPS jobs stream through stdin with `fit-to-page=false`. Windows renders sheets through
+`Windows.Data.Pdf` and spools them at their physical PDF size with per-page paper and
+orientation, zero added margins and hardware-edge clipping. Long-edge and short-edge duplex
+use the corresponding Windows binding edges. Random, exclusively created Windows job files
+are removed on success and failure. Other targets offer the print-ready PDF instead.
+
+**Print as image (PeDeeFe, Windows).** PeDeeFe keeps its own raster path next to craft-print:
+`raster` draws each sheet as a PNG at the job's print quality (300 or 600 dpi) and
+`spool::windows` prints the images through `System.Drawing.Printing`, driven by Windows
+PowerShell with a fixed script (no `unsafe`, nothing from the document in the script's text):
+the printer's matching paper (A4 or A3), per-sheet orientation, copies, collation, duplex and
+colour. Each sheet image is drawn from the paper's corner at the paper's full size (zero
+margins, the hard margin offset undone), so the spooler adds no margin or scaling of its own.
+Which of the two paths a job takes is the app's choice (the Print dialog and Quick Print,
+`--print` / `--print-to`).
+
+The shared dependency requires Rust 1.95. Transport and native Windows regression tests
+live in craft-libs; local tests retain composition, facade, engine, automation and UI coverage.
+The desktop UI discovers printers and submits jobs on workers, so neither operation blocks
+the dialog; the Windows backend starts without a console window. Physical printer output
+still needs hardware validation.
+
+In a browser there is no spooler: the app (`pdfcraft-ui-egui`'s `web_print`) draws the print-ready
+PDF's sheets with PdfCraft's renderer and prints them through the browser's print dialog, which
+sets copies, two-sided printing and colour. This crate stays free of web APIs.
 
 Not yet: the printer's own properties dialog, paper trays, poster labels, PostScript output,
-colour conversion for grayscale on CUPS.
+colour conversion for grayscale.
+
+## Architectural sheets and scale
+
+The Paper menu and `doc_print` share Letter, Legal, Tabloid, A3/A4/A5 plus
+ARCH A/B/C/D/E1/E, ANSI C/D/E and ISO A0/A1/A2 (PeDeeFe's Print dialog offers only A4 and A3).
+ARCH D is 24 × 36 inches;
+ANSI D is 22 × 34 inches. Dimensions follow the [HP DesignJet paper-size table](https://support.hp.com/hr-en/document/bpp01676).
+Automation accepts short names such as `"ARCH D"` (case-insensitive) or the full menu label.
+For example, `doc_print` with `paper: "ARCH D"`, `layout: "actual"`,
+`orientation: "auto"` and `path: "plan.pdf"` writes a print-ready PDF at 100%.
+
+**Match page at 100%** uses the currently viewed document page to choose a standard
+sheet (either orientation, within 0.5 pt for rounded metric dimensions), Actual size
+and Auto orientation. It leaves the selected page range intact. It is disabled
+for a custom page size with no matching preset. One preset applies to the whole job;
+this is not per-page paper-source selection.
+
+**PDF scale** describes the source-to-sheet transform in the previewed print-ready
+PDF, not measured physical output. Fit adds no margin in PeDeeFe (see Size above), so a
+page that matches the sheet prints at 100%. On Windows craft-print sends the sheets as vectors with a PrintTicket
+for the sheet's exact paper and no scaling (#599's approach), validated by the driver:
+a job is refused, not shrunk, when the driver lacks the paper or would change it. Verify
+the driver's paper settings and physical calibration before relying on drawing scale.

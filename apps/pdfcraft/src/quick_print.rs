@@ -57,8 +57,8 @@ pub fn run(logger: Option<&AppLogger>, settings_dir: Option<&Path>, request: &Re
     let app = settings_dir.and_then(|d| window_state::read_app_settings(&d.join("app.ron")));
     let language = app.as_ref().and_then(|v| v["language"].as_str()).and_then(i18n::normalize_pref).unwrap_or(i18n::AUTO);
     i18n::set_current(i18n::Lang::from_pref(language));
-    let dpi = quick_print::saved_quality(app.as_ref());
-    let failures = failures(request, files, dpi, quick_print::print_file);
+    let image = quick_print::saved_image(app.as_ref());
+    let failures = failures(request, files, image, quick_print::print_file);
     if failures.is_empty() {
         return 0;
     }
@@ -72,8 +72,8 @@ pub fn run(logger: Option<&AppLogger>, settings_dir: Option<&Path>, request: &Re
 pub fn failures(
     request: &Request,
     files: &[String],
-    dpi: u32,
-    mut print: impl FnMut(&Path, Option<&str>, u32) -> Result<String, String>,
+    image: Option<u32>,
+    mut print: impl FnMut(&Path, Option<&str>, Option<u32>) -> Result<String, String>,
 ) -> Vec<String> {
     let target = match request {
         Ok(target) => target,
@@ -85,13 +85,14 @@ pub fn failures(
     };
     let printer = target.printer();
     let shown = printer.unwrap_or("the default printer");
+    let how = image.map_or_else(|| "natively".to_string(), |dpi| format!("as images at {dpi} dpi"));
     let mut failed = Vec::new();
     for file in files {
         // The verbs hand over absolute paths; a relative one is taken from the working folder.
         let path = std::path::absolute(file).unwrap_or_else(|_| PathBuf::from(file));
-        match print(&path, printer, dpi) {
-            Ok(msg) if msg.is_empty() => log::info!("Quick Print: {} sent to {shown} at {dpi} dpi", path.display()),
-            Ok(msg) => log::info!("Quick Print: {} sent to {shown} at {dpi} dpi: {msg}", path.display()),
+        match print(&path, printer, image) {
+            Ok(msg) if msg.is_empty() => log::info!("Quick Print: {} sent to {shown} {how}", path.display()),
+            Ok(msg) => log::info!("Quick Print: {} sent to {shown} {how}: {msg}", path.display()),
             Err(e) => {
                 log::error!("Quick Print: {} on {shown}: {e}", path.display());
                 failed.push(e);
@@ -109,14 +110,14 @@ mod tests {
     fn every_file_is_tried_and_the_failures_are_collected() {
         let mut seen = Vec::new();
         let files = vec!["a.pdf".to_string(), "missing.pdf".to_string(), "c.pdf".to_string()];
-        let failed = failures(&Ok(Target::Printer("EPSON ET-16650".into())), &files, 600, |path, printer, dpi| {
-            seen.push((path.is_absolute(), printer.map(str::to_string), dpi));
+        let failed = failures(&Ok(Target::Printer("EPSON ET-16650".into())), &files, Some(600), |path, printer, image| {
+            seen.push((path.is_absolute(), printer.map(str::to_string), image));
             if path.ends_with("missing.pdf") { Err("Couldn't print missing.pdf: not found".into()) } else { Ok(String::new()) }
         });
         assert_eq!(failed, vec!["Couldn't print missing.pdf: not found".to_string()]);
         assert_eq!(seen.len(), 3, "a failure doesn't stop the other files");
-        assert!(seen.iter().all(|s| *s == (true, Some("EPSON ET-16650".to_string()), 600)), "{seen:?}");
-        let failed = failures(&Ok(Target::Default), &files[..1], 300, |_, printer, _| {
+        assert!(seen.iter().all(|s| *s == (true, Some("EPSON ET-16650".to_string()), Some(600))), "{seen:?}");
+        let failed = failures(&Ok(Target::Default), &files[..1], None, |_, printer, _| {
             assert_eq!(printer, None, "the default printer");
             Ok("request id is EPSON-12".into())
         });
@@ -126,7 +127,7 @@ mod tests {
     #[test]
     fn a_usage_mistake_is_reported_without_printing() {
         for usage in [Usage::NoFile, Usage::NoPrinter] {
-            let failed = failures(&Err(usage), &["a.pdf".to_string()], 300, |_, _, _| panic!("nothing prints"));
+            let failed = failures(&Err(usage), &["a.pdf".to_string()], None, |_, _, _| panic!("nothing prints"));
             assert_eq!(failed, vec![usage.message().to_string()]);
         }
     }
