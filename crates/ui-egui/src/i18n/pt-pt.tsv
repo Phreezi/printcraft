@@ -2103,7 +2103,7 @@
 	{done} of {total}	{done} de {total}
 	The file is checked against the release's checksum before anything is installed.	O ficheiro é comparado com a soma de verificação da versão antes de qualquer instalação.
 	PdfCraft {v} is downloaded and verified.	O PeDeeFe {v} foi transferido e verificado.
-	PdfCraft will close (asking about unsaved changes first), install it and open again.	O PeDeeFe vai fechar (perguntando primeiro sobre as alterações não guardadas), instalar a atualização e abrir novamente.
+	PdfCraft will close (asking about unsaved changes first), install it and open again with your files.	O PeDeeFe vai fechar (perguntando primeiro sobre as alterações não guardadas), instalar a atualização e abrir novamente com os seus ficheiros.
 	Install and restart	Instalar e reiniciar
 	You have version {c}.	Tem a versão {c}.
 	Try again	Tentar novamente

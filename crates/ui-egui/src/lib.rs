@@ -2151,8 +2151,8 @@ impl PdfCraftApp {
             "docking_right": self.right,
             "recent": self.recent,
             "reopen_last_session": self.reopen_last_session,
-            // Kept only while the preference is on.
-            "last_session": self.reopen_last_session.then(|| self.session_to_save()),
+            // Kept only while the preference is on, or for the restart that installs an update.
+            "last_session": (self.reopen_last_session || self.updates.resume).then(|| self.session_to_save()),
             "reload_changed_files": self.reload_changed_files,
             "system_title_bar": self.system_title_bar,
             "pinned_folders": self.pinned.folders,

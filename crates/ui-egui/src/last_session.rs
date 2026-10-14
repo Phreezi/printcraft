@@ -92,8 +92,8 @@ impl PdfCraftApp {
         self.quit_session = None;
     }
 
-    /// At startup, with the preference on: reopen the last session's files at the pages they
-    /// showed and bring its active tab forward. Files that are gone are skipped, and so are
+    /// At startup, with the preference on or after the restart that installed an update:
+    /// reopen the last session's files at the pages they showed and bring its active tab forward. Files that are gone are skipped, and so are
     /// `skip` (files the app is about to open anyway, e.g. from the command line) and documents
     /// the Recovery dialog offers, so neither opens twice.
     ///
@@ -101,8 +101,11 @@ impl PdfCraftApp {
     /// password and later ones stay closed (they are in the recent-files list).
     pub fn reopen_last_files(&mut self, skip: &[String]) {
         let last = std::mem::take(&mut self.last_session);
+        // An update's restart reopens once; the next start follows the preference again.
+        let resume = std::mem::take(&mut self.updates.resume);
+        self.save_requested |= resume;
         #[cfg(not(target_arch = "wasm32"))]
-        if self.reopen_last_session {
+        if self.reopen_last_session || resume {
             let skip: Vec<String> =
                 skip.iter().map(|p| absolute(p)).chain(self.recoverable.iter().filter_map(|m| m.path.as_deref().map(absolute))).collect();
             let mut active = None;

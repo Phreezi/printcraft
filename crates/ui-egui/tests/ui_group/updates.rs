@@ -413,6 +413,69 @@ fn a_verified_download_installs_after_the_app_closes() {
     assert_eq!(calls.lock().unwrap().launched, vec![msi]);
 }
 
+/// The restart that installs an update opens the same files again, at their pages and with the
+/// same tab in front, even with Reopen the last session off; the start after it follows the
+/// preference again.
+#[test]
+fn the_files_open_before_an_update_open_again_after_it() {
+    let dir = std::env::temp_dir().join(format!("pedeefe-update-resume-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let files: Vec<String> = ["a.pdf", "b.pdf"]
+        .iter()
+        .map(|n| {
+            let p = dir.join(n);
+            std::fs::write(&p, fixture()).unwrap();
+            p.to_string_lossy().into_owned()
+        })
+        .collect();
+    let (mut h, calls) = installing(Box::new(|_| Ok(PathBuf::from("pedeefe-99.0.0-windows-x64.msi"))), true, false);
+    for f in &files {
+        h.state_mut().open_path(f);
+    }
+    // Files open on a worker thread.
+    wait(&mut h, |h| h.state().views.len() == 2);
+    assert_eq!(h.state().views.len(), 2);
+    h.state_mut().active = Some(0);
+    h.run_steps(3);
+    assert!(!h.state().reopen_last_session, "the preference is off");
+    h.get_by_label("Download and install").click();
+    assert!(wait_for_close(&mut h));
+    close_root(&mut h);
+    h.step();
+    assert_eq!(calls.lock().unwrap().launched.len(), 1, "the installer started");
+    let settings = h.state().persist();
+
+    let paths = |app: &PdfCraftApp| -> Vec<String> {
+        app.views.iter().map(|v| app.session.get(v.id).and_then(|d| d.path.clone()).unwrap_or_default()).collect()
+    };
+    let mut next = PdfCraftApp::new();
+    next.restore(&settings);
+    next.reopen_last_files(&[]);
+    assert_eq!(paths(&next), files, "the new version opens the same files");
+    assert_eq!(next.active, Some(0), "with the same tab in front");
+    // Once: the start after that follows the preference (off) again.
+    let mut after = PdfCraftApp::new();
+    after.restore(&next.persist());
+    after.reopen_last_files(&[]);
+    assert!(after.views.is_empty(), "a normal start reopens nothing");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Cancelling the close keeps the files from being reopened at a later, ordinary start.
+#[test]
+fn a_cancelled_update_close_does_not_reopen_files_later() {
+    let (mut h, _calls) = installing(Box::new(|_| Ok(PathBuf::from("x.msi"))), true, true);
+    h.get_by_label("Download and install").click();
+    assert!(wait_for_close(&mut h));
+    close_root(&mut h);
+    h.run_steps(3);
+    h.get_by_label("Cancel").click();
+    h.run_steps(3);
+    let settings: serde_json::Value = serde_json::from_str(&h.state().persist()).unwrap();
+    assert_eq!(settings["updates"]["resume"], false);
+    assert!(settings["last_session"].is_null(), "nothing kept with the preference off");
+}
+
 #[test]
 fn unsaved_changes_are_asked_about_and_cancelling_keeps_the_update_ready() {
     let msi = PathBuf::from("pedeefe-99.0.0-windows-x64.msi");

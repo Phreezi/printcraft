@@ -18,7 +18,8 @@
 //! - **Download and install**: the installer is downloaded with a progress bar and checked
 //!   against the release's checksums (the app crate does that). Then PeDeeFe closes through the
 //!   normal close path (unsaved changes are asked about first; cancelling that cancels the
-//!   install), starts the installer and opens again once it has finished.
+//!   install), starts the installer and opens again once it has finished, with the files that
+//!   were open at the pages they showed ([`Updates::resume`]).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -305,6 +306,9 @@ pub(crate) struct Updates {
     pub(crate) fetch: Fetch,
     /// Install this downloaded installer once the app is allowed to close.
     pub(crate) install_on_quit: Option<PathBuf>,
+    /// The app closed to install an update: the next start reopens the files that were open,
+    /// at their pages, whatever the reopen-last-session preference says (remembered once).
+    pub(crate) resume: bool,
     /// Scroll Preferences to the Updates section in the next frame.
     pub(crate) reveal: bool,
 }
@@ -321,6 +325,7 @@ impl Default for Updates {
             auto_checked: false,
             fetch: Fetch::Idle,
             install_on_quit: None,
+            resume: false,
             reveal: false,
         }
     }
@@ -329,7 +334,7 @@ impl Default for Updates {
 impl Updates {
     /// The settings kept between runs.
     pub(crate) fn prefs(&self) -> serde_json::Value {
-        serde_json::json!({ "auto": self.auto, "last_check": self.last_check, "skipped": self.skipped })
+        serde_json::json!({ "auto": self.auto, "last_check": self.last_check, "skipped": self.skipped, "resume": self.resume })
     }
 
     /// Restore [`Self::prefs`]; anything malformed keeps the default.
@@ -341,6 +346,7 @@ impl Updates {
             self.last_check = last;
         }
         self.skipped = v["skipped"].as_str().filter(|s| !s.is_empty() && s.len() <= 64).map(str::to_string);
+        self.resume = v["resume"].as_bool().unwrap_or(false);
     }
 }
 
@@ -471,6 +477,8 @@ impl PdfCraftApp {
             return;
         }
         self.updates.install_on_quit = Some(path.clone());
+        // Everything open now comes back once the new version starts.
+        self.updates.resume = true;
         self.updates.open = false;
         if self.dialog == Some(Dialog::Preferences) {
             self.dialog = None;
@@ -496,6 +504,7 @@ impl PdfCraftApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.allow_quit = false;
                 self.windows.quitting = false;
+                self.updates.resume = false;
                 self.updates.fetch = Fetch::Failed(e);
                 self.updates.open = true;
                 false
@@ -507,6 +516,7 @@ impl PdfCraftApp {
     /// question): the update stays downloaded, ready to install.
     pub(crate) fn cancel_pending_update(&mut self) {
         if self.updates.install_on_quit.take().is_some() {
+            self.updates.resume = false;
             self.notify(crate::branded(tl!("The update wasn't installed. Install it from Preferences ▸ Updates when you're ready.")));
         }
     }
@@ -629,7 +639,9 @@ fn status(ui: &mut egui::Ui, app: &PdfCraftApp, t: &theme::Tokens) -> Option<Act
                 egui::RichText::new(crate::i18n::fmt(&crate::branded(tl!("PdfCraft {v} is downloaded and verified.")), &[("v", plain(version))]))
                     .strong(),
             );
-            ui.label(muted(crate::branded(tl!("PdfCraft will close (asking about unsaved changes first), install it and open again."))));
+            ui.label(muted(crate::branded(tl!(
+                "PdfCraft will close (asking about unsaved changes first), install it and open again with your files."
+            ))));
             ui.horizontal(|ui| {
                 if widgets::pill_button(ui, tl!("Install and restart"), true).clicked() {
                     action = Some(Action::Install);

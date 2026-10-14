@@ -69,7 +69,7 @@
 "Only what is in the form fields."
 "Orientation"
 "Page {n} is out of range (1–{count})"
-"PdfCraft will close (asking about unsaved changes first), install it and open again."
+"PdfCraft will close (asking about unsaved changes first), install it and open again with your files."
 "PdfCraft {v} is downloaded and verified."
 "PeDeeFe icon"
 "PeDeeFe on GitHub"

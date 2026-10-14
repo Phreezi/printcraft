@@ -2199,7 +2199,7 @@
 	{done} of {total}	{done} / {total}
 	The file is checked against the release's checksum before anything is installed.	安装前会用该版本的校验和核对文件。
 	PdfCraft {v} is downloaded and verified.	PdfCraft {v} 已下载并通过验证。
-	PdfCraft will close (asking about unsaved changes first), install it and open again.	PdfCraft 将关闭（会先询问未保存的更改），安装更新后重新打开。
+	PdfCraft will close (asking about unsaved changes first), install it and open again with your files.	PdfCraft 将关闭（会先询问未保存的更改），安装更新后重新打开并恢复您的文件。
 	Install and restart	安装并重启
 	You have version {c}.	您当前的版本是 {c}。
 	Try again	重试
