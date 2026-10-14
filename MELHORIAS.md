@@ -20,7 +20,7 @@ A lista de pedidos para a próxima ronda. Plano para 4.ª feira, 14/10, a partir
    - Pista: pode ter vindo da Página única / ajuste ao abrir (commit 0e4b451) ou do restauro da
      última posição de leitura; verificar com 1, 2 e 3 páginas, a vários zooms.
 
-2. **Documento 1905.pdf (orçamento N.F. Pegado) mal mostrado.** No PeDeeFe só aparecem o logótipo
+2. **Documento 1905.pdf (um orçamento enviado pelo utilizador) mal mostrado.** No PeDeeFe só aparecem o logótipo
    e as caixas vazias; faltam todo o texto e o código QR. Noutros leitores aparece bem.
    - O ficheiro (enviado a 13/10) é do utilizador e tem dados reais: usar só para verificar,
      **nunca o pôr no repositório**; fazer um ficheiro de teste sintético com as mesmas
