@@ -1795,8 +1795,9 @@ mod tests {
         assert_eq!(job.scaling, spool::Scaling::Exact);
         assert_eq!(job.duplex, Some(spool::Duplex::LongEdge));
         assert_eq!(PrintDraft::default().job("report.pdf").duplex, Some(spool::Duplex::Off));
-        // Print as image only where it exists (Windows), and only when asked for.
-        assert_eq!(PrintDraft::default().image_job(), None);
+        // Print as image only where it exists (Windows), where it is the default; off, never.
+        assert_eq!(PrintDraft::default().image_job().map(|i| i.dpi), spool::prints_images().then_some(PrintDraft::default().dpi));
+        assert_eq!(PrintDraft { as_image: false, ..PrintDraft::default() }.image_job(), None);
         let image = PrintDraft { as_image: true, dpi: 600, ..PrintDraft::default() }.image_job();
         assert_eq!(image.map(|i| i.dpi), spool::prints_images().then_some(600));
     }

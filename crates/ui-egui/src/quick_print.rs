@@ -192,8 +192,11 @@ mod tests {
         let j = job(None, "a.pdf");
         assert_eq!((j.printer, j.copies, j.duplex, j.grayscale, j.title.as_str()), (None, 1, Some(spool::Duplex::Off), false, "a.pdf"));
         assert_eq!(job(Some("EPSON ET-16650"), "b.pdf").printer.as_deref(), Some("EPSON ET-16650"));
-        // Print as image only when the Print dialog last printed that way (and only on Windows).
-        assert_eq!(saved_image(None), None);
+        // Print as image only on Windows: the default there, unless the Print dialog last
+        // printed without it.
+        let standard = spool::QUALITIES[0].0;
+        assert_eq!(saved_image(None), spool::prints_images().then_some(standard));
+        assert_eq!(saved_image(Some(&serde_json::json!({ "print": { "as_image": false, "dpi": 600 } }))), None);
         let image = serde_json::json!({ "print": { "as_image": true, "dpi": 600 } });
         assert_eq!(saved_image(Some(&image)), spool::prints_images().then_some(600));
     }
