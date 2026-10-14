@@ -180,6 +180,17 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                                     app.active = Some(i);
                                 }
                             }
+                            // A line between two tabs that aren't selected, so a row of them reads
+                            // as separate tabs and not as one grey band.
+                            for pair in slots.windows(2) {
+                                if let [(a, left), (b, right)] = pair
+                                    && app.active != Some(*a)
+                                    && app.active != Some(*b)
+                                {
+                                    let x = (left.right() + right.left()) / 2.0;
+                                    ui.painter().vline(x, left.y_range().shrink(9.0), Stroke::new(1.0, tab_separator(&t)));
+                                }
+                            }
                             // Dragging a tab moves it (#1537): a line marks the gap it will land
                             // in, and releasing the button drops it there.
                             if let Some((from, released)) = dragged
@@ -503,6 +514,12 @@ fn tab_cap(natural: &[f32], budget: f32, gap: f32, min: f32) -> Option<f32> {
         left -= w;
     }
     None
+}
+
+/// The line between unselected tabs: halfway from the strip's grey to the muted text, so it shows
+/// on the strip in light and dark themes alike.
+fn tab_separator(t: &Tokens) -> Color32 {
+    t.titlebar.lerp_to_gamma(t.text_muted, 0.5)
 }
 
 #[allow(clippy::too_many_arguments)]

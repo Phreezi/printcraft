@@ -207,6 +207,38 @@ mod tests {
     }
 
     #[test]
+    fn opening_a_file_already_in_a_tab_selects_that_tab() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("pdfcraft-same-name-{}-{nonce}", std::process::id()));
+        let (a, b, c) = (root.join("a"), root.join("b"), root.join("c"));
+        for dir in [&a, &b, &c] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let first = a.join("Report 年度.pdf");
+        // Another copy of the same file, as an attachment opened twice lands in two temp folders.
+        let copy = b.join("report 年度.PDF");
+        // The same name with other contents is another document.
+        let other = c.join("Report 年度.pdf");
+        std::fs::write(&first, PDF).unwrap();
+        std::fs::write(&copy, PDF).unwrap();
+        std::fs::write(&other, [PDF, b"\n%padding\n"].concat()).unwrap();
+        let mut app = crate::PdfCraftApp::new();
+        let (first, copy, other) = (first.to_str().unwrap(), copy.to_str().unwrap(), other.to_str().unwrap());
+        app.open_path(first);
+        app.open_path(other);
+        assert_eq!(app.views.len(), 2);
+        assert_eq!(app.active, Some(1));
+        app.open_path(first);
+        assert_eq!((app.views.len(), app.active), (2, Some(0)), "the same path selects its tab");
+        app.active = Some(1);
+        app.open_path(copy);
+        assert_eq!((app.views.len(), app.active), (2, Some(0)), "an identical copy selects the tab");
+        app.open_path(other);
+        assert_eq!((app.views.len(), app.active), (2, Some(1)));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn unavailable_file_manager_falls_back_safely_and_reports_failure() {
         let path = std::path::Path::new("/tmp/年度 & reports/file.pdf");
         let mut calls = Vec::new();

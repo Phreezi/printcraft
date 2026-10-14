@@ -1756,6 +1756,13 @@ impl PdfCraftApp {
     /// Keep a chosen tool with its file until preparation and any password entry finish.
     #[cfg(not(target_arch = "wasm32"))]
     fn open_path_then(&mut self, path: &str, then: Option<&'static str>) {
+        if let Some(index) = self.tab_showing_file(path) {
+            self.active = Some(index);
+            if let Some(command) = then {
+                self.execute(command);
+            }
+            return;
+        }
         let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string());
         // Taken before reading: a build that rewrites the file meanwhile still counts as a change.
         let stamp = file_watch::Stamp::at(path);
@@ -1797,6 +1804,27 @@ impl PdfCraftApp {
         }) {
             self.notify_fmt("Couldn't open {name}: {e}", &[("name", &name), ("e", &error)]);
         }
+    }
+
+    /// The tab already showing the file at `path`, so opening it again selects that tab instead of
+    /// adding a copy: the same path, or a file with the same name (letter case aside) and the same
+    /// size, as when an email attachment is opened twice through different temporary folders.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn tab_showing_file(&self, path: &str) -> Option<usize> {
+        let name_of = |p: &str| std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().to_lowercase());
+        let name = name_of(path)?;
+        let mut size = None;
+        self.views.iter().position(|view| {
+            let Some(open) = self.session.get(view.id).and_then(|d| d.path.as_deref()) else { return false };
+            if open == path {
+                return true;
+            }
+            if name_of(open).as_ref() != Some(&name) {
+                return false;
+            }
+            let wanted = *size.get_or_insert_with(|| std::fs::metadata(path).ok().map(|m| m.len()));
+            wanted.is_some() && std::fs::metadata(open).ok().map(|m| m.len()) == wanted
+        })
     }
 
     /// The File ▸ Open picker: PDFs, and images and text that become PDFs.
