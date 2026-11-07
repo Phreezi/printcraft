@@ -352,11 +352,22 @@ impl PdfCraftApp {
     /// dialog, the first-run language prompt) is open in the focus window: the keyboard is its own,
     /// and nothing may act on the document underneath it.
     pub(crate) fn modal_open(&self) -> bool {
-        self.other_modal_open() || self.updates.notice.is_some()
+        self.dialog_modal_open() || self.updates.notice.is_some()
     }
 
-    /// [`Self::modal_open`] without the automatic update check's window, which waits for these.
+    /// [`Self::modal_open`] or the command palette: the other windows wait for either.
+    pub(crate) fn window_modal_open(&self) -> bool {
+        self.modal_open() || self.palette_open
+    }
+
+    /// What the automatic update check's window waits for: any other modal, or the palette.
     pub(crate) fn other_modal_open(&self) -> bool {
+        self.palette_open || self.dialog_modal_open()
+    }
+
+    /// A dialog or prompt (not the command palette, which floats over the page, nor the update
+    /// check's window) is open in the focus window.
+    pub(crate) fn dialog_modal_open(&self) -> bool {
         self.dialog.is_some()
             || self.close_request.is_some()
             || self.password_prompt.is_some()
@@ -364,7 +375,6 @@ impl PdfCraftApp {
             || self.pending_link.is_some()
             || self.pending_remote_link.is_some()
             || self.updates.open
-            || self.palette_open
             || self.language_prompt
     }
 
@@ -662,8 +672,6 @@ impl PdfCraftApp {
         self.window_title.clear();
         let root = ViewportId::ROOT;
         let was_maximized = self.windows.geometry(ROOT_WINDOW).is_some_and(|g| g.maximized);
-        // The start-up maximizing is over: it must not undo the move.
-        self.window_restore = None;
         if was_maximized {
             ctx.send_viewport_cmd_to(root, ViewportCommand::Maximized(false));
         }

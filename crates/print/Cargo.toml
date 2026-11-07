@@ -17,3 +17,6 @@ pdfcraft-model = { workspace = true }
 pdfcraft-render = { workspace = true }
 png = "0.18"
 thiserror = { workspace = true }
+
+[dev-dependencies]
+pdfcraft-render = { workspace = true }

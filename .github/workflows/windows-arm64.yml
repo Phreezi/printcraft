@@ -39,3 +39,5 @@ jobs:
       app-dir: PeDeeFe
       main-binary: pedeefe.exe
       cli-binary: pdfcraft-cli.exe
+      install-relative-path: Programs/ArtCraft/PdfCraft
+      install-scope: perUser

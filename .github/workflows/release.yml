@@ -1,6 +1,3 @@
-# Release pipeline: every push to `release` builds installers for every platform (through
-# storytold/craft-common-actions) and creates or updates the draft GitHub Release
-# "PeDeeFe v<version>". See docs/releasing.md.
 name: Release
 
 on:
@@ -15,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -28,7 +26,7 @@ jobs:
       app-name: pdfcraft
       # The draft release is titled "PeDeeFe v<version>" (fork brand); binaries keep pdfcraft-*.
       app-title: PeDeeFe
-      craft-fonts-ref: 3d9ab3a132ed0eff457e424226a435a901da30d3
+      craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
       version: ${{ inputs.version }}
     secrets:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -45,3 +43,4 @@ jobs:
       AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
       AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
       AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+      LINUX_SIGNING_KEY: ${{ secrets.LINUX_SIGNING_KEY }}

@@ -18,11 +18,13 @@ pdfcraft-ui-egui = { workspace = true }
 pdfcraft-engine = { workspace = true }
 # wgpu draws; OpenGL (glow) is the fallback when wgpu can't start on an old or unusual GPU or
 # driver (#461, #435, #392), and can be chosen with PDFCRAFT_RENDERER=gl.
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "glow", "accesskit", "wayland", "x11", "persistence", "links"] }
-egui = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "glow", "accesskit", "wayland", "x11", "persistence", "links", "clipboard"] }
+egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
 serde_json = { workspace = true }
 # Records from every crate go to standard error and the log file (src/logging.rs).
 log = { workspace = true }
+# The log timestamp goes through chrono (no hand-rolled calendar code).
+chrono = { workspace = true }
 # The single-instance token (src/single_instance.rs); already in the tree for the control channel.
 getrandom = "0.4"
 # The single-instance handshake's HMAC-SHA256 (src/single_instance.rs); already in the tree for
@@ -45,10 +47,15 @@ wayland-protocols = { version = "0.32", features = ["client"] }
 # Waits for wgpu's adapter, device and error-scope futures in tests (already in the tree through wgpu).
 pollster = "1.0"
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Exercise the vendored Wayland scroll policy with the actual winit event type.
+winit = { version = "0.30", default-features = false, features = ["wayland"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 # Which GPU drives which display (EnumDisplayDevices), so the window is drawn on the GPU that
-# shows it (issue #378). Safe wrappers over Win32; only the `user` feature (which brings `kernel` with it).
-winsafe = { version = "0.0.29", default-features = false, features = ["user"] }
+# shows it (issue #378). Safe wrappers over Win32; only the `user` feature (which brings `kernel` with it),
+# and `advapi` for the session id that names the single-instance socket (#3338).
+winsafe = { version = "0.0.29", default-features = false, features = ["user", "advapi"] }
 # Settings ▸ Accessibility ▸ Visual effects ▸ Animation effects (src/motion.rs), through WinRT's
 # `UISettings`, whose bindings are safe to call (winsafe's `SystemParametersInfo` is an unsafe
 # fn). Already in the tree through wgpu's DX12 backend; this adds one small namespace to it.
@@ -61,3 +68,4 @@ uds_windows = "=1.2.1"
 [build-dependencies]
 # Icon + VERSIONINFO for pdfcraft.exe; build.rs only uses it when targeting Windows.
 winresource = "0.1"
+
