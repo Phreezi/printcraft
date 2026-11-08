@@ -1,4 +1,4 @@
-use crate::color::{Color, ColorSpace};
+use crate::color::{Color, ColorSpace, device_cmyk_to_gray};
 use crate::context::{Context, path_as_rect};
 use crate::device::Device;
 use crate::util::{BezPathExt, Float32Ext};
@@ -12,12 +12,14 @@ pub(crate) fn fill_path<'a>(
     fill_rule: FillRule,
 ) {
     fill_path_impl(context, device, fill_rule, None);
+    apply_pending_clip(context, device);
 
     context.path_mut().truncate(0);
 }
 
 pub(crate) fn stroke_path<'a>(context: &mut Context<'a>, device: &mut impl Device<'a>) {
     stroke_path_impl(context, device, None);
+    apply_pending_clip(context, device);
 
     context.path_mut().truncate(0);
 }
@@ -29,8 +31,21 @@ pub(crate) fn fill_stroke_path<'a>(
 ) {
     fill_path_impl(context, device, fill_rule, None);
     stroke_path_impl(context, device, None);
+    apply_pending_clip(context, device);
 
     context.path_mut().truncate(0);
+}
+
+/// PdfCraft patch: a clip set by `W` / `W*` takes effect once the path-painting operator that
+/// ends the path has painted it, whichever operator that is (ISO 32000-2 §8.5.4). Upstream
+/// applied it only on `n`, and otherwise left it pending for some later, unrelated `n`.
+pub(crate) fn apply_pending_clip<'a>(context: &mut Context<'a>, device: &mut impl Device<'a>) {
+    if let Some(rule) = context.clip_mut().take()
+        && !context.path().elements().is_empty()
+    {
+        let clip_path = context.get().ctm * context.path().clone();
+        context.push_clip_path(clip_path, rule, device);
+    }
 }
 
 pub(crate) fn close_path(context: &mut Context<'_>) {
@@ -144,6 +159,8 @@ pub(crate) fn get_paint<'a>(context: &Context<'a>, is_stroke: bool) -> Paint<'a>
                 pattern.set_transfer_function(tf.clone());
             }
 
+            // PdfCraft patch: `CA`/`ca` can be set by a `gs` after the pattern colour operator, so use the alpha current at paint time.
+            pattern.set_alpha(data.alpha);
             pattern.pre_concat_transform(context.root_transform());
 
             Paint::Pattern(Box::new(pattern))
@@ -152,7 +169,13 @@ pub(crate) fn get_paint<'a>(context: &Context<'a>, is_stroke: bool) -> Paint<'a>
             Paint::Color(Color::new(ColorSpace::device_gray(), smallvec![0.0], 0.0))
         }
     } else {
-        let color = Color::new(data.color_space, data.color, data.alpha);
+        // PdfCraft patch (63): see `Context::luminosity_in_device_cmyk`.
+        let color = if context.luminosity_in_device_cmyk && data.color_space.is_device_cmyk() {
+            let gray = device_cmyk_to_gray(&data.color);
+            Color::new(ColorSpace::device_gray(), smallvec![gray], data.alpha)
+        } else {
+            Color::new(data.color_space, data.color, data.alpha)
+        };
 
         if let Some(tf) = &data.transfer_function {
             Paint::Color(Color::from_rgba(tf.apply(&color.to_rgba())))
