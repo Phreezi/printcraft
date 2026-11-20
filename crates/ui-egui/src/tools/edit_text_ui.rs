@@ -1137,6 +1137,28 @@ impl PdfCraftApp {
         self.quick_tool = QuickTool::Select;
     }
 
+    /// PeDeeFe's Select area (hotbar and Edit panel) is on for the active document.
+    pub(crate) fn area_select_on(&self) -> bool {
+        self.quick_tool == QuickTool::EditText && self.active.and_then(|i| self.views.get(i)).is_some_and(|v| v.area_select)
+    }
+
+    /// Turn Select area on or off for the active document; on also takes Edit text & images.
+    /// A paragraph being typed applies first, so nothing typed is lost.
+    pub(crate) fn toggle_area_select(&mut self) {
+        let on = !self.area_select_on();
+        let Some(view) = self.active.and_then(|i| self.views.get_mut(i)) else { return };
+        view.area_select = on;
+        view.block_drag = None;
+        if on {
+            if let Some(ed) = view.line_editor.take()
+                && view.pending_edit.is_none()
+            {
+                view.pending_edit = finished_edit(ed);
+            }
+            self.quick_tool = QuickTool::EditText;
+        }
+    }
+
     /// ⌘A in Edit text & images: every paragraph and image on the current page.
     pub(crate) fn select_all_boxes(&mut self, index: usize) {
         let Some(view) = self.views.get_mut(index) else { return };

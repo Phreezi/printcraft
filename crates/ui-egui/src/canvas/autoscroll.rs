@@ -110,15 +110,17 @@ impl AutoScroll {
             }
         }
         let (Some(anchor), Some(pointer)) = (self.anchor, pointer) else { return Vec2::ZERO };
-        let displacement = pointer.y - anchor.y;
+        // PeDeeFe: both ways, each axis with its own dead zone (a wide page or a zoomed-in one
+        // scrolls sideways too).
+        let displacement = pointer - anchor;
         // Cap the elapsed time too: returning from an idle/hidden window must never jump pages.
-        let delta = scroll_delta(displacement, dt);
-        if displacement.is_finite() && displacement.abs() > DEAD_ZONE {
+        let delta = vec2(scroll_delta(displacement.x, dt), scroll_delta(displacement.y, dt));
+        if displacement.is_finite() && (displacement.x.abs() > DEAD_ZONE || displacement.y.abs() > DEAD_ZONE) {
             // Continuous redraws let stable_dt use measured frame time. Delayed redraws
             // instead use predicted_dt, which can make speed depend on the actual frame rate.
             ctx.request_repaint();
         }
-        vec2(0.0, delta)
+        delta
     }
 
     /// Without auto-scroll, a middle-button drag pans the view 1:1, like the Hand tool. Input is
@@ -171,14 +173,21 @@ impl AutoScroll {
         let ink = ui.visuals().text_color();
         painter.circle(anchor, 13.0, ui.visuals().window_fill(), Stroke::new(1.0, ink));
         painter.circle_filled(anchor, 2.0, ink);
+        // Four arrows: it scrolls every way.
         for direction in [-1.0, 1.0] {
-            painter.add(egui::Shape::convex_polygon(
-                vec![anchor + vec2(-4.0, direction * 6.0), anchor + vec2(4.0, direction * 6.0), anchor + vec2(0.0, direction * 10.0)],
-                ink,
-                Stroke::NONE,
-            ));
+            for (along, across) in [(vec2(0.0, 1.0), vec2(1.0, 0.0)), (vec2(1.0, 0.0), vec2(0.0, 1.0))] {
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        anchor + along * (direction * 6.0) - across * 4.0,
+                        anchor + along * (direction * 6.0) + across * 4.0,
+                        anchor + along * (direction * 10.0),
+                    ],
+                    ink,
+                    Stroke::NONE,
+                ));
+            }
         }
-        ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
+        ui.ctx().set_cursor_icon(CursorIcon::AllScroll);
     }
 
     /// Escape belongs to autoscroll first, leaving selection/find/full-screen intact.
@@ -307,6 +316,27 @@ mod tests {
             moved.set(d);
         });
         moved.get()
+    }
+
+    /// The auto-scroll delta in the frame after latching at `p`, with the pointer moved by `by`.
+    fn latched_moved(by: Vec2) -> Vec2 {
+        let (ctx, mut scroll, p) = (Context::default(), AutoScroll::default(), egui::pos2(100.0, 100.0));
+        frame(&ctx, &mut scroll, vec![], true, (true, false), |_, _| {});
+        frame(&ctx, &mut scroll, vec![Event::PointerMoved(p), middle(p, true), middle(p, false)], true, (true, false), |_, _| {});
+        let moved = std::cell::Cell::new(Vec2::ZERO);
+        frame(&ctx, &mut scroll, vec![Event::PointerMoved(p + by)], true, (true, false), |_, d| moved.set(d));
+        moved.get()
+    }
+
+    #[test]
+    fn latched_auto_scroll_goes_every_way() {
+        let right = latched_moved(vec2(80.0, 0.0));
+        assert!(right.x < 0.0 && right.y == 0.0, "right of the anchor scrolls right: {right:?}");
+        let left = latched_moved(vec2(-80.0, 0.0));
+        assert!(left.x > 0.0 && left.y == 0.0, "left of the anchor scrolls left: {left:?}");
+        let diagonal = latched_moved(vec2(80.0, 80.0));
+        assert!(diagonal.x < 0.0 && diagonal.y < 0.0, "down and right at once: {diagonal:?}");
+        assert_eq!(latched_moved(vec2(10.0, -10.0)), Vec2::ZERO, "the dead zone holds on both axes");
     }
 
     #[test]

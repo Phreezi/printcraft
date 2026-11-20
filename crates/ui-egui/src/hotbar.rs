@@ -235,19 +235,12 @@ fn core_tool_buttons(ui: &mut egui::Ui, app: &mut PdfCraftApp, cell: f32, popup_
         }
         // PeDeeFe: Select area, so a drag selects boxes stacked on top of each other (where no
         // free spot is left to start a rectangle) and Delete removes them all.
-        if on && let Some(view) = app.active.and_then(|i| app.views.get_mut(i)) {
-            let area = view.area_select;
-            if icons::button(ui, "square-dashed", cell, area, tl!("Select area: drag a rectangle to select every box it touches")).clicked() {
-                view.area_select = !area;
-                // A paragraph being typed applies first; nothing typed is lost.
-                if view.area_select
-                    && let Some(ed) = view.line_editor.take()
-                    && view.pending_edit.is_none()
-                {
-                    view.pending_edit = crate::edit_text_ui::finished_edit(ed);
-                }
-                view.block_drag = None;
-            }
+        if on
+            && app.active.is_some()
+            && icons::button(ui, "square-dashed", cell, app.area_select_on(), tl!("Select area: drag a rectangle to select every box it touches"))
+                .clicked()
+        {
+            app.toggle_area_select();
         }
     }
     // Fill & Sign ▸ (text, marks, date, signature).

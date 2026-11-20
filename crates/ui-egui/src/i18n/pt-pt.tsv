@@ -2507,6 +2507,7 @@ animation effects	Off	Desligados
 	The Windows store's digital IDs couldn't be listed: {e}	Não foi possível listar os IDs digitais do repositório do Windows: {e}
 @plural	Delete {n} field|Delete {n} fields	Eliminar {n} campo|Eliminar {n} campos
 
+	Select area	Selecionar área
 	Select area: drag a rectangle to select every box it touches	Selecionar área: arraste um retângulo para selecionar todas as caixas em que toca
 
 # Derived from pt-BR (see the header).

@@ -95,7 +95,8 @@ He uses PeDeeFe on Windows PCs; the improvement list he reads is `MELHORIAS.md` 
   page** (`DocView::paged()` is true only in full screen); Fit page against the largest page with
   a gap; Space / Shift+Space and Page Down/Up go to the next/previous page top (`flip_page`,
   `page_flip_keys` in `canvas/navigation.rs`; `space_pages` in `app/keys.rs`). Middle-button
-  autoscroll latches on every platform (`canvas/autoscroll.rs`).
+  autoscroll latches on every platform and scrolls both ways, each axis with its own dead zone
+  (`canvas/autoscroll.rs`).
 - **Edit text & images**: Delete removes several paragraphs in one pass
   (`Edit::DeleteTextBlocks`, `pdfcraft_edit::delete_blocks`, automation `text_delete`), Ctrl+A
   selects every box (`edit_text_keys`, `select_all_boxes` in `tools/edit_text_ui.rs`), a plain
@@ -103,7 +104,8 @@ He uses PeDeeFe on Windows PCs; the improvement list he reads is `MELHORIAS.md` 
   its box, a second Esc leaves the tool.
   **Select area** button in the hotbar (`DocView::area_select`, `hotbar.rs`): every press on the
   page goes to `object_ui::modified_hit` as `Toggle(None)`, so a drag starting on stacked boxes
-  draws a selection rectangle (non-additive unless Shift/Ctrl).
+  draws a selection rectangle (non-additive unless Shift/Ctrl). The same toggle heads Add content
+  in the Edit panel (`panels/edit.rs`, `toggle_area_select`, `area_select_on`).
 - **Panels**: the desktop app sets `left_open = false` and `pages_panel_only = true` (only the page
   thumbnails of multi-page documents open by themselves). Library defaults stay upstream's so
   upstream tests hold.

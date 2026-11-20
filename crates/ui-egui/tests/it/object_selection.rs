@@ -546,6 +546,16 @@ fn select_area_takes_stacked_boxes_that_delete_together() {
     h.get_by_label("Select area: drag a rectangle to select every box it touches").click();
     h.run_steps(3);
     assert!(h.state().views[0].area_select);
+    // The same toggle heads Add content in the Edit panel.
+    h.state_mut().left_open = true;
+    h.state_mut().left = pdfcraft_ui_egui::LeftPanel::Tool("edit");
+    h.run_steps(3);
+    h.get_by_label("Select area").click();
+    h.run_steps(3);
+    assert!(!h.state().views[0].area_select, "the panel row turns it off");
+    h.get_by_label("Select area").click();
+    h.run_steps(3);
+    assert!(h.state().views[0].area_select, "and on again");
     // From the middle of the stacked fields (no free spot there) past their far corner.
     let (a, b) = (at(&h, 60.0, 72.0), at(&h, 200.0, 95.0));
     drag(&mut h, a, b);

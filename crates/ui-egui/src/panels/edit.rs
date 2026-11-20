@@ -82,6 +82,16 @@ pub(super) fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g
         }
 
         widgets::section_title(ui, tl!("Add content"));
+        // PeDeeFe: Select area, first, so boxes stacked on top of each other can be selected
+        // together and deleted at once.
+        if app.active.is_some() {
+            let on = app.area_select_on();
+            let row = edit_row_selected(ui, t, "square-dashed", tl!("Select area"), Availability::Ready, on)
+                .on_hover_text(tl!("Select area: drag a rectangle to select every box it touches"));
+            if row.clicked() {
+                app.toggle_area_select();
+            }
+        }
         let content: Vec<_> =
             g.sections.iter().filter(|s| s.title == "Add content").flat_map(|s| s.items.iter()).filter(|i| i.command != "edit.edit_text").collect();
         let more_id = egui::Id::unique("edit_panel_more");
@@ -163,10 +173,15 @@ pub(super) fn actions_menu(
 /// One row of the Edit panel: a monochrome icon and the label, as Acrobat draws them. A planned
 /// item is muted and says when it ships when hovered.
 fn edit_row(ui: &mut egui::Ui, t: &Tokens, icon: &str, label: &str, availability: Availability) -> egui::Response {
+    edit_row_selected(ui, t, icon, label, availability, false)
+}
+
+/// [`edit_row`], shown pressed while `selected` (a toggle that is on).
+fn edit_row_selected(ui: &mut egui::Ui, t: &Tokens, icon: &str, label: &str, availability: Availability, selected: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     let press = theme::Press::track(ui, &resp);
-    press.wash(ui, rect, 6, false);
+    press.wash(ui, rect, 6, selected);
     let body = rect.translate(press.offset());
     let ready = availability == Availability::Ready;
     let fg = if ready { t.text } else { t.text_muted };

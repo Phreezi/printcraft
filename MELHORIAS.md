@@ -8,6 +8,15 @@ instala-se por cima da anterior (Preferências › Atualizações, ou o aviso ao
 
 (Nada por agora.)
 
+## Feito a 20/11 (segunda parte)
+
+1. **"Selecionar área" no painel Editar um PDF**, em primeiro lugar em "Adicionar conteúdo" (antes
+   de Texto). Fica marcado enquanto estiver ligado; carregar de novo desliga. Liga também Editar
+   texto e imagens, se não estiver. Continua também na barra de ferramentas.
+2. **Deslocamento com o botão do meio em todas as direções.** O clique no botão do meio (o círculo
+   com setas) passa a deslocar para os lados e na diagonal, não só para cima e para baixo; o
+   círculo mostra quatro setas.
+
 ## Feito a 20/11
 
 1. **Impressões cortadas.** Havia duas causas:
