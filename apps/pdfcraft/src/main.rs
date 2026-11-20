@@ -303,8 +303,26 @@ fn main() -> eframe::Result {
         }
         other => other,
     };
+    // Another launch from now on starts a new app instead of handing its files to this one.
     drop(instance);
+    finish_printing();
     result
+}
+
+/// The windows are closed, but a print job may still be on its way to the spooler (the user
+/// pressed Print and quit at once): stay alive, without windows, until it is through, then exit
+/// and free the memory. Quitting mid-job would cut the printout short.
+fn finish_printing() {
+    use pdfcraft_engine::print::spool;
+    let running = spool::jobs_in_flight();
+    if running == 0 {
+        return;
+    }
+    log::info!("waiting for {running} print job(s) to reach the spooler before exiting");
+    // As long as the slowest job may take (Print as image gives Windows 30 minutes).
+    if !spool::wait_for_jobs(std::time::Duration::from_secs(31 * 60)) {
+        log::warn!("a print job was still running after 31 minutes; exiting anyway");
+    }
 }
 
 /// Which renderer to start with, from `PDFCRAFT_RENDERER`.

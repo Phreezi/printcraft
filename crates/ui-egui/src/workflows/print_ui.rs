@@ -484,7 +484,10 @@ impl PrintDraft {
 
     /// How Print as image draws the sheets; `None` when the job goes to the native spooler.
     pub fn image_job(&self) -> Option<spool::ImageJob> {
-        (self.as_image && spool::prints_images()).then_some(spool::ImageJob { dpi: self.dpi, print_to_file: None })
+        // Fitted pages shrink into the printer's printable area (else their edges are cut);
+        // exact sizes, posters and the rest keep their size.
+        let fit_printable = self.handling == Handling::Size && matches!(self.size, SizeMode::Fit | SizeMode::Shrink);
+        (self.as_image && spool::prints_images()).then_some(spool::ImageJob { dpi: self.dpi, print_to_file: None, fit_printable })
     }
 
     /// The printer list arrived: keep the chosen printer if it is still there; otherwise (or
@@ -726,7 +729,11 @@ impl PdfCraftApp {
                     let image = self.print_draft.image_job();
                     let (tx, rx) = std::sync::mpsc::channel();
                     let ctx = self.ctx.clone();
+                    // Counted until the spooler has it: quitting meanwhile keeps the process
+                    // running without windows until then (`spool::wait_for_jobs` in the app).
+                    let in_flight = spool::job_started();
                     std::thread::spawn(move || {
+                        let _in_flight = in_flight;
                         let sent = match &image {
                             Some(image) => spool::submit_as_image(&bytes, &job, image),
                             None => spool::submit(&bytes, &job),

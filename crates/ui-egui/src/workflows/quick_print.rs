@@ -121,7 +121,7 @@ pub fn print_file(path: &std::path::Path, printer: Option<&str>, image: Option<u
     let (pdf, _) = prepare(&name, bytes).map_err(|e| failed(&e))?;
     let job = job(printer, &name);
     let sent = match image {
-        Some(dpi) => spool::submit_as_image(&pdf, &job, &spool::ImageJob { dpi, print_to_file: None }),
+        Some(dpi) => spool::submit_as_image(&pdf, &job, &spool::ImageJob { dpi, ..spool::ImageJob::default() }),
         None => spool::submit(&pdf, &job),
     };
     sent.map_err(|e| failed(&e.to_string()))

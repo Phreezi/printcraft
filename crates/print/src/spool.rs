@@ -199,6 +199,46 @@ fn spooled(job: &Job) -> Job {
 
 pub mod windows;
 
+/// How many print jobs are still on their way to the spooler (sheets being drawn, or being handed
+/// over), so the app can stay alive, without windows, until they are through: quitting while a
+/// job runs would cut it off half-sent.
+static IN_FLIGHT: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+static IN_FLIGHT_DONE: std::sync::Condvar = std::sync::Condvar::new();
+
+/// A print job on its way to the spooler: counted from [`job_started`] until dropped (also when
+/// its thread fails), see [`wait_for_jobs`].
+#[must_use = "the job counts as running until this is dropped"]
+#[derive(Debug)]
+pub struct JobInFlight(());
+
+/// Count a job as running until the returned guard is dropped.
+pub fn job_started() -> JobInFlight {
+    let mut n = IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    *n = n.saturating_add(1);
+    JobInFlight(())
+}
+
+impl Drop for JobInFlight {
+    fn drop(&mut self) {
+        let mut n = IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *n = n.saturating_sub(1);
+        IN_FLIGHT_DONE.notify_all();
+    }
+}
+
+/// How many jobs are on their way to the spooler now.
+pub fn jobs_in_flight() -> usize {
+    *IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Block until every job is with the spooler, or `timeout` has passed. Returns whether none is
+/// left.
+pub fn wait_for_jobs(timeout: std::time::Duration) -> bool {
+    let n = IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (n, _) = IN_FLIGHT_DONE.wait_timeout_while(n, timeout, |n| *n > 0).unwrap_or_else(std::sync::PoisonError::into_inner);
+    *n == 0
+}
+
 /// Print quality choices (dots per inch) for Print as image.
 pub const QUALITIES: [(u32, &str); 2] = [(300, "Standard (300 dpi)"), (600, "High (600 dpi)")];
 
@@ -210,11 +250,15 @@ pub struct ImageJob {
     /// Print into this file instead of through the printer's port (for example with
     /// "Microsoft Print to PDF").
     pub print_to_file: Option<String>,
+    /// Shrink each sheet into the printer's printable area (centred there) instead of drawing it
+    /// from the paper's corner at full size. For pages fitted to the sheet: no printer prints
+    /// the outer few millimetres of the paper, so a full-bleed sheet loses its edges.
+    pub fit_printable: bool,
 }
 
 impl Default for ImageJob {
     fn default() -> Self {
-        ImageJob { dpi: QUALITIES[0].0, print_to_file: None }
+        ImageJob { dpi: QUALITIES[0].0, print_to_file: None, fit_printable: true }
     }
 }
 

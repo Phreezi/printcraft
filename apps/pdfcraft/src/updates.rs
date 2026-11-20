@@ -311,7 +311,8 @@ $appPid = 0
 [void][int]::TryParse($env:PEDEEFE_UPDATE_PID, [ref]$appPid)
 if ($appPid -gt 0) {
   $app = Get-Process -Id $appPid -ErrorAction SilentlyContinue
-  if ($app) { [void]$app.WaitForExit(300000) }
+  # The app may stay a while without windows, finishing a print job (up to 31 minutes).
+  if ($app) { [void]$app.WaitForExit(1920000) }
 }
 $msi = $env:PEDEEFE_UPDATE_MSI
 $log = $env:PEDEEFE_UPDATE_LOG

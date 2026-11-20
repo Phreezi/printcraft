@@ -591,6 +591,10 @@ fn windows_spooler_scripts_and_answers() {
     assert_eq!(env["PDFCRAFT_TITLE"], "plan.pdf", "no control characters");
     assert_eq!((env["PDFCRAFT_PAPER_W"].as_str(), env["PDFCRAFT_PAPER_H"].as_str()), ("826", "1169"), "A4 portrait in 1/100 in");
     assert_eq!(env["PDFCRAFT_PAPER_NAME"], "A4");
+    assert_eq!(env["PDFCRAFT_FIT"], "1", "fitted sheets shrink into the printable area by default");
+    let exact = spool::ImageJob { fit_printable: false, ..spool::ImageJob::default() };
+    let env_exact: std::collections::HashMap<_, _> = job_env(&job, &exact, std::path::Path::new("C:/t"), crate::A4).into_iter().collect();
+    assert_eq!(env_exact["PDFCRAFT_FIT"], "0");
     assert_eq!(paper_name(crate::A3), "A3");
     assert_eq!(paper_name((300.0, 400.0)), "106 × 141 mm");
     // No two-sided choice: the printer's default (the script leaves it alone).
@@ -616,7 +620,7 @@ fn windows_prints_as_image_through_microsoft_print_to_pdf() {
     let out = std::env::temp_dir().join(format!("pedeefe-print-test-{}.pdf", std::process::id()));
     let _ = std::fs::remove_file(&out);
     let job = Job { printer: Some(pdf_printer.name.clone()), title: "PeDeeFe test".into(), ..Job::default() };
-    let image = spool::ImageJob { dpi: 150, print_to_file: Some(out.to_string_lossy().into_owned()) };
+    let image = spool::ImageJob { dpi: 150, print_to_file: Some(out.to_string_lossy().into_owned()), ..spool::ImageJob::default() };
     spool::submit_as_image(&pdf, &job, &image).expect("printed");
     let bytes = std::fs::read(&out).expect("Microsoft Print to PDF wrote the file");
     assert!(bytes.starts_with(b"%PDF"), "a PDF");
@@ -1482,4 +1486,20 @@ fn contents_pieces_join_with_a_space_across_a_trailing_comment() {
     assert!(text_reads_up(&with_newline, 0), "6 vertical vs 5 horizontal chars when line 1 is not commented out");
     let printed_ctrl = impose(&with_newline, &settings(vec![0], Layout::Size(SizeMode::Actual))).unwrap();
     assert_eq!(form_strings(printed_ctrl), [b"HIDDEN".to_vec(), b"SHOWN".to_vec()]);
+}
+
+/// Quitting while a job is on its way waits for it (the app stays alive without windows), and
+/// stops waiting once the job is through.
+#[test]
+fn quitting_waits_for_print_jobs_in_flight() {
+    let job = spool::job_started();
+    assert!(spool::jobs_in_flight() >= 1);
+    assert!(!spool::wait_for_jobs(std::time::Duration::from_millis(20)), "a running job keeps the app waiting");
+    let worker = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        drop(job);
+    });
+    assert!(spool::wait_for_jobs(std::time::Duration::from_secs(10)), "done once the job is through");
+    worker.join().unwrap();
+    assert_eq!(spool::jobs_in_flight(), 0);
 }

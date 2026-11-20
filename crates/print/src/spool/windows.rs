@@ -72,10 +72,21 @@ try {
       $g = $e.Graphics
       $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
       $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-      # The sheet starts at the paper's corner, not at the printable area's.
-      $g.TranslateTransform(-$e.PageSettings.HardMarginX, -$e.PageSettings.HardMarginY)
       $b = $e.PageBounds
-      $g.DrawImage($img, 0, 0, $b.Width, $b.Height)
+      # The printable area, in the same units, from the printable area's own corner (the
+      # Graphics origin; it follows the sheet's orientation, unlike PrintableArea).
+      $v = $g.VisibleClipBounds
+      if ($env:PDFCRAFT_FIT -eq '1' -and $v.Width -gt 0 -and $v.Height -gt 0) {
+        # Fitted pages: the whole sheet, shrunk into what the printer can print and centred
+        # there, so nothing near the paper's edge is lost.
+        $s = [Math]::Min(1.0, [Math]::Min($v.Width / $b.Width, $v.Height / $b.Height))
+        $dw = $b.Width * $s; $dh = $b.Height * $s
+        $g.DrawImage($img, [single](($v.Width - $dw) / 2), [single](($v.Height - $dh) / 2), [single]$dw, [single]$dh)
+      } else {
+        # Exact sizes: the sheet starts at the paper's corner, not at the printable area's.
+        $g.TranslateTransform(-$e.PageSettings.HardMarginX, -$e.PageSettings.HardMarginY)
+        $g.DrawImage($img, 0, 0, $b.Width, $b.Height)
+      }
     } finally {
       $img.Dispose()
     }
@@ -187,6 +198,7 @@ pub fn job_env(job: &Job, image: &ImageJob, dir: &Path, paper: (f64, f64)) -> Ve
         ("PDFCRAFT_PAPER_H", hundredths(h).to_string()),
         ("PDFCRAFT_PAPER_NAME", paper_name((w, h))),
         ("PDFCRAFT_OUTPUT", image.print_to_file.clone().unwrap_or_default()),
+        ("PDFCRAFT_FIT", if image.fit_printable { "1" } else { "0" }.into()),
     ];
     env.retain(|(_, v)| !v.contains('\0'));
     env
