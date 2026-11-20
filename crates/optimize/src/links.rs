@@ -3,7 +3,7 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use printcraft_cos::{Dict, Document, ObjRef, Object, PdfString};
+use pdfcraft_cos::{Dict, Document, ObjRef, Object, PdfString};
 
 /// Named destinations: the `/Names /Dests` tree (entries) and the old `/Dests` dictionary.
 fn named_dests(doc: &Document) -> HashSet<Vec<u8>> {
@@ -87,7 +87,7 @@ fn valid(o: &Object, pages: &HashSet<ObjRef>, count: usize, names: &HashSet<Vec<
 
 /// Remove links whose destination is missing, and clear the destination of such bookmarks
 /// (they stay, so their children do too). Returns (links, bookmarks).
-pub(crate) fn remove_invalid(doc: &mut Document, pages: &[ObjRef]) -> Result<(usize, usize), printcraft_cos::CosError> {
+pub(crate) fn remove_invalid(doc: &mut Document, pages: &[ObjRef]) -> Result<(usize, usize), pdfcraft_cos::CosError> {
     let set: HashSet<ObjRef> = pages.iter().copied().collect();
     let names = named_dests(doc);
     let mut links = 0;
@@ -150,11 +150,15 @@ fn referenced_names(doc: &Document) -> HashSet<Vec<u8>> {
         while let Some(o) = stack.pop() {
             match o {
                 Object::Dict(d) => {
-                    if let Some(n) = d.get(b"Dest").and_then(dest_name) {
+                    // Resolve first: /Dest and a GoTo's /D may be an indirect reference to the name
+                    // string, and an unresolved ref has no name, so the destination it uses would
+                    // look unreferenced and be removed. A GoToR or GoToE /D names a destination in
+                    // another document, so it does not count as a use of this one's.
+                    if let Some(n) = d.get(b"Dest").and_then(|x| dest_name(doc.resolve(x).as_ref())) {
                         out.insert(n);
                     }
-                    if matches!(d.name(b"S"), Some(b"GoTo" | b"GoToR" | b"GoToE"))
-                        && let Some(n) = d.get(b"D").and_then(dest_name)
+                    if d.name(b"S") == Some(b"GoTo")
+                        && let Some(n) = d.get(b"D").and_then(|x| dest_name(doc.resolve(x).as_ref()))
                     {
                         out.insert(n);
                     }
@@ -176,7 +180,7 @@ fn referenced_names(doc: &Document) -> HashSet<Vec<u8>> {
 }
 
 /// Remove named destinations nothing refers to. Returns how many went.
-pub(crate) fn remove_unreferenced_dests(doc: &mut Document) -> Result<usize, printcraft_cos::CosError> {
+pub(crate) fn remove_unreferenced_dests(doc: &mut Document) -> Result<usize, pdfcraft_cos::CosError> {
     let Some(root) = doc.root() else { return Ok(0) };
     let cat = doc.get(root).as_dict().cloned().unwrap_or_default();
     let used = referenced_names(doc);
