@@ -1133,6 +1133,7 @@ impl PdfCraftApp {
         view.objects.deselect();
         view.edit_selection = None;
         view.image_selection = None;
+        view.area_select = false;
         self.quick_tool = QuickTool::Select;
     }
 

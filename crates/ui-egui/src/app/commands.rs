@@ -131,6 +131,9 @@ impl PdfCraftApp {
     /// paragraph's text removed with no editor over it.
     pub(crate) fn put_down_edit_text(&mut self) {
         self.quick_tool = QuickTool::Select;
+        for view in &mut self.views {
+            view.area_select = false;
+        }
         if let Some(ed) = self.active.and_then(|i| self.views.get_mut(i)).and_then(|v| v.line_editor.take())
             && let Some(edit) = edit_text_ui::finished_edit(ed)
         {

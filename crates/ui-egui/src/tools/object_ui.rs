@@ -293,11 +293,14 @@ pub(crate) fn modified_hit(
         ObjectsPart::Held
     } else {
         match objects {
+            // Select area: the press starts a rectangle whatever lies under it.
+            Ok(_) if view.area_select => ObjectsPart::Toggle(None),
             Ok(objects) => ObjectsPart::Toggle(object_at(xf, info, page, objects, p)),
             Err(_) => ObjectsPart::Refused,
         }
     };
-    Some(Hit::new(Owner::Objects { part }, Layer::Editor, egui::CursorIcon::Default))
+    let cursor = if view.area_select { egui::CursorIcon::Crosshair } else { egui::CursorIcon::Default };
+    Some(Hit::new(Owner::Objects { part }, Layer::Editor, cursor))
 }
 
 /// The objects selected together, on one page, told what the press is to it (`press`). Returns
@@ -443,7 +446,11 @@ fn input(s: &mut ObjectSelection, cx: PageToolContext<'_>, press: PagePress, vie
                         s.notice = Some(tl!("Select at most 1000 objects at a time.").into());
                     }
                 }
-                None => s.gesture = Some(Gesture { start: p, now: p, marquee: true, additive: true, keep_on_click: false }),
+                // Select area without Shift or ⌘: the rectangle replaces the selection.
+                None => {
+                    let additive = !view.area_select || adds(ptr.modifiers);
+                    s.gesture = Some(Gesture { start: p, now: p, marquee: true, additive, keep_on_click: false });
+                }
             }
             leave_single(view);
             view.current = page;

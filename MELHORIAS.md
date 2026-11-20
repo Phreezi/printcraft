@@ -8,6 +8,25 @@ instala-se por cima da anterior (Preferências › Atualizações, ou o aviso ao
 
 (Nada por agora.)
 
+## Feito a 20/11
+
+1. **Impressões cortadas.** Havia duas causas:
+   - Com "Imprimir como imagem" e "Ajustar", a folha era desenhada a partir do canto do papel, em
+     tamanho inteiro; as impressoras não imprimem os últimos 3–6 mm junto à borda, por isso os PDF
+     com conteúdo perto da margem perdiam essa parte. Agora a folha encolhe só o necessário para
+     caber na área que a impressora consegue imprimir, centrada nela (Ajustar, Reduzir páginas
+     grandes e a Impressão Rápida). "Tamanho real", escala própria e cartaz ficam exatos.
+   - A impressão corre em segundo plano; sair logo a seguir a Imprimir matava o trabalho a meio
+     (umas vezes saía bem, outras cortado ou nada). Agora, ao sair, as janelas fecham logo, mas o
+     programa continua a correr escondido até a impressão estar toda entregue à impressora, e
+     depois sai mesmo (liberta a memória). Abrir o PeDeeFe entretanto abre uma app nova.
+2. **Botão "Selecionar área" em Editar texto e imagens.** Na barra de ferramentas, ao lado do botão
+   de Editar texto e imagens (ícone de quadrado tracejado). Ligado, qualquer arrastar na página
+   desenha um retângulo, mesmo começando por cima de texto, e seleciona todas as caixas em que toca
+   (por exemplo 40 campos empilhados uns em cima dos outros); depois Delete apaga-os todos de uma
+   vez (um só Anular). Shift ou Ctrl ao arrastar acrescenta à seleção. Volta a carregar no botão
+   para o desligar.
+
 ## Feito na ronda de 7/11 (segunda junção com o PdfCraft original)
 
 O PdfCraft reorganizou quase todo o código (a interface foi dividida em muitos ficheiros e as

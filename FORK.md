@@ -76,7 +76,13 @@ He uses PeDeeFe on Windows PCs; the improvement list he reads is `MELHORIAS.md` 
   Enter prints, page choice reset per document, prefs saved under `"print"`. Print crate additions
   in `crates/print/src/{settings,sheets,error}.rs`: `A4`, `A3`, `region`, `Tile`, `page_view`,
   `printed_size`, Fit with **no margin**, poster tiles clipped to the page. Automation `doc_print`
-  defaults to A4 and takes `region`.
+  defaults to A4 and takes `region`. Print as image shrinks fitted sheets (Fit, Shrink, Quick
+  Print) into the printer's printable area (`ImageJob::fit_printable`, `PDFCRAFT_FIT` in the
+  script); exact sizes and posters draw from the paper's corner.
+- **Quit while printing**: print threads hold `spool::job_started()`; after `run_native` returns
+  (windows gone) `finish_printing()` in `apps/pdfcraft/src/main.rs` waits (≤31 min) with
+  `spool::wait_for_jobs`, after dropping the single-instance server. The update installer waits
+  up to 32 min for the old process.
 - **Quick Print** (`--print FILE…`, `--print-to PRINTER FILE…`; Explorer/Outlook verbs):
   `apps/pdfcraft/src/quick_print.rs`, `crates/ui-egui/src/workflows/quick_print.rs`; parsed in
   `apps/pdfcraft/src/startup.rs`.
@@ -95,6 +101,9 @@ He uses PeDeeFe on Windows PCs; the improvement list he reads is `MELHORIAS.md` 
   selects every box (`edit_text_keys`, `select_all_boxes` in `tools/edit_text_ui.rs`), a plain
   click opens a paragraph (`keep_on_click` in `object_ui.rs`), Esc applies typed text and selects
   its box, a second Esc leaves the tool.
+  **Select area** button in the hotbar (`DocView::area_select`, `hotbar.rs`): every press on the
+  page goes to `object_ui::modified_hit` as `Toggle(None)`, so a drag starting on stacked boxes
+  draws a selection rectangle (non-additive unless Shift/Ctrl).
 - **Panels**: the desktop app sets `left_open = false` and `pages_panel_only = true` (only the page
   thumbnails of multi-page documents open by themselves). Library defaults stay upstream's so
   upstream tests hold.
@@ -133,7 +142,7 @@ He uses PeDeeFe on Windows PCs; the improvement list he reads is `MELHORIAS.md` 
    test build is the real check.
 6. Then run the test build, check the release, update `MELHORIAS.md` (Portuguese), tell João.
 
-## Known open points (2026-11-19)
+## Known open points (2026-11-20)
 
 - `paste_ownership::shared_xobject_original_occurrence_owns_delete` (ui-egui tests) fails after
   the 0.18.1 merge; cause not found.

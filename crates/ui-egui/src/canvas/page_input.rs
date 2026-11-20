@@ -104,7 +104,7 @@ pub(super) fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut
         let adds = tool == QuickTool::EditText
             && can_modify
             && xf.rect.contains(o)
-            && crate::object_ui::adds(ptr.modifiers)
+            && (crate::object_ui::adds(ptr.modifiers) || view.area_select)
             && !crate::object_ui::menu_open(ui, resp);
         let objects = adds.then(|| view.objects.inventory(doc, i));
         let at = hits.at(view, o, objects.as_ref());

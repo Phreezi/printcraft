@@ -3132,7 +3132,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "European Portuguese UI strings, embedded by crates/ui-egui/build.rs"
-sha256 = "3e5a61bb6a8650824dae22cf445c881d5bc72c2ce30c9259f6c5c937eb67976e"
+sha256 = "7ffc8f28b96461968efa7f26d3aa5a24e2c77fc34b3e7234f547e770bcd52c57"
 
 [[asset]]
 path = "assets/brand/pedeefe/app-icon/pedeefe-1024.png"

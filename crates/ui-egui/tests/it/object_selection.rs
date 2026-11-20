@@ -504,3 +504,59 @@ fn a_double_click_on_a_grouped_paragraph_opens_it() {
     h.run_steps(2);
     assert!(h.state().views[0].line_editor.is_some(), "the paragraph is open for typing");
 }
+
+/// PeDeeFe: boxes stacked on top of each other leave no free spot to start a selection
+/// rectangle from; with Select area on, a drag that starts on them selects them all, and Delete
+/// removes them in one step.
+#[test]
+fn select_area_takes_stacked_boxes_that_delete_together() {
+    let stream = |body: &str| format!("<< /Length {} >>\nstream\n{body}\nendstream", body.len());
+    let stacked: String = (0..10).map(|n| format!("BT /F1 14 Tf 40 {} Td (Field {n}) Tj ET ", 430 - n)).collect();
+    let parts = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 500] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".into(),
+        stream(&format!("{stacked}BT /F1 12 Tf 240 90 Td (Keep here) Tj ET")),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, object) in parts.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", parts.len() + 1).as_bytes());
+    for offset in offsets {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", parts.len() + 1).as_bytes());
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("stacked.pdf", None, pdf.clone()).unwrap();
+        app.set_option("zoom", "100").unwrap();
+        assert!(app.execute("edit.edit_text"));
+        app
+    });
+    crate::support::settle(&mut h);
+    let texts = |h: &Harness<'static, PdfCraftApp>| objects(h).into_iter().filter_map(|o| o.text).collect::<Vec<_>>();
+    assert!(texts(&h).iter().any(|t| t.contains("Field")), "{:?}", texts(&h));
+    // The button is in the hotbar while Edit text & images is on.
+    h.get_by_label("Select area: drag a rectangle to select every box it touches").click();
+    h.run_steps(3);
+    assert!(h.state().views[0].area_select);
+    // From the middle of the stacked fields (no free spot there) past their far corner.
+    let (a, b) = (at(&h, 60.0, 72.0), at(&h, 200.0, 95.0));
+    drag(&mut h, a, b);
+    let selected = h.state().views[0].edit_selection.clone().expect("the rectangle selected the stacked boxes");
+    assert!(!selected.blocks.is_empty());
+    h.key_press(Key::Delete);
+    h.run_steps(4);
+    let left = texts(&h);
+    assert!(left.iter().all(|t| !t.contains("Field")), "every stacked field is gone: {left:?}");
+    assert!(left.iter().any(|t| t.contains("Keep here")), "what the rectangle missed stays: {left:?}");
+    // One step undoes it all.
+    let app = h.state();
+    assert!(app.session.get(app.views[0].id).unwrap().can_undo().is_some());
+}

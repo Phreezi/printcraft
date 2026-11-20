@@ -625,6 +625,10 @@ pub struct DocView {
     /// rectangle, ⇧/⌘-clicks, ⌘A), on one page, as `objects` holds them after the last frame.
     /// Read-only: Delete and ⌘A work on `objects`.
     pub edit_selection: Option<crate::edit_text_ui::BoxSelection>,
+    /// Edit text & images, PeDeeFe's Select area button: every drag on the page draws a selection
+    /// rectangle, also from a paragraph or a picture (boxes stacked on top of each other leave
+    /// no free spot to start one from), and selects what it touches.
+    pub area_select: bool,
     /// A text field other than the paragraph editor had keyboard focus as the last frame ended
     /// (Esc then only leaves that field, not Edit text & images).
     pub(crate) typing_elsewhere: bool,
@@ -1025,6 +1029,7 @@ impl DocView {
             picked_image: None,
             block_drag: None,
             edit_selection: None,
+            area_select: false,
             typing_elsewhere: false,
             pending_action: None,
             insert_at: None,
