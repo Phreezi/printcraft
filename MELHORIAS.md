@@ -1,12 +1,39 @@
 # PeDeeFe: lista de melhorias
 
-A lista de pedidos de melhorias. A ronda de 7/11 juntou de novo o código original (PdfCraft, que
+A lista de pedidos de melhorias. A ronda de 23/11 juntou pela terceira vez o código original; a de 7/11 juntou de novo o código original (PdfCraft, que
 avançou cerca de 3500 alterações desde 14/10) com as nossas alterações; a versão de teste publicada
 instala-se por cima da anterior (Preferências › Atualizações, ou o aviso ao abrir).
 
 ## Por fazer
 
 (Nada por agora.)
+
+## Feito a 23/11 (terceira junção com o PdfCraft original)
+
+1. **Junção com o PdfCraft de 23/11** (mais cerca de 2240 alterações desde 7/11). Mantém-se tudo o
+   que é do PeDeeFe (nome, atualizações, o nosso diálogo de Imprimir, Impressão Rápida, uma só app
+   com várias janelas, página única a rolar, Espaço / Page Down, Editar texto e imagens). Do
+   PdfCraft chegam, entre outras coisas, a vista dividida em dois painéis, "Combinar ficheiros" no
+   menu do Explorador, imprimir uma área escolhida com a ferramenta Instantâneo (abre o nosso
+   diálogo com essa área como Janela) e o apagar de vários objetos de uma vez do próprio PdfCraft.
+   Arrastar um separador para fora da barra continua a levá-lo para outra janela.
+2. **Clicar fora da página larga a seleção.** Em Editar texto e imagens, um clique na zona cinzenta
+   (ao lado ou entre páginas) tira a seleção (imagem, objetos, parágrafo aberto sem alterações).
+   Clicar noutro objeto substitui a seleção; só com Shift (ou Ctrl) se junta mais um. Com a
+   ferramenta Selecionar, o mesmo clique tira a seleção de texto (também a da página toda).
+3. **Ctrl+V cola imagens no modo Editar onde está o rato.** Uma imagem copiada (no PeDeeFe ou
+   noutro programa) cola centrada no rato; se o rato estiver fora da página, ou a imagem não couber
+   ali, vai para o ponto válido mais próximo, sempre dentro da parte da página que se vê no ecrã,
+   para se poder editar logo. O mesmo para objetos copiados no modo Editar.
+4. **Botão direito › Colar** cola com o canto superior esquerdo no ponto onde se carregou (também os
+   objetos copiados no modo Editar); se passar da borda, entra na página o mínimo necessário.
+5. **Imagem por cima de texto grande.** Quando uma imagem fica por cima de um parágrafo maior do
+   que ela, o clique passa a apanhar a imagem (o objeto mais pequeno debaixo do rato), em vez de
+   abrir o parágrafo; pode-se mover e redimensionar diretamente. Fora da imagem, o clique continua a
+   abrir o parágrafo. Com Shift, o mesmo critério.
+6. **Copiar uma imagem redimensionada guarda o tamanho.** "Copiar imagem" (ou Ctrl+C com a imagem
+   selecionada) lembra o tamanho com que a imagem aparece na página; ao colar fica com esse tamanho,
+   não com o tamanho em píxeis.
 
 ## Feito a 20/11 (segunda parte)
 

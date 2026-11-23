@@ -651,8 +651,41 @@ impl PageHits<'_> {
         let text_link = (text_links && link.is_none()).then(|| text_link_hit(view, info, xf, page, p)).flatten();
         let on_link = link.is_some() || text_link.is_some();
         let comment = if context { comments::context_hit(pcx, p) } else { comments::hit(pcx, view, p, on_link) };
-        [link, text_link, comment, pictures, paragraphs, added, objects, grips, corner, fields].into_iter().flatten().collect()
+        // PeDeeFe: a picture and a paragraph both under the pointer: the smaller one lies in front
+        // (a picture placed over a long paragraph, or a label over a page-sized scan) and takes the
+        // press; the last of equals wins (`page_router::top`).
+        let (under, over) =
+            if picture_in_front(pictures.as_ref(), paragraphs.as_ref(), images, lines) { (paragraphs, pictures) } else { (pictures, paragraphs) };
+        [link, text_link, comment, under, over, added, objects, grips, corner, fields].into_iter().flatten().collect()
     }
+}
+
+/// Whether the picture hit lies in front of the paragraph hit, both on the text layer: it is the
+/// smaller of the two on the page. Edit text's paragraphs are asked after its pictures, so text
+/// over artwork takes the press; a picture laid over a paragraph larger than itself would never
+/// get it.
+fn picture_in_front(
+    picture: Option<&crate::page_router::Hit>,
+    paragraph: Option<&crate::page_router::Hit>,
+    images: &[pdfcraft_engine::PageImage],
+    lines: &[pdfcraft_engine::TextBlock],
+) -> bool {
+    use crate::page_router::{ParagraphPart, PicturePart};
+    let (Some(picture), Some(paragraph)) = (picture, paragraph) else { return false };
+    if picture.layer != Layer::Text || paragraph.layer != Layer::Text {
+        return false;
+    }
+    let (Owner::Picture { index, part: PicturePart::Body | PicturePart::OverSelected }, Owner::Paragraph { block, part: ParagraphPart::Body }) =
+        (picture.owner, paragraph.owner)
+    else {
+        return false;
+    };
+    let area = |r: [f64; 4]| {
+        let a = (r[2] - r[0]).abs() * (r[3] - r[1]).abs();
+        if a.is_finite() { a } else { f64::INFINITY }
+    };
+    let (Some(image), Some(line)) = (images.get(index), lines.get(block)) else { return false };
+    area(image.visible_rect.unwrap_or(image.rect)) < area(line.rect)
 }
 
 /// The web or email address written as plain text under `p` on `page` (#4207), with no link

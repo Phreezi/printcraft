@@ -13,9 +13,10 @@ He uses PeDeeFe on Windows PCs; the improvement list he reads is `MELHORIAS.md` 
 
 - `main` of this fork is **stale** (it is PdfCraft as of 2026-10-07) and is not where PeDeeFe
   lives. Never push to it.
-- The current PeDeeFe is the branch **`claude/lucid-goodall-tnwl5g`** (draft PR
-  Phreezi/printcraft#3): the merge of PdfCraft 0.18.1 (upstream `main` at `5644d56c`, 2026-11-07)
-  into the fork, plus fixes. The previous round is `claude/awesome-darwin-igr6t6` (0.7.1-test.20).
+- The current PeDeeFe is the branch **`claude/practical-rubin-4t4ho1`**: the merge of PdfCraft
+  `main` at `9b3e6d6f3` (2026-11-23) into the previous PeDeeFe branch, plus the selection and paste
+  changes. Before it: `claude/lucid-goodall-tnwl5g` (draft PR Phreezi/printcraft#3, PdfCraft
+  0.18.1, upstream `5644d56c`, 2026-11-07), and `claude/awesome-darwin-igr6t6` (0.7.1-test.20).
 - New work: branch from the latest PeDeeFe branch (not from `main`), commit, push, and build a test
   release (below). Each session usually gets its own `claude/...` branch name; start it from the
   last PeDeeFe branch.
@@ -106,6 +107,16 @@ He uses PeDeeFe on Windows PCs; the improvement list he reads is `MELHORIAS.md` 
   page goes to `object_ui::modified_hit` as `Toggle(None)`, so a drag starting on stacked boxes
   draws a selection rectangle (non-additive unless Shift/Ctrl). The same toggle heads Add content
   in the Edit panel (`panels/edit.rs`, `toggle_area_select`, `area_select_on`).
+- **Edit text & images, selection and paste (2026-11-23)**: a picture and a paragraph both under
+  the pointer: the smaller lies in front and takes the press (`page_input::picture_in_front`;
+  Shift-click uses the same rule, `object_ui::object_at`). A primary click off the pages
+  (`pressed_page` is none, in `canvas.rs`) deselects Edit's objects (`deselect_edit_objects`) and
+  the Select tool's text. ⌘V pastes centred on the pointer, or the nearest point of a page on
+  screen, kept in the part of the page on screen (`DocView::paste_place`,
+  `pdfcraft_engine::PastePlace`, `ObjectClipboard::paste_at`); the page menu's Paste puts the
+  top-left corner at the menu's point (`paste_at_menu_point`, `paste_image_at`). Copy Image
+  remembers the size the picture shows at (`last_copied_size`, keyed by a pixel hash) and a paste
+  of the same pixels keeps it. Tests: `tests/it/edit_paste_place.rs`.
 - **Panels**: the desktop app sets `left_open = false` and `pages_panel_only = true` (only the page
   thumbnails of multi-page documents open by themselves). Library defaults stay upstream's so
   upstream tests hold.
@@ -143,6 +154,11 @@ He uses PeDeeFe on Windows PCs; the improvement list he reads is `MELHORIAS.md` 
    lack of a GPU ("No adapter found"). Windows-only code can't be checked on Linux (C deps): the
    test build is the real check.
 6. Then run the test build, check the release, update `MELHORIAS.md` (Portuguese), tell João.
+7. 2026-11-23: `git config merge.conflictStyle zdiff3` shows the base in each hunk, which makes
+   most conflicts mechanical. Upstream's own print dialog files (`print_paper.rs`,
+   `print_ui/setups.rs`, `print_custom_paper_names`/`print_late_printer_list` tests) are deleted
+   on each merge; upstream's split view (`panes.rs`) lives beside the fork's windows (a tab
+   dragged off the strip goes to a window: `window_tab_drag` in `chrome.rs`).
 
 ## Known open points (2026-11-20)
 

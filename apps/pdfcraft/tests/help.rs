@@ -56,7 +56,7 @@ fn version_prints_the_version_and_exits() {
 fn a_cpu_override_naming_a_missing_feature_does_not_stop_the_app() {
     let out = run_with(Command::new(BIN).arg("--version").env("OPENSSL_ia32cap", "0x400"), Stdio::piped());
     assert!(out.status.success(), "{:?} {}", out.status, String::from_utf8_lossy(&out.stderr));
-    assert!(String::from_utf8_lossy(&out.stdout).starts_with("pdfcraft "), "{}", String::from_utf8_lossy(&out.stdout));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("pedeefe "), "{}", String::from_utf8_lossy(&out.stdout));
 }
 
 /// A standard output that can't be written (here a full device) ends the run normally: `println!`

@@ -315,14 +315,28 @@ pub(crate) fn hit(view: &DocView, xf: &PageXform, info: &DocInfo, page: usize, o
     open.filter(|r| on_frame(r.shrink(2.0), p)).map(|_| Hit::new(Owner::Objects { part: ObjectsPart::Frame }, Layer::Handle, egui::CursorIcon::Move))
 }
 
-/// The object under `p` among the page's `objects`: added content over text over pictures, so a
-/// page-sized background picture does not hide editable labels or added notes, and within each
-/// kind the last, as the single-item tools take it.
+/// The object under `p` among the page's `objects`: the smallest one there, so a page-sized
+/// background picture does not hide editable labels or added notes, and a picture placed over a
+/// long paragraph is not hidden by it either (PeDeeFe; the single-item tools judge the same way,
+/// `page_input::picture_in_front`). Of equal sizes, added content over text over pictures, and
+/// within each kind the last.
 fn object_at(xf: &PageXform, info: &DocInfo, page: usize, objects: &[EditableObject], p: Pos2) -> Option<ObjectTarget> {
-    [ObjectKind::Added, ObjectKind::Text, ObjectKind::Image]
-        .into_iter()
-        .find_map(|kind| objects.iter().rev().find(|o| o.target.kind == kind && screen(xf, info, page, o).expand(2.0).contains(p)))
-        .map(|o| o.target)
+    let rank = |kind: ObjectKind| match kind {
+        ObjectKind::Added => 0u8,
+        ObjectKind::Text => 1,
+        ObjectKind::Image => 2,
+    };
+    let area = |o: &EditableObject| {
+        let r = o.rect;
+        let a = (r[2] - r[0]).abs() * (r[3] - r[1]).abs();
+        if a.is_finite() { a } else { f64::INFINITY }
+    };
+    objects
+        .iter()
+        .enumerate()
+        .filter(|(_, o)| screen(xf, info, page, o).expand(2.0).contains(p))
+        .min_by(|(i, a), (j, b)| area(a).total_cmp(&area(b)).then(rank(a.target.kind).cmp(&rank(b.target.kind))).then(j.cmp(i)))
+        .map(|(_, o)| o.target)
 }
 
 /// What a press with Shift or ⌘ at `p` takes on `page` in Edit text, whatever lies there: the

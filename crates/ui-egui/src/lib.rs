@@ -749,6 +749,10 @@ pub struct PdfCraftApp {
     /// The last image copied with Copy Image (width, height, straight RGBA), also put on the
     /// system clipboard when `system_clipboard` is on.
     pub last_copied_image: Option<(u32, u32, Vec<u8>)>,
+    /// PeDeeFe: the size the image copied with Copy Image showed at on its page (points, as
+    /// displayed), with a hash of its pixels (`picture_hash`): pasting that image
+    /// again keeps the size it was resized to, not its pixel count's.
+    pub(crate) last_copied_size: Option<(u64, (f64, f64))>,
     /// The last image copied in its original format (file name, bytes), also put on the
     /// system clipboard as a file when `system_clipboard` is on.
     pub last_copied_file: Option<(String, Vec<u8>)>,

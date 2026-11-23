@@ -31,6 +31,30 @@ impl DocView {
     pub(crate) fn page_xforms(&self) -> Vec<(usize, PageXform)> {
         self.screen_xforms.iter().map(|(p, xf)| (*p, *xf)).collect()
     }
+
+    /// PeDeeFe: where a paste at screen point `p` goes: the page under it, or else the page on
+    /// screen nearest to it, at the point of that page nearest to `p` (view space), kept in the
+    /// part of the page that is on screen ([`pdfcraft_engine::PastePlace`]). `None` without a
+    /// point or with no page on screen.
+    pub(crate) fn paste_place(&self, p: Option<Pos2>, anchor: pdfcraft_engine::PasteAnchor) -> Option<(usize, pdfcraft_engine::PastePlace)> {
+        let p = p.filter(|p| p.x.is_finite() && p.y.is_finite())?;
+        let (page, xf) = self.screen_xforms.iter().find(|(_, xf)| xf.rect.contains(p)).or_else(|| {
+            self.screen_xforms
+                .iter()
+                .filter(|(_, xf)| xf.rect.is_positive())
+                .min_by(|a, b| a.1.rect.distance_sq_to_pos(p).total_cmp(&b.1.rect.distance_sq_to_pos(p)))
+        })?;
+        let to_view = |q: Pos2| {
+            let (x, y) = xf.screen_to_view(xf.rect.clamp(q));
+            [f64::from(x), f64::from(y)]
+        };
+        let shown = xf.rect.intersect(self.viewport_screen);
+        let keep_in = shown.is_positive().then(|| {
+            let (a, b) = (to_view(shown.min), to_view(shown.max));
+            [a[0].min(b[0]), a[1].min(b[1]), a[0].max(b[0]), a[1].max(b[1])]
+        });
+        Some((*page, pdfcraft_engine::PastePlace { at: to_view(p), anchor, keep_in }))
+    }
 }
 
 /// `r` moved so its corner lies on a whole physical pixel, so that a raster drawn from there

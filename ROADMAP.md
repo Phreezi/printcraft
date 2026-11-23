@@ -265,6 +265,7 @@ Ranked; detail and the full milestone table in [docs/roadmap.md](docs/roadmap.md
 
 ## Progress log
 
+- **2026-11-23 (PeDeeFe fork):** Merged upstream PdfCraft `main` (9b3e6d6f3) into the fork. Edit text & images: a picture over a larger paragraph takes the click (smaller object in front), a click off the pages deselects, ⌘V pastes centred on the pointer inside the visible part of the page, the page menu's Paste puts the top-left corner at its point, and Copy Image keeps a resized picture's size. Synthetic UI and engine regressions; estimates unchanged.
 - **2026-11-16 (M5, #3741):** Ctrl+M opens Comments on Windows/Linux and repeated activation keeps it open. macOS leaves Command+M unbound for Minimize. Dispatch, menus, palette, shortcut help and control/headless metadata resolve the platform-specific registry binding. Mapping and real-input regressions are retained through the rebase; estimates unchanged.
 - **2026-11-03 (M3, #3669):** A drag across a table selects its rows, as Preview does, instead of reading order's detour down each column; a cell padded with spaces reads with the next cell of its row. Synthetic render and UI drag regressions; estimates unchanged.
 

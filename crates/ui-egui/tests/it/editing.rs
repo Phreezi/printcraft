@@ -8782,9 +8782,10 @@ fn paste_press_and_release_delivers_single_image() {
     assert_eq!(count, initial_count + 1, "Ctrl+V press and release must deliver exactly one image, got {count}");
 }
 
-/// Issue P1: Paste via context menu at a point away from the centre centers the image at that point.
+/// Issue P1: Paste via context menu at a point away from the centre puts the image there.
+/// PeDeeFe: its top-left corner (as displayed) goes to the point.
 #[test]
-fn paste_at_context_menu_point_centers_on_cursor() {
+fn paste_at_context_menu_point_puts_the_top_left_corner_there() {
     let pdf = include_bytes!("../data/form.pdf").to_vec();
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
         let mut app = PdfCraftApp::new();
@@ -8808,8 +8809,8 @@ fn paste_at_context_menu_point_centers_on_cursor() {
     let images = h.state().session.get(id).unwrap().page_images(0);
     assert_eq!(images.len(), initial_count + 1);
     let r = images[initial_count].rect;
-    let center = ((r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0);
-    assert!((center.0 - target_at[0]).abs() < 1.0 && (center.1 - target_at[1]).abs() < 1.0, "expected center {target_at:?}, got {center:?}");
+    let corner = (r[0], r[3]);
+    assert!((corner.0 - target_at[0]).abs() < 1.0 && (corner.1 - target_at[1]).abs() < 1.0, "expected top-left {target_at:?}, got {corner:?}");
 }
 
 /// Issue P2: A newer clipboard override image beats stale in-app copy.

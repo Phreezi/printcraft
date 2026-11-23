@@ -255,3 +255,42 @@ fn several_objects_delete_last_first() {
     .unwrap();
     assert_eq!(order, [('t', 3), ('t', 1), ('i', 0), ('a', 2), ('a', 0)]);
 }
+
+/// PeDeeFe: a paste at a point. The right-click menu's Paste puts the copy's top-left corner (as
+/// displayed) at the point; ⌘V centres it on the pointer, moved the least it must to stay in the
+/// part of the page on screen, or on the page when it is larger than that.
+#[test]
+fn a_paste_at_a_point_puts_the_copy_there_and_keeps_it_where_it_can_be_edited() {
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let a = s.open("a.pdf", None, source(), None).unwrap();
+    let mut clipboard = ObjectClipboard::new(copy_all_but_left(&s, a));
+    let doc = s.get(a).unwrap();
+    let r = clipboard.clip().rect();
+    // The copy's box as displayed on the 300 × 300 page (y down).
+    let (left, top, w, h) = (r[0], 300.0 - r[3], r[2] - r[0], r[3] - r[1]);
+    let place = |at: [f64; 2], anchor, keep_in| PastePlace { at, anchor, keep_in };
+    // Display coordinates go through f32.
+    let near = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01;
+
+    let offset = doc.object_place_offset(0, clipboard.clip(), place([100.0, 50.0], PasteAnchor::TopLeft, None)).unwrap();
+    assert!(near(offset, [100.0 - left, -(50.0 - top)]), "top-left corner at the point: {offset:?}");
+    let offset = doc.object_place_offset(0, clipboard.clip(), place([150.0, 150.0], PasteAnchor::Centre, None)).unwrap();
+    assert!(near(offset, [150.0 - w / 2.0 - left, -(150.0 - h / 2.0 - top)]), "centred on the point: {offset:?}");
+    // Past the page's bottom-right corner: moved back onto the page.
+    let offset = doc.object_place_offset(0, clipboard.clip(), place([299.0, 299.0], PasteAnchor::Centre, None)).unwrap();
+    assert!(near(offset, [300.0 - w - left, -(300.0 - h - top)]), "inside the page: {offset:?}");
+    // Only the page's top-left quarter is on screen: the copy stays there.
+    let offset = doc.object_place_offset(0, clipboard.clip(), place([140.0, 140.0], PasteAnchor::Centre, Some([0.0, 0.0, 150.0, 150.0]))).unwrap();
+    assert!(near(offset, [150.0 - w - left, -(150.0 - h - top)]), "inside the part on screen: {offset:?}");
+    // A part on screen too small for it: the page decides.
+    let tiny = place([5.0, 5.0], PasteAnchor::Centre, Some([0.0, 0.0, 10.0, 10.0]));
+    assert_eq!(tiny.top_left((w, h), (300.0, 300.0)), [0.0, 0.0]);
+    // Larger than the page: its top-left corner stays on it. NaN and infinities are refused.
+    assert_eq!(place([250.0, 250.0], PasteAnchor::Centre, None).top_left((900.0, 900.0), (300.0, 300.0)), [0.0, 0.0]);
+    let odd = place([f64::NAN, f64::INFINITY], PasteAnchor::Centre, Some([f64::NAN, 0.0, 1.0, 1.0]));
+    assert!(odd.top_left((f64::NAN, -5.0), (300.0, 300.0)).iter().all(|v| v.is_finite()));
+
+    let paste = clipboard.paste_at(doc, 0, place([100.0, 50.0], PasteAnchor::TopLeft, None)).unwrap();
+    s.apply(a, paste).unwrap();
+    assert_eq!(images(&s, a).len(), 2, "pasted");
+}

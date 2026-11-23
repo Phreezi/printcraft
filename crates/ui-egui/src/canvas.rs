@@ -1020,6 +1020,18 @@ pub(crate) fn default_page_context_menu(ui: &mut egui::Ui, page: usize, at: [f64
     pick(ui.button(tl!("Document properties…")), ui, A::DocProperties);
 }
 
+/// Edit text & images: nothing selected any more (a click off the pages). Text being typed stays
+/// open: its editor finishes or keeps it.
+fn deselect_edit_objects(view: &mut DocView) {
+    view.objects.deselect();
+    view.image_selection = None;
+    view.content.selected = None;
+    view.block_drag = None;
+    if view.line_editor.as_ref().is_some_and(|e| !e.has_changes()) {
+        view.line_editor = None;
+    }
+}
+
 impl DocView {
     /// Whether a middle-button scrolling gesture is active (tests and automation).
     pub fn auto_scrolling(&self) -> bool {
@@ -2024,6 +2036,19 @@ fn draw_pages(
         view.comments.selected = None;
         if tool == QuickTool::EditText {
             view.image_selection = None;
+        }
+    }
+    // PeDeeFe: a click off the pages (beside them, between them) in Edit text & images lets go of
+    // what is selected, as a click on a page's empty part does: the objects selected together,
+    // the picture, added content and a paragraph opened without changes. Shift or ⌘ keeps it.
+    // The text selected with the Select tool (a whole page's, after a quadruple click, too) goes
+    // the same way.
+    if pressed && pressed_page.is_none() && !crate::object_ui::adds(ptr.modifiers) && pointer.is_some_and(|p| visible.contains(p)) {
+        if tool == QuickTool::EditText {
+            deselect_edit_objects(view);
+        } else if tool == QuickTool::Select {
+            view.selection = None;
+            view.all_text = false;
         }
     }
     let PageOut {
@@ -3256,7 +3281,8 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let can_paste_key = egui::Id::unique("can-paste-image");
     let can_paste_image = if ui.input(|i| i.pointer.secondary_pressed()) {
-        let can = app.can_paste_image();
+        // PeDeeFe: objects copied in Edit text & images paste from the page's menu too.
+        let can = app.can_paste_image() || (app.quick_tool == QuickTool::EditText && app.object_clip_current());
         ui.data_mut(|d| d.insert_temp(can_paste_key, can));
         can
     } else {
@@ -3797,7 +3823,7 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
         }
         Some(crate::edit_text_ui::ImageAction::Paste(page, at)) => {
             if let Some(pt) = at {
-                app.paste_image_at(page, pt);
+                app.paste_at_menu_point(index, page, pt);
             } else {
                 app.paste_image(page, None);
             }
@@ -3841,7 +3867,7 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
             }
         }
         Some(PageMenuAction::Paste(page, at)) => {
-            app.paste_image_at(page, at);
+            app.paste_at_menu_point(index, page, at);
         }
         Some(PageMenuAction::PasteComments(page, at)) => {
             app.paste_comments(index, None, Some((page, at)));

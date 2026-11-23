@@ -1015,6 +1015,11 @@ impl crate::PdfCraftApp {
             return false;
         }
         let Some(pixels) = self.session.get(id).map(|d| d.page_image_rgba(page, index)) else { return false };
+        // PeDeeFe: the size it shows at (resized or not), which a paste of it keeps.
+        let shown = self.session.get(id).and_then(|d| {
+            let image = d.page_images(page).into_iter().nth(index)?;
+            shown_size(d.info.pages.get(page)?, image.visible_rect.unwrap_or(image.rect))
+        });
         let copied = pixels.and_then(|(w, h, rgba)| {
             #[cfg(not(target_arch = "wasm32"))]
             if self.system_clipboard {
@@ -1026,6 +1031,7 @@ impl crate::PdfCraftApp {
                 return Err("the web version can't put images on the clipboard yet; use Save Image As".to_string());
             }
             self.last_copied_file = None;
+            self.last_copied_size = shown.map(|size| (crate::app::clipboard::picture_hash(w as usize, h as usize, &rgba), size));
             self.last_copied_image = Some((w, h, rgba));
             Ok((w, h))
         });
@@ -1182,7 +1188,7 @@ impl crate::PdfCraftApp {
     }
 
     /// Paste the integration's delivered pixels without rereading a clipboard that may have changed.
-    pub(crate) fn paste_received_image(&mut self, page: usize, image: &egui::ColorImage) -> bool {
+    pub(crate) fn paste_received_image(&mut self, page: usize, image: &egui::ColorImage, place: Option<pdfcraft_engine::PastePlace>) -> bool {
         let [width, height] = image.size;
         let pixels = width.checked_mul(height);
         let bytes = pixels.and_then(|n| n.checked_mul(4));
@@ -1198,7 +1204,7 @@ impl crate::PdfCraftApp {
         }
         let rgba = image.pixels.iter().flat_map(egui::Color32::to_srgba_unmultiplied).collect();
         let delivered = crate::create_ui::Clip::Image { width, height, rgba };
-        self.paste_image_with_system(page, None, None, None, false, Some(delivered))
+        self.paste_image_with_system(page, None, place, None, false, Some(delivered))
     }
 
     /// Paste an image from the clipboard onto `page`.
@@ -1206,12 +1212,22 @@ impl crate::PdfCraftApp {
         self.paste_image_internal(page, rect, None)
     }
 
-    /// Paste an image centered at context menu point `at: [f64; 2]` on `page`.
+    /// Paste an image with its top-left corner (as displayed) at context menu point `at` (user
+    /// space) on `page` (PeDeeFe; moved onto the page as far as it must).
     pub fn paste_image_at(&mut self, page: usize, at: [f64; 2]) -> bool {
-        self.paste_image_internal(page, None, Some(at))
+        let Some((_, id)) = self.active_ids() else { return false };
+        let Some(info) = self.session.get(id).and_then(|d| d.info.pages.get(page)) else { return false };
+        let v = info.user_to_view(at[0] as f32, at[1] as f32).map(f64::from);
+        let place = pdfcraft_engine::PastePlace { at: v, anchor: pdfcraft_engine::PasteAnchor::TopLeft, keep_in: None };
+        self.paste_image_internal(page, None, Some(place))
     }
 
-    fn paste_image_internal(&mut self, page: usize, rect: Option<[f64; 4]>, at: Option<[f64; 2]>) -> bool {
+    /// Paste an image on `page` at `place` (PeDeeFe: ⌘V centres it on the pointer).
+    pub(crate) fn paste_image_placed(&mut self, page: usize, place: Option<pdfcraft_engine::PastePlace>) -> bool {
+        self.paste_image_internal(page, None, place)
+    }
+
+    fn paste_image_internal(&mut self, page: usize, rect: Option<[f64; 4]>, place: Option<pdfcraft_engine::PastePlace>) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
         let system = if self.clipboard_override.is_none() && self.system_clipboard { crate::os_clipboard::for_image_paste() } else { None };
         #[cfg(target_arch = "wasm32")]
@@ -1219,7 +1235,7 @@ impl crate::PdfCraftApp {
         self.paste_image_with_system(
             page,
             rect,
-            at,
+            place,
             system,
             cfg!(not(target_arch = "wasm32")) && self.system_clipboard,
             self.clipboard_override.clone(),
@@ -1230,7 +1246,7 @@ impl crate::PdfCraftApp {
         &mut self,
         page: usize,
         rect: Option<[f64; 4]>,
-        at: Option<[f64; 2]>,
+        place: Option<pdfcraft_engine::PastePlace>,
         system: Option<crate::create_ui::Clip>,
         system_authoritative: bool,
         clipboard: Option<crate::create_ui::Clip>,
@@ -1245,8 +1261,12 @@ impl crate::PdfCraftApp {
             return false;
         }
 
+        // The pixels pasted (a hash of them), to find the size Copy Image saw them at.
+        let mut pasted_hash: Option<u64> = None;
+        let mut hash = |w: usize, h: usize, rgba: &[u8]| pasted_hash = Some(crate::app::clipboard::picture_hash(w, h, rgba));
         let image_data: Option<(String, Vec<u8>)> = match clipboard {
             Some(crate::create_ui::Clip::Image { width, height, rgba }) => {
+                hash(width, height, &rgba);
                 let is_same = self
                     .last_copied_image
                     .as_ref()
@@ -1275,6 +1295,7 @@ impl crate::PdfCraftApp {
                         .last_copied_image
                         .as_ref()
                         .is_some_and(|(w, h, rgba)| *w as usize == img_width && *h as usize == img_height && rgba.as_slice() == img_bytes.as_slice());
+                    hash(img_width, img_height, &img_bytes);
                     if is_same_as_last && let Some((name, bytes)) = self.last_copied_file.clone() {
                         Some((name, bytes))
                     } else if is_same_as_last && let Some((w, h, rgba)) = self.last_copied_image.clone() {
@@ -1288,38 +1309,52 @@ impl crate::PdfCraftApp {
                 } else if let Some((name, bytes)) = self.last_copied_file.clone() {
                     Some((name, bytes))
                 } else if let Some((w, h, rgba)) = self.last_copied_image.clone() {
+                    hash(w as usize, h as usize, &rgba);
                     crate::create_ui::png_from_rgba(w as usize, h as usize, &rgba).ok().map(|b| ("pasted_image.png".to_string(), b))
                 } else {
                     None
                 }
             }
         };
+        // The size Copy Image saw these pixels at on their page, if it copied them.
+        let remembered = self.last_copied_size.filter(|(h, _)| Some(*h) == pasted_hash).map(|(_, size)| size);
 
         let Some((name, bytes)) = image_data else {
             self.notify_tr("No image on clipboard to paste");
             return false;
         };
 
+        let page_size = self.session.get(id).and_then(|d| d.info.pages.get(page)).map(|p| (f64::from(p.width), f64::from(p.height)));
         let target_rect = if let Some(r) = rect {
             Some(r)
-        } else if let Some(at) = at {
-            let (raw_w, raw_h) = self
-                .last_copied_image
-                .as_ref()
-                .map(|(w, h, _)| (*w as f64, *h as f64))
-                .or_else(|| {
-                    (bytes.len() <= 64_000_000 * 4).then(|| pdfcraft_engine::image_dimensions(&bytes)).flatten().map(|(w, h)| (w as f64, h as f64))
-                })
-                .unwrap_or((100.0, 100.0));
-            let (pw, ph) =
-                self.session.get(id).and_then(|d| d.info.pages.get(page)).map(|p| (p.width as f64, p.height as f64)).unwrap_or((612.0, 792.0));
-            let k = ((pw * 0.8) / raw_w.max(1.0)).min((ph * 0.8) / raw_h.max(1.0)).min(1.0);
-            let (w, h) = (raw_w * k, raw_h * k);
-            let Some(info) = self.session.get(id).and_then(|doc| doc.info.pages.get(page)) else { return false };
-            let view = info.user_to_view(at[0] as f32, at[1] as f32).map(f64::from);
-            // Added content uses the page's bottom-left display origin; rendered view space is y-down.
-            let center = [view[0], f64::from(info.height) - view[1]];
-            Some([center[0] - w * 0.5, center[1] - h * 0.5, center[0] + w * 0.5, center[1] + h * 0.5])
+        } else if place.is_some() || remembered.is_some() {
+            let (pw, ph) = page_size.unwrap_or((612.0, 792.0));
+            // PeDeeFe: the size Copy Image saw it at, else its pixels as points, at most 80 % of the page.
+            let (w, h) = remembered.unwrap_or_else(|| {
+                let (raw_w, raw_h) = self
+                    .last_copied_image
+                    .as_ref()
+                    .filter(|_| pasted_hash.is_some())
+                    .map(|(w, h, _)| (f64::from(*w), f64::from(*h)))
+                    .or_else(|| {
+                        (bytes.len() <= 64_000_000 * 4)
+                            .then(|| pdfcraft_engine::image_dimensions(&bytes))
+                            .flatten()
+                            .map(|(w, h)| (w as f64, h as f64))
+                    })
+                    .unwrap_or((100.0, 100.0));
+                let k = ((pw * 0.8) / raw_w.max(1.0)).min((ph * 0.8) / raw_h.max(1.0)).min(1.0);
+                (raw_w * k, raw_h * k)
+            });
+            // In the middle of the page without a place to go.
+            let place = place.unwrap_or(pdfcraft_engine::PastePlace {
+                at: [pw / 2.0, ph / 2.0],
+                anchor: pdfcraft_engine::PasteAnchor::Centre,
+                keep_in: None,
+            });
+            let [x, y] = place.top_left((w, h), (pw, ph));
+            // Added content uses the page's bottom-left display origin; view space is y-down.
+            Some([x, ph - (y + h), x + w, ph - y])
         } else {
             None
         };
@@ -1351,6 +1386,14 @@ impl crate::PdfCraftApp {
             false
         }
     }
+}
+
+/// The size a box `r` (user space) shows at on page `p`: its width and height as displayed.
+fn shown_size(p: &pdfcraft_render::PageInfo, r: [f64; 4]) -> Option<(f64, f64)> {
+    let r = r.map(|v| v as f32);
+    let corners = [p.user_to_view(r[0], r[1]), p.user_to_view(r[2], r[3])];
+    let (w, h) = (f64::from((corners[1][0] - corners[0][0]).abs()), f64::from((corners[1][1] - corners[0][1]).abs()));
+    (w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0).then_some((w, h))
 }
 
 /// What the image tools ask for.
@@ -1453,7 +1496,7 @@ mod tests {
         for size in [[0, 1], [usize::MAX, 2], [crate::create_ui::MAX_IMAGE_SIDE + 1, 1], [2, 2]] {
             let mut image = egui::ColorImage::filled([1, 1], egui::Color32::RED);
             image.size = size;
-            assert!(!app.paste_received_image(0, &image));
+            assert!(!app.paste_received_image(0, &image, None));
             assert_eq!(app.last_copied_image, before);
         }
         assert!(app.session.get(app.views[0].id).unwrap().page_images(0).is_empty());
@@ -1464,7 +1507,7 @@ mod tests {
         let mut app = crate::PdfCraftApp::new();
         app.create_blank();
         let image = egui::ColorImage::from_rgba_unmultiplied([1, 1], &[255, 0, 0, 128]);
-        assert!(app.paste_received_image(0, &image));
+        assert!(app.paste_received_image(0, &image, None));
         assert_eq!(app.last_copied_image.unwrap().2, vec![255, 0, 0, 128]);
     }
 
@@ -1521,7 +1564,8 @@ mod tests {
         let id = app.active_ids().unwrap().1;
         app.last_copied_image = Some((1, 1, vec![255, 0, 0, 255]));
         let undo = app.session.get(id).unwrap().can_undo().map(str::to_owned);
-        assert!(!app.paste_image_with_system(0, None, Some([20.0, 20.0]), Some(crate::create_ui::Clip::Text("new text".into())), true, None));
+        let place = pdfcraft_engine::PastePlace { at: [20.0, 20.0], anchor: pdfcraft_engine::PasteAnchor::TopLeft, keep_in: None };
+        assert!(!app.paste_image_with_system(0, None, Some(place), Some(crate::create_ui::Clip::Text("new text".into())), true, None));
         assert_eq!(app.session.get(id).unwrap().can_undo().map(str::to_owned), undo);
         assert!(app.session.get(id).unwrap().page_images(0).is_empty());
         assert!(app.last_copied_image.is_none());

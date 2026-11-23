@@ -26,7 +26,7 @@ pub(crate) enum ObjectClipMark {
     None,
 }
 
-fn picture_hash(width: usize, height: usize, rgba: &[u8]) -> u64 {
+pub(crate) fn picture_hash(width: usize, height: usize, rgba: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     (width, height, rgba).hash(&mut h);
@@ -63,7 +63,7 @@ impl PdfCraftApp {
         });
         let free = self.dialog.is_none() && !self.palette_open && !self.page_keys.over() && !ctx.egui_wants_keyboard_input() && !self.is_preparing();
         if !free || self.views.get(i).is_some_and(|v| v.forms.focus.is_some() || v.organize) {
-            self.receive_pastes(i, pastes, false);
+            self.receive_pastes_off_canvas(pastes);
             return;
         }
         let copy = ctx.input(|input| input.events.iter().any(|e| matches!(e, egui::Event::Copy)))
@@ -99,13 +99,18 @@ impl PdfCraftApp {
         {
             self.cut_page_image(sel.page, sel.index);
         }
+        // PeDeeFe: ⌘V pastes where the pointer is, centred on it, or at the nearest point of a page
+        // on screen, in the part of the page that is on screen.
+        let place = (paste || !pastes.is_empty())
+            .then(|| self.views.get(i).and_then(|v| v.paste_place(ctx.pointer_latest_pos(), pdfcraft_engine::PasteAnchor::Centre)))
+            .flatten();
         if (paste || !pastes.is_empty()) && self.quick_tool == QuickTool::EditText && self.object_clipboard.is_some() && self.pastes_objects(&pastes)
         {
-            self.paste_objects(i);
+            self.paste_objects(i, place);
             return;
         }
         if !pastes.is_empty() {
-            self.receive_pastes(i, pastes, true);
+            self.receive_pastes(i, pastes, place);
             return;
         }
         if paste {
@@ -121,8 +126,15 @@ impl PdfCraftApp {
                 return;
             }
 
-            let page = self.views.get(i).map_or(0, |v| v.current);
-            self.paste_image(page, None);
+            match place {
+                Some((page, place)) => {
+                    self.paste_image_placed(page, Some(place));
+                }
+                None => {
+                    let page = self.views.get(i).map_or(0, |v| v.current);
+                    self.paste_image(page, None);
+                }
+            }
         }
     }
 
@@ -184,17 +196,64 @@ impl PdfCraftApp {
         })
     }
 
-    /// ⌘V in Edit a PDF: the copied objects onto the current page of tab `i`, as page content
-    /// that draws the same (one undo step), and selected.
-    pub(crate) fn paste_objects(&mut self, i: usize) -> bool {
-        let Some((id, page)) = self.views.get(i).map(|v| (v.id, v.current)) else { return false };
+    /// PeDeeFe: the page menu's Paste, opened at `at` (user space) on `page` of tab `i`: what is
+    /// pasted goes there with its top-left corner (as displayed), moved onto the page as far as it
+    /// must. Objects copied in Edit text & images, while the clipboard still holds them, else a
+    /// picture.
+    pub(crate) fn paste_at_menu_point(&mut self, i: usize, page: usize, at: [f64; 2]) -> bool {
+        if self.quick_tool == QuickTool::EditText
+            && self.object_clip_current()
+            && let Some(view) = self.views.get(i).and_then(|v| self.session.get(v.id)).and_then(|d| d.info.pages.get(page))
+        {
+            let v = view.user_to_view(at[0] as f32, at[1] as f32).map(f64::from);
+            let place = pdfcraft_engine::PastePlace { at: v, anchor: pdfcraft_engine::PasteAnchor::TopLeft, keep_in: None };
+            return self.paste_objects(i, Some((page, place)));
+        }
+        self.paste_image_at(page, at)
+    }
+
+    /// Whether the objects copied in Edit a PDF are still what the system clipboard holds (nothing
+    /// was copied since, here or in another application): the page menu's Paste pastes them then.
+    pub(crate) fn object_clip_current(&self) -> bool {
+        if self.object_clipboard.is_none() {
+            return false;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.system_clipboard {
+            let held = match &self.object_clip_mark {
+                ObjectClipMark::Text(_) => crate::os_clipboard::with(|c| c.get_text()).ok().map(ClipboardPaste::Text),
+                ObjectClipMark::Picture(_) => match crate::create_ui::read_clipboard() {
+                    Some(crate::create_ui::Clip::Image { width, height, rgba }) => {
+                        let pixels = rgba.chunks_exact(4).map(|p| egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3])).collect();
+                        Some(ClipboardPaste::Image(std::sync::Arc::new(egui::ColorImage::new([width, height], pixels))))
+                    }
+                    Some(crate::create_ui::Clip::Text(text)) => Some(ClipboardPaste::Text(text)),
+                    None => None,
+                },
+                ObjectClipMark::None => return true,
+            };
+            return held.is_some_and(|held| self.pastes_objects(&[held]));
+        }
+        true
+    }
+
+    /// ⌘V in Edit a PDF: the copied objects onto a page of tab `i`, as page content that draws the
+    /// same (one undo step), and selected. PeDeeFe: at `place` (the page and where on it) when
+    /// given, else on the current page where they were.
+    pub(crate) fn paste_objects(&mut self, i: usize, place: Option<(usize, pdfcraft_engine::PastePlace)>) -> bool {
+        let Some((id, current)) = self.views.get(i).map(|v| (v.id, v.current)) else { return false };
+        let page = place.map_or(current, |(page, _)| page);
         let (Some(doc), Some(clipboard)) = (self.session.get(id), self.object_clipboard.as_mut()) else { return false };
         if !doc.allows_modification() {
             self.notify_error(tl!("The document's security settings don't allow this change"));
             return false;
         }
         let before = doc.editable_objects(page).unwrap_or_default();
-        let edit = match clipboard.paste(doc, page) {
+        let pasted = match place {
+            Some((_, place)) => clipboard.paste_at(doc, page, place),
+            None => clipboard.paste(doc, page),
+        };
+        let edit = match pasted {
             Ok(edit) => edit,
             Err(e) => {
                 self.notify_error(e);
@@ -210,24 +269,29 @@ impl PdfCraftApp {
         true
     }
 
-    /// `on_canvas`: the paste is the canvas's (no text field, dialog or page grid has it), so
-    /// pictures and copied comments land on the page.
-    fn receive_pastes(&mut self, view: usize, pastes: Vec<ClipboardPaste>, on_canvas: bool) {
-        let page = self.views.get(view).map_or(0, |view| view.current);
+    /// A paste a text field, a dialog or the page grid has: text the canvas cache still observes.
+    fn receive_pastes_off_canvas(&mut self, pastes: Vec<ClipboardPaste>) {
+        if pastes.iter().any(|p| matches!(p, ClipboardPaste::Text(_))) {
+            self.last_copied_image = None;
+            self.last_copied_file = None;
+        }
+    }
+
+    /// The canvas's paste (no text field, dialog or page grid has it): pictures and copied
+    /// comments land on the page, pictures at `place` (PeDeeFe: centred on the pointer) when given.
+    fn receive_pastes(&mut self, view: usize, pastes: Vec<ClipboardPaste>, place: Option<(usize, pdfcraft_engine::PastePlace)>) {
+        let current = self.views.get(view).map_or(0, |view| view.current);
         for paste in pastes {
             match paste {
                 ClipboardPaste::Text(text) => {
-                    // Text fields may own the paste; the canvas cache still observes its contents.
                     self.last_copied_image = None;
                     self.last_copied_file = None;
-                    if on_canvas {
-                        self.paste_comment_text(view, text);
-                    }
+                    self.paste_comment_text(view, text);
                 }
-                ClipboardPaste::Image(image) if on_canvas => {
-                    self.paste_received_image(page, &image);
+                ClipboardPaste::Image(image) => {
+                    let (page, at) = place.map_or((current, None), |(page, at)| (page, Some(at)));
+                    self.paste_received_image(page, &image, at);
                 }
-                ClipboardPaste::Image(_) => {}
             }
         }
     }

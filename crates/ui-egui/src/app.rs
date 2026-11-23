@@ -7,7 +7,7 @@ use super::state::{
 use super::state::{OpenOutcome, OpenRequest, PendingRemoteLink};
 use super::*;
 
-mod clipboard;
+pub(crate) mod clipboard;
 mod commands;
 mod control;
 mod files;
@@ -293,6 +293,7 @@ impl PdfCraftApp {
             last_snapshot: None,
             last_snapshot_of: None,
             last_copied_image: None,
+            last_copied_size: None,
             last_copied_file: None,
             system_clipboard: true,
             html_clipboard_override: None,
