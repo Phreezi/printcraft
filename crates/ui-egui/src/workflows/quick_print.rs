@@ -61,6 +61,7 @@ pub fn settings(sizes: &[(f64, f64)]) -> print::Settings {
         layout: Layout::Size(SizeMode::Fit),
         content: Content::DocumentAndMarkups,
         region: None,
+        area: None,
         raster: None,
         crops: Vec::new(),
     }
@@ -92,6 +93,8 @@ pub fn job(printer: Option<&str>, title: &str) -> spool::Job {
         grayscale: false,
         title: title.to_string(),
         options: Vec::new(),
+        grey_pages: false,
+        driver_settings: None,
     }
 }
 

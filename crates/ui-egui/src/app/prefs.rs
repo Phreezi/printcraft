@@ -36,6 +36,7 @@ fn rgb_triple(v: &serde_json::Value) -> Option<[f64; 3]> {
 }
 
 impl PdfCraftApp {
+    /// Sets the user's interface theme preference (Light, Dark, or System).
     pub fn set_theme_preference(&mut self, preference: ThemePreference) {
         self.theme_preference = preference;
         if let Some(ctx) = self.ctx.clone() {
@@ -88,6 +89,7 @@ impl PdfCraftApp {
             "reload_changed_files": self.reload_changed_files,
             "system_title_bar": self.system_title_bar,
             "pinned_folders": self.pinned.folders,
+            "pinned_folders_collapsed": self.pinned.collapsed,
             "theme": self.theme_preference,
             "scroll_speed": self.scroll_speed,
             "invert_middle_drag": self.invert_middle_drag,
@@ -103,6 +105,7 @@ impl PdfCraftApp {
             // Null follows the system's text scaling.
             "ui_scale": self.ui_scale,
             "flatten_fill_sign": self.flatten_fill_sign_on_save,
+            "ask_to_lock_signatures": self.ask_to_lock_signatures,
             "fill_text_size": self.fill_text_size,
             "fill_text_border": self.fill_text_default.width,
             "fill_text_border_color": self.fill_text_default.color,
@@ -128,6 +131,12 @@ impl PdfCraftApp {
                     "border_shape": s.border_shape.name(),
                 }))
                 .collect::<Vec<_>>(),
+            // Default font sizes of new text boxes and callouts (#5767).
+            "comment_font_sizes": self
+                .comment_prefs
+                .font_sizes()
+                .map(|(t, size)| serde_json::json!({ "tool": t.command(), "font_size": size }))
+                .collect::<Vec<_>>(),
             // Drawn signatures keep their original form (older settings read the same).
             "signature": match &self.signature { Some(fill_sign::SavedSig::Drawn(s)) => Some(s), _ => None },
             "signature_text": match &self.signature { Some(fill_sign::SavedSig::Typed(t)) => Some(t), _ => None },
@@ -151,6 +160,8 @@ impl PdfCraftApp {
         v["default_page_gaps"] = serde_json::Value::Bool(self.view_defaults.show_page_gaps);
         v["recent_limit"] = serde_json::json!(self.recent_limit);
         v["fill_text_color"] = serde_json::json!(self.fill_text_color);
+        v["full_screen_fill"] = serde_json::Value::Bool(self.view_defaults.full_screen_fill);
+        v["full_screen_escape_exits"] = serde_json::Value::Bool(self.full_screen_escape_exits);
         v["redact_prefs"] = self.redact_defaults.to_json();
         v["pinned_tools"] = serde_json::json!(self.pinned_tools);
         // Set outside json! above, which is at serde_json's macro recursion limit.
@@ -162,6 +173,7 @@ impl PdfCraftApp {
         v["hotbar"] = serde_json::to_value(&self.hotbar).unwrap_or_default();
         v["comment_tool_pinned"] = serde_json::Value::Bool(self.comment_prefs.pinned);
         v["show_secured_notice"] = serde_json::Value::Bool(self.show_secured_notice);
+        v["text_links"] = serde_json::Value::Bool(self.text_links);
         v["organize_zoom"] = serde_json::json!(self.organize_zoom);
         // PeDeeFe's Print dialog remembers its own choices (printer, paper, quality…), and its
         // Updates section its own (the automatic check, the version not to remind about).
@@ -284,7 +296,11 @@ impl PdfCraftApp {
         if let Some(on) = v["show_secured_notice"].as_bool() {
             self.show_secured_notice = on;
         }
+        if let Some(on) = v["text_links"].as_bool() {
+            self.text_links = on;
+        }
         self.pinned.restore(&v["pinned_folders"]);
+        self.pinned.restore_collapsed(&v["pinned_folders_collapsed"]);
         if let Some(items) = v.get("pinned_tools").and_then(serde_json::Value::as_array) {
             let mut tools = Vec::new();
             for item in items {
@@ -317,11 +333,22 @@ impl PdfCraftApp {
         }
     }
 
-    /// Switches for reopening, window chrome and file watching.
-    fn restore_behavior_prefs(&mut self, v: &serde_json::Value) {
+    /// The page gaps and full screen's switches: fill the screen, and whether Esc leaves it.
+    fn restore_page_display_prefs(&mut self, v: &serde_json::Value) {
         if let Some(show) = v["default_page_gaps"].as_bool() {
             self.view_defaults.show_page_gaps = show;
         }
+        if let Some(fill) = v["full_screen_fill"].as_bool() {
+            self.view_defaults.full_screen_fill = fill;
+        }
+        if let Some(exits) = v["full_screen_escape_exits"].as_bool() {
+            self.full_screen_escape_exits = exits;
+        }
+    }
+
+    /// Switches for reopening, window chrome and file watching.
+    fn restore_behavior_prefs(&mut self, v: &serde_json::Value) {
+        self.restore_page_display_prefs(v);
         if let Ok(units) = serde_json::from_value::<units::Unit>(v["units"].clone()) {
             self.units = units;
         }
@@ -348,6 +375,9 @@ impl PdfCraftApp {
         }
         if let Some(on) = v["flatten_fill_sign"].as_bool() {
             self.flatten_fill_sign_on_save = on;
+        }
+        if let Some(on) = v["ask_to_lock_signatures"].as_bool() {
+            self.ask_to_lock_signatures = on;
         }
         if let Some(size) = v["fill_text_size"].as_f64().and_then(fill_sign::valid_text_size) {
             self.fill_text_size = size;
@@ -458,6 +488,16 @@ impl PdfCraftApp {
                 }
                 if let Some(shape) = e["border_shape"].as_str().and_then(pdfcraft_engine::BorderShape::parse) {
                     self.comment_prefs.set_border_shape(tool, shape);
+                }
+            }
+        }
+        // Default font sizes (#5767), clamped by the setter; a missing or malformed size keeps
+        // the tool's own.
+        if let Some(sizes) = v["comment_font_sizes"].as_array() {
+            for e in sizes {
+                let Some(tool) = e["tool"].as_str().and_then(crate::comments::CommentTool::from_command) else { continue };
+                if let Some(size) = e["font_size"].as_f64() {
+                    self.comment_prefs.set_font_size(tool, size);
                 }
             }
         }

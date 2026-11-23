@@ -368,6 +368,10 @@ impl PdfCraftApp {
     /// A dialog or prompt (not the command palette, which floats over the page, nor the update
     /// check's window) is open in the focus window.
     pub(crate) fn dialog_modal_open(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.script_pending.as_ref().is_some_and(|pending| pending.has_prompt()) {
+            return true;
+        }
         self.dialog.is_some()
             || self.close_request.is_some()
             || self.password_prompt.is_some()

@@ -17,6 +17,9 @@ pub enum PrintError {
     /// The window to print misses this page (1-based) entirely.
     #[error("page {0} is outside the window to print")]
     WindowOutsidePage(usize),
+    /// A range that names more pages than a listing will take, with the limit.
+    #[error("the range selects more than {0} pages")]
+    TooManySelected(usize),
     #[error("{0}")]
     Invalid(String),
     #[error("{0}")]
@@ -36,13 +39,14 @@ pub fn in_english(wording: &str) -> String {
 
 /// What a person can get wrong about what to print, in English, with their holes still in them.
 ///
-/// An interface that reports these in another language translates these three, which is the whole
+/// An interface that reports these in another language translates these four, which is the whole
 /// reason they are gathered here; `wordings_are_said` keeps them in step with the errors.
 pub const WORDINGS: &[&str] = &[
     "there are no pages to print",
     "page {n} is out of range (1–{count})",
     "{page} is not a page number or label",
     "page {n} is outside the window to print",
+    "the range selects more than {limit} pages",
 ];
 
 impl PrintError {
@@ -61,6 +65,7 @@ impl PrintError {
             PrintError::NotAPage(token) => say(&words("{page} is not a page number or label"), &[("{page}", format!("{token:?}"))]),
             PrintError::WindowOutsidePage(n) => say(&words("page {n} is outside the window to print"), &[("{n}", n.to_string())]),
 
+            PrintError::TooManySelected(limit) => say(&words("the range selects more than {limit} pages"), &[("{limit}", limit.to_string())]),
             fault => fault.to_string(),
         }
     }

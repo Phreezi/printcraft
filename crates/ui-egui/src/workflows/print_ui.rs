@@ -444,11 +444,11 @@ impl PrintDraft {
             }),
             Handling::Multiple => match Layout::multiple(self.per_sheet) {
                 Layout::Multiple { cols, rows, per_sheet, .. } => {
-                    Layout::Multiple { cols, rows, per_sheet, order: self.order, border: self.border, auto_rotate: self.auto_rotate }
+                    Layout::Multiple { cols, rows, per_sheet, order: self.order, border: self.border, auto_rotate: self.auto_rotate, custom: false }
                 }
                 other => other,
             },
-            Handling::Booklet => Layout::Booklet { subset: self.booklet_subset, binding: self.binding },
+            Handling::Booklet => Layout::Booklet { subset: self.booklet_subset, binding: self.binding, creep: 0.0 },
             Handling::Poster => Layout::Poster { scale: self.poster_scale, overlap: self.overlap, cut_marks: self.cut_marks },
         };
         // The window applies to every sizing mode.
@@ -460,6 +460,7 @@ impl PrintDraft {
             layout,
             content: self.content,
             region,
+            area: None,
             raster: None,
             crops: Vec::new(),
         })
@@ -479,6 +480,8 @@ impl PrintDraft {
                 (Some(p), Some((read_for, _))) if p == read_for => self.driver_choices.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
                 _ => Vec::new(),
             },
+            grey_pages: false,
+            driver_settings: None,
         }
     }
 
