@@ -384,7 +384,7 @@ fn window_template(integrated: bool, app_frame: bool) -> egui::ViewportBuilder {
     // Windows installs both sizes directly through winit in app_creator instead.
     #[cfg(target_os = "windows")]
     {
-        viewport = viewport.with_icon(egui::IconData::default());
+        template = template.with_icon(egui::IconData::default());
     }
     // Dock, taskbar, Alt-Tab and launcher icon when running unbundled.
     #[cfg(not(target_os = "windows"))]
