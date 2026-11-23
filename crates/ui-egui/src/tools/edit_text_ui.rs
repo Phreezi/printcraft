@@ -1269,14 +1269,21 @@ impl PdfCraftApp {
             return;
         }
         let Some(i) = self.active.filter(|i| self.views.get(*i).is_some_and(|v| !v.organize)) else { return };
-        let select_all = !ctx.egui_wants_keyboard_input()
-            && ctx.input_mut(|inp| inp.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::A)));
+        let keys = self.page_keys;
+        let mut select_all = false;
+        if !ctx.egui_wants_keyboard_input() {
+            keys.take_presses(ctx, |key, modifiers| {
+                let hit = key == egui::Key::A && modifiers.matches_logically(egui::Modifiers::COMMAND);
+                select_all |= hit;
+                hit
+            });
+        }
         if select_all {
             self.select_all_boxes(i);
         }
         let Some(view) = self.views.get_mut(i) else { return };
         // Esc in another text field (the find bar, a panel's field) only leaves that field.
-        if self.full_screen || view.typing_elsewhere || !ctx.input(|inp| inp.key_pressed(egui::Key::Escape)) {
+        if self.full_screen || view.typing_elsewhere || !keys.pressed(ctx, egui::Key::Escape) {
             return;
         }
         // A paragraph being typed applies (the overlay sees this Esc) and a selection is let go
@@ -1343,7 +1350,9 @@ impl PdfCraftApp {
         select_image(view, None);
         view.line_editor = None;
         view.block_drag = None;
-        view.objects.select_where(doc, page, |o| o.target.kind != pdfcraft_engine::ObjectKind::Added);
+        // Every object, added content too, as upstream's ⌘A (`object_ui::select_all`): Delete and
+        // the arrow keys take them all (`Edit::DeleteObjects`, `Edit::MoveObjects`).
+        view.objects.select_where(doc, page, |_| true);
         view.edit_selection = view.objects.boxes();
     }
 }

@@ -264,7 +264,9 @@ fn a_dialog_keeps_its_own_height_after_a_taller_one() {
     // #5118: Print opened after Preferences was as tall as Preferences, with blank space below
     // its buttons. Every dialog shares one modal, which kept the last dialog's size.
     use pdfcraft_ui_egui::Dialog;
-    for dialog in [Dialog::Print, Dialog::RotatePages] {
+    // PeDeeFe's Print dialog (with its preview) is taller than Preferences: Rotate pages checks it.
+    {
+        let dialog = Dialog::RotatePages;
         let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
             let mut app = PdfCraftApp::new();
             app.set_option("language", "en").unwrap();

@@ -715,6 +715,13 @@ impl PdfCraftApp {
                 // it opens has to be seen, so the window comes to the front as for Open.
                 #[cfg(not(target_arch = "wasm32"))]
                 OsEvent::Combine(paths) => {
+                    // Files handed over before it open first, as they came (else they would open
+                    // over the Combine files tab).
+                    if !self.modal_open() {
+                        for p in std::mem::take(&mut self.held_open) {
+                            self.open_path(&p);
+                        }
+                    }
                     self.combine_paths(&paths);
                     self.raise_window(ctx, self.windows.focus());
                 }

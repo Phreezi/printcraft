@@ -4514,10 +4514,11 @@ fn closing_a_pop_up_saves_its_typed_text() {
 }
 
 /// The selection bar stays inside the pages' area: its place was worked out for a 520 pt bar,
-/// so longer labels (German here) pushed it over the side panel next to a selection on the right.
+/// so longer labels (German upstream; European Portuguese in PeDeeFe, which offers no German)
+/// pushed it over the side panel next to a selection on the right.
 #[test]
 fn the_selection_bar_stays_inside_the_pages_area() {
-    let mut h = harness(|app| app.set_option("language", "de").unwrap());
+    let mut h = harness(|app| app.set_option("language", "pt-pt").unwrap());
     // Narrower than the harness, as with a side panel open.
     h.set_size(egui::vec2(1100.0, 900.0));
     h.run_steps(4);

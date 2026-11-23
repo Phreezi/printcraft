@@ -2043,7 +2043,12 @@ fn draw_pages(
     // the picture, added content and a paragraph opened without changes. Shift or ⌘ keeps it.
     // The text selected with the Select tool (a whole page's, after a quadruple click, too) goes
     // the same way.
-    if pressed && pressed_page.is_none() && !crate::object_ui::adds(ptr.modifiers) && pointer.is_some_and(|p| visible.contains(p)) {
+    if pressed
+        && pressed_page.is_none()
+        && !view.router.held_by_a_page()
+        && !crate::object_ui::adds(ptr.modifiers)
+        && pointer.is_some_and(|p| visible.contains(p))
+    {
         if tool == QuickTool::EditText {
             deselect_edit_objects(view);
         } else if tool == QuickTool::Select {

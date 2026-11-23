@@ -223,6 +223,12 @@ impl PageRouter {
         }
     }
 
+    /// Whether a page took the press: it began on one, or past its edge on something of it (the
+    /// selected picture's grips and knob reach out of the page).
+    pub(in crate::canvas) fn held_by_a_page(&self) -> bool {
+        matches!(self.began, Some(Some(_)))
+    }
+
     /// What lay on top at the press with the objects selected together aside.
     pub(in crate::canvas) fn under_objects(&self) -> Option<Owner> {
         self.capture.as_ref().and_then(|c| c.under_objects)

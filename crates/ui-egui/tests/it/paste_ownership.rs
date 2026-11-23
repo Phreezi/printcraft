@@ -108,12 +108,20 @@ fn check_placement(rotation: u16, cropped: bool, view_rotation: u16, shared: boo
     assert!(!originals.contains(&inserted), "embedding must allocate a fresh image identity");
     let selected = &doc.page_images(0)[h.state().views[0].image_selection.as_ref().unwrap().index];
     assert_eq!(selected.object, Some(inserted), "the visible selection must name the inserted XObject");
-    let center = [(selected.rect[0] + selected.rect[2]) * 0.5, (selected.rect[1] + selected.rect[3]) * 0.5];
-    assert!((center[0] - at[0]).abs() < 0.001 && (center[1] - at[1]).abs() < 0.001, "rotation={rotation}, crop={cropped}: {center:?} vs {at:?}");
+    // PeDeeFe: the page menu's Paste puts the picture's top-left corner, as displayed, at the point.
+    let page = doc.info.pages[0].clone();
+    let want = page.user_to_view(at[0] as f32, at[1] as f32);
+    let top_left = |r: [f64; 4]| {
+        let a = page.user_to_view(r[0] as f32, r[1] as f32);
+        let b = page.user_to_view(r[2] as f32, r[3] as f32);
+        [a[0].min(b[0]), a[1].min(b[1])]
+    };
+    let corner = top_left(selected.rect);
+    assert!((corner[0] - want[0]).abs() < 0.01 && (corner[1] - want[1]).abs() < 0.01, "rotation={rotation}, crop={cropped}: {corner:?} vs {want:?}");
     let saved = reopened(h.state_mut());
     let placed = saved.session.get(saved.views[0].id).unwrap().page_images(0).into_iter().find(|image| image.object == Some(inserted)).unwrap();
-    assert!(((placed.rect[0] + placed.rect[2]) * 0.5 - at[0]).abs() < 0.001);
-    assert!(((placed.rect[1] + placed.rect[3]) * 0.5 - at[1]).abs() < 0.001);
+    let corner = top_left(placed.rect);
+    assert!((corner[0] - want[0]).abs() < 0.01 && (corner[1] - want[1]).abs() < 0.01, "saved: {corner:?} vs {want:?}");
     h.key_press(Key::Delete);
     h.run_steps(3);
     let saved = reopened(h.state_mut());

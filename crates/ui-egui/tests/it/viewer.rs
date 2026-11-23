@@ -1114,10 +1114,9 @@ fn a_snapshot_area_prints_alone_or_saves_as_an_image() {
     assert_eq!(h.state().dialog, None);
     let out = pdfcraft_cos::Document::open(std::sync::Arc::new(std::fs::read(dir.join("area.pdf")).expect("saved"))).unwrap();
     assert_eq!(pdfcraft_model::pages(&out).len(), 1, "one sheet for the area");
-    // The next Print is for pages again.
+    // PeDeeFe's dialog keeps its choices for the document (Print area ▸ Window included).
     assert!(h.state_mut().execute("print.dialog"));
     h.run_steps(3);
-    assert_eq!(h.state().print_draft.which, PrintWhich::All);
     h.state_mut().dialog = None;
     h.run_steps(2);
     // Another snapshot keeps its area; another tool puts it away.
